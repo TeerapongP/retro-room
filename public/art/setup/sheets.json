@@ -1,0 +1,32 @@
+{
+  "flowers-left-sway": {
+    "frames": 4,
+    "frameWidth": 124,
+    "frameHeight": 100,
+    "pad": 3
+  },
+  "flowers-bloom-white-sway": {
+    "frames": 4,
+    "frameWidth": 102,
+    "frameHeight": 90,
+    "pad": 3
+  },
+  "flowers-bloom-yellow-sway": {
+    "frames": 4,
+    "frameWidth": 89,
+    "frameHeight": 70,
+    "pad": 3
+  },
+  "flowers-pink-sway": {
+    "frames": 4,
+    "frameWidth": 109,
+    "frameHeight": 91,
+    "pad": 3
+  },
+  "farmer-breathe": {
+    "frames": 4,
+    "frameWidth": 142,
+    "frameHeight": 185,
+    "pad": 0
+  }
+}

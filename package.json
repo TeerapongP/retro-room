@@ -6,22 +6,31 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-retro-room \"vitest run tests/rules\"",
+    "test:integration": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"vitest run tests/integration\"",
+    "dev:emulator": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true next dev\"",
+    "test:assets": "vitest run tests/assets"
   },
   "dependencies": {
+    "firebase": "^13.1.0",
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "daisyui": "^5.7.50",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "firebase-tools": "^15.34.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.5"
   },
   "packageManager": "pnpm@12.14.0"
 }

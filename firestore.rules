@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function boardPath(boardId) {
+      return /databases/$(database)/documents/boards/$(boardId);
+    }
+
+    function memberPath(boardId, uid) {
+      return /databases/$(database)/documents/boards/$(boardId)/members/$(uid);
+    }
+
+    function isMember(boardId) {
+      return signedIn() && exists(memberPath(boardId, request.auth.uid));
+    }
+
+    function isOwner(boardId) {
+      return isMember(boardId)
+        && get(memberPath(boardId, request.auth.uid)).data.role == 'owner';
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function validPlayerName(name) {
+      return name is string
+        && name.size() >= 1 && name.size() <= 20
+        && name.matches('.*[^\\s].*');
+    }
+
+    function validPhotoUrl(data) {
+      return data.get('photoURL', null) == null || data.photoURL is string;
+    }
+
+    function hasPlayerName(uid) {
+      return exists(userPath(uid)) && 'nameSetAt' in get(userPath(uid)).data;
+    }
+
+    function boardStatus(boardId) {
+      return get(boardPath(boardId)).data.get('status', 'in-progress');
+    }
+
+    function sessionInProgress(boardId) {
+      return boardStatus(boardId) == 'in-progress';
+    }
+
+    function validBoardTitle(title) {
+      return title is string && title.size() >= 1 && title.size() <= 80;
+    }
+
+    function validColumn(columnId) {
+      return columnId in ['went-well', 'to-improve', 'ideas'];
+    }
+
+    function validCardText(text) {
+      return text is string && text.size() >= 1 && text.size() <= 500;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'nameSetAt'])
+        && request.resource.data.keys().hasAll(['displayName', 'createdAt', 'nameSetAt'])
+        && validPlayerName(request.resource.data.displayName)
+        && validPhotoUrl(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.nameSetAt == request.time;
+      // Only a profile that has no player name yet may be updated, once.
+      allow update: if signedIn() && request.auth.uid == uid
+        && !('nameSetAt' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['displayName', 'photoURL', 'nameSetAt'])
+        && validPlayerName(request.resource.data.displayName)
+        && validPhotoUrl(request.resource.data)
+        && request.resource.data.nameSetAt == request.time;
+      allow delete: if false;
+    }
+
+    match /boards/{boardId} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['title', 'ownerId', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['title', 'ownerId', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.ownerId == request.auth.uid
+        && validBoardTitle(request.resource.data.title)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && getAfter(memberPath(boardId, request.auth.uid)).data.role == 'owner';
+      allow update: if isOwner(boardId)
+        && request.resource.data.updatedAt == request.time
+        && (
+          // rename
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'updatedAt'])
+            && validBoardTitle(request.resource.data.title))
+          // start: waiting to in-progress
+          || (resource.data.get('status', 'in-progress') == 'waiting'
+            && request.resource.data.status == 'in-progress'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'startedAt', 'updatedAt'])
+            && request.resource.data.startedAt == request.time)
+          // complete: in-progress to completed
+          || (resource.data.get('status', 'in-progress') == 'in-progress'
+            && request.resource.data.status == 'completed'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'completedAt', 'updatedAt'])
+            && request.resource.data.completedAt == request.time)
+        );
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow get: if signedIn() && request.auth.uid == uid;
+        allow list: if isMember(boardId);
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'joinedAt'])
+          && request.resource.data.keys().hasAll(['uid', 'role', 'displayName', 'joinedAt'])
+          && request.resource.data.uid == uid
+          && hasPlayerName(uid)
+          && request.resource.data.displayName == get(userPath(uid)).data.displayName
+          && request.resource.data.joinedAt == request.time
+          && (
+            (request.resource.data.role == 'member'
+              && exists(boardPath(boardId)))
+            || (request.resource.data.role == 'owner'
+              && !exists(boardPath(boardId))
+              && getAfter(boardPath(boardId)).data.ownerId == uid)
+          );
+        allow update, delete: if false;
+      }
+
+      match /cards/{cardId} {
+        allow read: if isMember(boardId);
+        allow create: if isMember(boardId)
+          && sessionInProgress(boardId)
+          && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['columnId', 'text', 'authorId', 'createdAt', 'updatedAt'])
+          && request.resource.data.authorId == request.auth.uid
+          && validColumn(request.resource.data.columnId)
+          && validCardText(request.resource.data.text)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isMember(boardId)
+          && sessionInProgress(boardId)
+          && resource.data.authorId == request.auth.uid
+          && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'createdAt', 'updatedAt'])
+          && request.resource.data.authorId == resource.data.authorId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.columnId == resource.data.columnId
+          && validCardText(request.resource.data.text)
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if isMember(boardId)
+          && sessionInProgress(boardId)
+          && (resource.data.authorId == request.auth.uid || isOwner(boardId));
+      }
+    }
+
+    match /{path=**}/members/{uid} {
+      allow list: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

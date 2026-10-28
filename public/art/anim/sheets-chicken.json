@@ -1,0 +1,18 @@
+{
+  "chicken-walk": {
+    "frames": 4,
+    "frameWidth": 186,
+    "frameHeight": 186,
+    "pad": 0,
+    "idleLeft": 21,
+    "idleTop": 7
+  },
+  "chicken-peck": {
+    "frames": 5,
+    "frameWidth": 186,
+    "frameHeight": 186,
+    "pad": 0,
+    "idleLeft": 21,
+    "idleTop": 7
+  }
+}

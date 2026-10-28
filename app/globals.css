@@ -1,26 +1,813 @@
 @import "tailwindcss";
+@plugin "daisyui" {
+  themes: false;
+}
+@plugin "daisyui/theme" {
+  name: "harvest";
+  default: true;
+  color-scheme: light;
+  --color-base-100: #fff1cf;
+  --color-base-200: #f3e0b0;
+  --color-base-300: #e3c88f;
+  --color-base-content: #493521;
+  --color-primary: #7fa65a;
+  --color-primary-content: #493521;
+  --color-secondary: #96643a;
+  --color-secondary-content: #fff1cf;
+  --color-accent: #e6b65a;
+  --color-accent-content: #493521;
+  --color-neutral: #493521;
+  --color-neutral-content: #fff1cf;
+  --color-info: #91c8e4;
+  --color-info-content: #493521;
+  --color-success: #426b3f;
+  --color-success-content: #fff1cf;
+  --color-warning: #e6b65a;
+  --color-warning-content: #493521;
+  --color-error: #d87966;
+  --color-error-content: #493521;
+  --radius-selector: 0rem;
+  --radius-field: 0rem;
+  --radius-box: 0rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 3px;
+  --depth: 0;
+  --noise: 0;
+}
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-grass: #7fa65a;
+  --color-forest: #426b3f;
+  --color-cream: #fff1cf;
+  --color-wood: #96643a;
+  --color-bark: #493521;
+  --color-sky: #91c8e4;
+  --color-gold: #e6b65a;
+  --color-berry: #d87966;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-grass: var(--color-grass);
+  --color-forest: var(--color-forest);
+  --color-cream: var(--color-cream);
+  --color-wood: var(--color-wood);
+  --color-bark: var(--color-bark);
+  --color-sky: var(--color-sky);
+  --color-gold: var(--color-gold);
+  --color-berry: var(--color-berry);
+  --font-sans: var(--font-body);
+  --font-pixel: var(--font-pixel);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  min-height: 100%;
+  background: linear-gradient(
+    to bottom,
+    var(--color-sky) 0,
+    var(--color-sky) 220px,
+    var(--color-grass) 220px
+  );
+  background-attachment: fixed;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--color-bark);
+  font-family: var(--font-body), system-ui, sans-serif;
+  line-height: 1.6;
+}
+
+.font-pixel {
+  font-family: var(--font-pixel), monospace;
+  line-height: 1.8;
+}
+
+.pixel-panel {
+  background: var(--color-cream);
+  color: var(--color-bark);
+  border: 4px solid var(--color-bark);
+  box-shadow:
+    0 0 0 4px var(--color-wood),
+    6px 6px 0 4px rgb(73 53 33 / 0.35);
+}
+
+.pixel-sign {
+  background: var(--color-wood);
+  color: var(--color-cream);
+  border: 4px solid var(--color-bark);
+  box-shadow: 4px 4px 0 0 rgb(73 53 33 / 0.4);
+}
+
+.pixel-note {
+  background: var(--color-gold);
+  color: var(--color-bark);
+  border: 3px solid var(--color-bark);
+  box-shadow: 3px 3px 0 0 rgb(73 53 33 / 0.4);
+}
+
+.pixel-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.5rem 1rem;
+  background: var(--color-grass);
+  color: var(--color-bark);
+  border: 3px solid var(--color-bark);
+  box-shadow: 0 4px 0 0 var(--color-bark);
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.pixel-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 0 var(--color-bark);
+}
+
+.pixel-button:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 var(--color-bark);
+}
+
+.pixel-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pixel-button-gold {
+  background: var(--color-gold);
+}
+
+.pixel-button-danger {
+  background: var(--color-berry);
+}
+
+.pixel-input {
+  width: 100%;
+  background: #fffaf0;
+  color: var(--color-bark);
+  border: 3px solid var(--color-bark);
+  padding: 0.5rem 0.75rem;
+}
+
+:focus-visible {
+  outline: 4px solid var(--color-bark);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--color-gold);
+}
+
+.pixel-bounce {
+  animation: pixel-bounce 1s steps(2, end) infinite;
+}
+
+@keyframes pixel-bounce {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.press-start {
+  animation: press-start-blink 1.2s steps(2, start) infinite;
+}
+
+@keyframes press-start-blink {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.pixel-drift {
+  animation: pixel-drift 14s steps(14, end) infinite alternate;
+}
+
+@keyframes pixel-drift {
+  to {
+    transform: translateX(28px);
+  }
+}
+
+/* daisyUI components, pushed toward a PS1 farming RPG look */
+.btn {
+  min-height: 44px;
+  border-color: var(--color-bark);
+  box-shadow: 0 4px 0 0 var(--color-bark);
+  font-weight: 700;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 0 var(--color-bark);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 var(--color-bark);
+}
+
+.input {
+  border-color: var(--color-bark);
+  background: #fffaf0;
+}
+
+.alert {
+  border-color: var(--color-bark);
+  box-shadow: 3px 3px 0 0 rgb(73 53 33 / 0.4);
+}
+
+.pixel-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--color-bark);
+  animation: press-start-blink 1s steps(2, start) infinite;
+}
+
+/* Login / title screen (approved reference layers in public/art) */
+.login-grass {
+  background: #3f8a47 url("/art/grass-plate.png") center / cover;
+  image-rendering: pixelated;
+}
+
+.login-pixel {
+  image-rendering: pixelated;
+}
+
+.login-shadow {
+  position: absolute;
+  bottom: -3%;
+  left: 8%;
+  width: 84%;
+  height: 14%;
+  border-radius: 50%;
+  background: rgb(20 60 24 / 0.35);
+}
+
+.btn-wood {
+  --btn-bg: #fbeccb;
+  --btn-fg: var(--color-bark);
+  height: auto;
+  min-height: 4rem;
+  padding: 0.6rem 1.75rem;
+  gap: 0.9rem;
+  border: 4px solid #4a2a10;
+  background-color: #fbeccb;
+  background-image:
+    linear-gradient(#9a6a2a, #9a6a2a), linear-gradient(#9a6a2a, #9a6a2a),
+    linear-gradient(#9a6a2a, #9a6a2a), linear-gradient(#9a6a2a, #9a6a2a);
+  background-position:
+    left 8px top 8px,
+    right 8px top 8px,
+    left 8px bottom 8px,
+    right 8px bottom 8px;
+  background-size: 10px 10px;
+  background-repeat: no-repeat;
+  box-shadow:
+    inset 0 0 0 3px #e6b65a,
+    inset 0 0 0 5px #9a6a2a,
+    0 5px 0 0 #3b2412;
+  font-size: max(1.05rem, calc(var(--stage-w, 100vw) * 0.031));
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.btn-wood:hover:not(:disabled) {
+  background-color: #fff6df;
+}
+
+.login-google-button {
+  width: 100%;
+}
+
+@media (min-width: 48rem) {
+  .login-google-button {
+    min-height: calc(var(--stage-w) * 0.1);
+  }
+}
+
+.login-google-logo {
+  width: 1.9em;
+  height: auto;
+}
+
+.login-credit {
+  margin: 0;
+  font-size: max(0.65rem, calc(var(--stage-w, 100vw) * 0.0165));
+  color: #fff;
+  text-align: center;
+  text-shadow:
+    -2px -2px 0 #2b1b0e, 2px -2px 0 #2b1b0e, -2px 2px 0 #2b1b0e, 2px 2px 0 #2b1b0e,
+    0 -2px 0 #2b1b0e, 0 2px 0 #2b1b0e, -2px 0 0 #2b1b0e, 2px 0 0 #2b1b0e;
+}
+
+.btn-wood:focus-visible {
+  outline: 4px solid #fff;
+  outline-offset: 4px;
+}
+
+/* Frame-by-frame sprite strips (components/SpriteAnimation.tsx) */
+.sprite-animation {
+  background-repeat: no-repeat;
+  background-size: calc(var(--frames) * 100%) 100%;
+  background-position-x: 0%;
+  animation: sprite-play var(--duration) steps(var(--frames), jump-none) infinite;
+}
+
+@keyframes sprite-play {
+  to {
+    background-position-x: 100%;
+  }
+}
+
+@custom-variant stage (@media (min-width: 48rem) and (min-aspect-ratio: 1/1));
+
+/* Player name setup (F13): scene layers from docs/references/retro-room-player-name-reference.png */
+/* D58: grass fill cut from scene.png, tiled at the scene's own pixel density, so it matches around the scene. */
+.setup-scene {
+  background: #4f8f3a url("/art/setup/grass-fill.png") center / calc(var(--scene-w, 100vw) * 1024 / 1536) auto;
+  image-rendering: pixelated;
+}
+
+.setup-scene-art {
+  display: none;
+}
+
+.setup-stage {
+  container-type: inline-size;
+  background: url("/art/setup/scene.png") 50% 100% / cover;
+  image-rendering: pixelated;
+}
+
+.setup-dialogue,
+.setup-name,
+.setup-status {
+  padding: 0.75rem 1rem;
+}
+
+.setup-dialogue h1 {
+  font-size: 1rem;
+}
+
+.setup-name {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.setup-name label {
+  font-size: 0.875rem;
+}
+
+.setup-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.875rem;
+  color: var(--color-bark);
+  background: #f3e0b0;
+  border: 0;
+  caret-color: var(--color-bark);
+  caret-shape: block;
+}
+
+.setup-input:focus-visible {
+  outline: 3px solid var(--color-bark);
+  outline-offset: 2px;
+}
+
+.setup-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.setup-counter {
+  display: inline-block;
+  margin-left: 0.75rem;
+  font-size: 0.625rem;
+}
+
+.setup-dialogue,
+.setup-name,
+.retro-keyboard,
+.setup-status {
+  width: 100%;
+  max-width: 36rem;
+  margin-inline: auto;
+}
+
+.retro-keyboard {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 0.25rem;
+  padding: 0.75rem 0.5rem 0.75rem 1.75rem;
+}
+
+.retro-key {
+  position: relative;
+  display: flex;
+  grid-column: var(--narrow-column) / span var(--narrow-span);
+  grid-row: var(--narrow-row);
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--color-bark);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.retro-key[data-kind="mark"],
+.retro-key[data-kind="ok"],
+.retro-key[data-key-id="space"] {
+  justify-content: flex-start;
+  padding-left: 0.5rem;
+}
+
+.retro-key[data-active] {
+  background: #e9c77a;
+  box-shadow: inset 0 0 0 2px #c99a45;
+}
+
+.retro-key:focus-visible {
+  z-index: 1;
+  outline: 3px solid var(--color-bark);
+  outline-offset: -3px;
+}
+
+/* The hand and gold box mark the selection; no generic outline on top of them. */
+.retro-key[data-active]:focus-visible {
+  outline: none;
+}
+
+@media (forced-colors: active) {
+  .retro-key:focus-visible {
+    outline: 3px solid Highlight;
+  }
+}
+
+.retro-key:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.retro-hand {
+  position: absolute;
+  top: 50%;
+  right: calc(100% - 0.3rem);
+  z-index: 2;
+  width: 1.75rem;
+  height: auto;
+  pointer-events: none;
+  translate: 0 -50%;
+  image-rendering: pixelated;
+  animation:
+    retro-hand-step 0.18s steps(3, end),
+    retro-hand-nudge 0.7s steps(2, end) infinite alternate;
+}
+
+@keyframes retro-hand-step {
+  from {
+    margin-right: -0.75rem;
+  }
+}
+
+@keyframes retro-hand-nudge {
+  to {
+    transform: translateX(3px);
+  }
+}
+
+@media (min-width: 48rem) and (min-aspect-ratio: 1/1) {
+  /* D58: the scene covers the viewport (cropped, never stretched). The caps keep the Your name? panel, the
+     farmer, chicken and dog on screen; beyond them the scene fades into the matching grass fill. */
+  .setup-scene {
+    --scene-w: min(max(100vw, calc(100dvh * 1536 / 1024)), calc(100vw * 1.04), calc(100dvh * 1.8));
+    --scene-h: calc(var(--scene-w) * 1024 / 1536);
+    --band-x: max(0px, calc((100vw - var(--scene-w)) / 2));
+    --band-y: max(0px, calc((100dvh - var(--scene-h)) / 2));
+    --feather-x: min(calc(var(--scene-w) * 0.08), calc(var(--band-x) * 6));
+    --feather-y: min(calc(var(--scene-h) * 0.08), calc(var(--band-y) * 6));
+  }
+
+  .setup-scene-art {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--scene-w);
+    height: var(--scene-h);
+    transform: translate(-50%, -50%);
+    background: url("/art/setup/scene.png") 0 0 / 100% 100%;
+    image-rendering: pixelated;
+    pointer-events: none;
+    mask-image:
+      linear-gradient(to right, transparent 0, #000 var(--feather-x), #000 calc(100% - var(--feather-x)), transparent 100%),
+      linear-gradient(to bottom, transparent 0, #000 var(--feather-y), #000 calc(100% - var(--feather-y)), transparent 100%);
+    mask-composite: intersect;
+    -webkit-mask-composite: source-in;
+  }
+
+  .setup-stage {
+    background: none;
+  }
+
+  .setup-dialogue,
+  .setup-name,
+  .setup-keyboard,
+  .setup-status {
+    position: absolute;
+    max-width: none;
+    margin: 0;
+  }
+
+  .setup-name {
+    z-index: auto;
+  }
+
+  .setup-dialogue {
+    top: 15.625%;
+    left: 7.357%;
+    display: flex;
+    align-items: center;
+    width: 40.04%;
+    height: 8.98%;
+    padding: 0 2.2cqw;
+  }
+
+  .setup-dialogue h1 {
+    font-size: 2.1cqw;
+  }
+
+  .setup-name {
+    top: 20.21%;
+    left: 58.4%;
+    width: 36.33%;
+    height: 9.08%;
+    padding: 0 1.5cqw;
+    gap: 1.5cqw;
+  }
+
+  .setup-name label {
+    font-size: 2.1cqw;
+  }
+
+  .setup-input {
+    padding: 0.9cqw 1cqw;
+    font-size: 1.5cqw;
+  }
+
+  .retro-keyboard {
+    top: 31.74%;
+    left: 13.35%;
+    width: 73.44%;
+    height: 38.38%;
+    grid-template-columns: repeat(19, minmax(0, 1fr));
+    grid-template-rows: repeat(6, minmax(0, 1fr));
+    gap: 0;
+    padding: 1.4cqw 2cqw 1.4cqw 2cqw;
+  }
+
+  .retro-key {
+    grid-column: var(--wide-column) / span var(--wide-span);
+    grid-row: var(--wide-row);
+    min-height: 0;
+    font-size: max(0.75rem, 2cqw);
+  }
+
+  .retro-key[data-kind="mark"],
+  .retro-key[data-kind="ok"],
+  .retro-key[data-key-id="space"] {
+    padding-left: 0.8cqw;
+  }
+
+  .retro-hand {
+    right: calc(100% - 0.8cqw);
+    width: 3.6cqw;
+  }
+
+  .setup-status {
+    top: 74.5%;
+    left: 57.5%;
+    width: 29%;
+    padding: 1cqw 1.4cqw;
+    font-size: max(0.875rem, 1.3cqw);
+  }
+}
+
+/* Chicken patrol: one 10 s loop. 0-2 s walk left, 2-5 s peck facing left, 5-7 s walk right, 7-10 s peck facing right.
+   The sprite strips loop every 0.5 s (walk) and 1 s (peck), so each segment starts on a whole cycle. */
+.chicken-patrol {
+  --patrol: calc(var(--stage-w, 100vw) * 0.0387);
+  animation: chicken-patrol 10s linear infinite;
+}
+
+@keyframes chicken-patrol {
+  0% {
+    transform: translateX(0);
+  }
+  20%,
+  50% {
+    transform: translateX(calc(var(--patrol) * -1));
+  }
+  70%,
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.chicken-facing {
+  animation: chicken-facing 10s step-end infinite;
+}
+
+@keyframes chicken-facing {
+  0% {
+    transform: scaleX(-1);
+  }
+  50% {
+    transform: scaleX(1);
+  }
+}
+
+.chicken-walk-slot {
+  opacity: 0;
+  animation: chicken-walk-visible 10s step-end infinite;
+}
+
+@keyframes chicken-walk-visible {
+  0% {
+    opacity: 1;
+  }
+  20% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0;
+  }
+}
+
+.chicken-peck-slot {
+  animation: chicken-peck-visible 10s step-end infinite;
+}
+
+@keyframes chicken-peck-visible {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+  70% {
+    opacity: 1;
+  }
+}
+
+/* Phones keep the chicken in place and only peck. */
+@media (max-width: 47.99rem) {
+  .chicken-patrol,
+  .chicken-facing,
+  .chicken-peck-slot {
+    animation: none;
+  }
+
+  .chicken-walk-slot {
+    display: none;
+  }
+}
+
+/* Background music toggle (F14) */
+.music-toggle {
+  position: fixed;
+  top: 0.25rem;
+  right: 0.25rem;
+  z-index: 60;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-height: 0;
+  padding: 0;
+}
+
+.music-toggle:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Loading screen (F15): scene plate from docs/references/retro-room-loading.png */
+.loading-scene {
+  --scene-w: max(100vw, calc(100dvh * 1672 / 941));
+  --scene-h: calc(var(--scene-w) * 941 / 1672);
+  --scene-focus: 0.5;
+  --scene-top: clamp(calc(100dvh - var(--scene-h)), calc(50dvh - var(--scene-h) * 0.5), 0px);
+  --scene-left: clamp(
+    calc(100vw - var(--scene-w)),
+    calc(50vw - var(--scene-w) * var(--scene-focus)),
+    0px
+  );
+  --panel-w: min(calc(var(--scene-w) * 0.236), 92vw);
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  background: #5f9f45;
+}
+
+/* Phones show only a narrow slice of the wide scene, so keep the sleeping farmer in it. */
+@media (max-width: 30rem) and (max-aspect-ratio: 1/1) {
+  .loading-scene {
+    --scene-focus: 0.4;
+  }
+}
+
+.loading-stage {
+  position: absolute;
+  top: var(--scene-top);
+  left: var(--scene-left);
+  width: var(--scene-w);
+  height: var(--scene-h);
+}
+
+.loading-stage img {
+  object-fit: fill;
+}
+
+.loading-panel {
+  position: absolute;
+  top: calc(var(--scene-top) + var(--scene-h) * 0.489);
+  left: clamp(
+    calc(var(--panel-w) / 2),
+    calc(var(--scene-left) + var(--scene-w) * 0.5),
+    calc(100vw - var(--panel-w) / 2)
+  );
+  display: flex;
+  width: var(--panel-w);
+  min-height: calc(var(--scene-h) * 0.13);
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  color: var(--color-bark);
+  background-color: #fff1cf;
+  border: 4px solid #5b3a1c;
+  box-shadow:
+    inset 0 0 0 4px #b98a4e,
+    inset 0 0 0 6px #5b3a1c,
+    4px 6px 0 rgb(0 0 0 / 0.25);
+  translate: -50% -50%;
+}
+
+.loading-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  font-size: clamp(0.8rem, calc(var(--scene-w) * 0.0125), 1.6rem);
+}
+
+.loading-stage .sprite-animation {
+  image-rendering: auto;
+}
+
+.loading-zzz {
+  position: absolute;
+  height: auto;
+  animation: loading-zzz-float 3.6s ease-out infinite backwards;
+}
+
+@keyframes loading-zzz-float {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  20%,
+  65% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(calc(var(--scene-h) * -0.03));
+  }
 }
