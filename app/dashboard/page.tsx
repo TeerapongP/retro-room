@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-import { AppHeader } from "@/components/AppHeader";
+import { DashboardSprout } from "@/components/DashboardSprout";
+import { DashboardHeader } from "@/components/DashboardHeader";
+import { IconCalendar, IconDocument, IconPlus, SleepingCat } from "@/components/DashboardIcons";
 import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
@@ -52,54 +54,66 @@ export default function DashboardPage() {
   if (!user) return <AuthLoadingNotice />;
 
   return (
-    <>
-      <AppHeader />
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 p-4 sm:p-6">
-        <DialogueBox title="Start a New Day">
-          <form onSubmit={handleCreate} className="flex flex-col gap-3 sm:flex-row">
-            <label className="sr-only" htmlFor="board-title">
-              ชื่อบอร์ด
-            </label>
-            <input
-              id="board-title"
-              className="pixel-input"
-              value={title}
-              maxLength={BOARD_TITLE_MAX_LENGTH}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="ชื่อบอร์ด เช่น Sprint 12"
-            />
-            <button
-              type="submit"
-              className="pixel-button shrink-0"
-              disabled={isCreating || !title.trim()}
-            >
-              {isCreating ? "กำลังสร้าง..." : "สร้างบอร์ด"}
+    <div className="dashboard-scene">
+      <div aria-hidden="true" className="dashboard-backdrop">
+        <div className="dashboard-backdrop-art" />
+      </div>
+      <DashboardHeader />
+      <main className="dashboard-content">
+        <section className="dashboard-panel dashboard-create" aria-labelledby="create-board-heading">
+          <h1 id="create-board-heading" className="font-pixel dashboard-create-title"><DashboardSprout /> Start a New Day</h1>
+          <form onSubmit={handleCreate} className="dashboard-form">
+            <label className="sr-only" htmlFor="board-title">ชื่อบอร์ด</label>
+            <div className="dashboard-field">
+              <IconDocument className="dashboard-field-icon" />
+              <input
+                id="board-title"
+                className="input dashboard-input"
+                value={title}
+                maxLength={BOARD_TITLE_MAX_LENGTH}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="ชื่อบอร์ด เช่น Sprint 12"
+              />
+            </div>
+            <button type="submit" className="btn dashboard-create-button" disabled={isCreating || !title.trim()}>
+              {isCreating ? (
+                "กำลังสร้าง..."
+              ) : (
+                <>
+                  <IconPlus />
+                  สร้างบอร์ด
+                </>
+              )}
             </button>
           </form>
           {createError ? <p role="alert">{createError}</p> : null}
-        </DialogueBox>
+        </section>
 
-        <section aria-labelledby="my-boards">
-          <h2 id="my-boards" className="font-pixel pixel-sign mb-4 inline-block px-3 py-2 text-xs">
-            My Boards
+        <section id="retro" className="dashboard-retro" aria-labelledby="retro-heading" tabIndex={-1}>
+          <h2 id="retro-heading" className="dashboard-retro-heading">
+            <IconCalendar />
+            Retro
           </h2>
           {loadError ? (
-            <DialogueBox title="Error" tone="error">
-              <p>{loadError}</p>
-            </DialogueBox>
+            <DialogueBox title="Error" tone="error"><p>{loadError}</p></DialogueBox>
           ) : boards === null ? (
             <LoadingNotice />
           ) : boards.length === 0 ? (
-            <p className="pixel-panel p-4">ยังไม่มีบอร์ด สร้างบอร์ดใหม่หรือเปิดลิงก์ที่เพื่อนแชร์มา</p>
+            <div className="dashboard-panel dashboard-empty">
+              <div className="dashboard-sleeper" aria-hidden="true">
+                <span className="dashboard-zzz font-pixel">Zzz</span>
+                <SleepingCat />
+              </div>
+              <h3>ยังไม่มีบอร์ด</h3>
+              <p>สร้างบอร์ดแรกของคุณเพื่อเริ่ม Retro กันเลย!</p>
+            </div>
           ) : (
-            <ul className="grid gap-4 sm:grid-cols-2">
+            <ul className="dashboard-board-list">
               {boards.map((board) => (
                 <li key={board.boardId}>
-                  <Link href={`/boards/${board.boardId}`} className="pixel-panel block p-4">
+                  <Link href={`/boards/${board.boardId}`} className="dashboard-panel dashboard-board">
                     <span className="block text-lg font-bold">{board.title}</span>
-                    <span className="mt-1 block text-sm">
-                      {board.role === "owner" ? "Owner" : "Member"}
-                    </span>
+                    <span className="mt-1 block text-sm">{board.role === "owner" ? "Owner" : "Member"}</span>
                   </Link>
                 </li>
               ))}
@@ -107,6 +121,6 @@ export default function DashboardPage() {
           )}
         </section>
       </main>
-    </>
+    </div>
   );
 }

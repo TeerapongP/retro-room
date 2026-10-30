@@ -811,3 +811,199 @@ body {
     transform: translateY(calc(var(--scene-h) * -0.03));
   }
 }
+
+/* Dashboard (F16, D66 to D73): countryside backdrop layer, notched pixel frames, pixel icons.
+   --u is one pixel of the 1852 px wide reference (docs/references/retro-room-dashboard-reference.png), so every
+   size below is "reference pixels * --u" with a rem floor, and the composition keeps the reference proportions. */
+.dashboard-scene {
+  --scene-w: max(100vw, 100dvh);
+  --u: min(calc(100vw / 1852), 1.6px);
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 100dvh;
+  padding: 0.75rem 2.75rem 3rem;
+}
+
+/* Sky colour matches the top of countryside.png (#0e94fd); the art fades into it, so tall screens get more sky. */
+.dashboard-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: #0e94fd;
+}
+
+.dashboard-backdrop-art {
+  position: absolute;
+  bottom: 0;
+  left: calc((100vw - var(--scene-w)) * 0.3);
+  width: var(--scene-w);
+  aspect-ratio: 1852 / 849;
+  background: url('/art/dashboard/countryside.png') 0 0 / 100% 100% no-repeat;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 100%);
+}
+
+/* Pixel frame: a 3-unit border image (dark edge, wood, light line) with the corner pixel left out. */
+.dashboard-header,
+.dashboard-panel {
+  position: relative;
+  color: var(--color-bark);
+  background: #fff3df;
+  background-clip: padding-box;
+  border: 9px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' width='8' height='8' shape-rendering='crispEdges'%3E%3Crect x='1' y='0' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='2' y='0' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='3' y='0' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='4' y='0' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='5' y='0' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='6' y='0' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='0' y='1' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='2' y='1' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='3' y='1' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='4' y='1' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='5' y='1' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='6' y='1' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='7' y='1' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='0' y='2' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='2' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='2' y='2' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='3' y='2' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='4' y='2' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='5' y='2' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='7' y='2' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='0' y='3' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='3' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='2' y='3' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='5' y='3' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='6' y='3' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='7' y='3' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='0' y='4' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='4' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='2' y='4' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='5' y='4' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='6' y='4' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='7' y='4' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='0' y='5' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='5' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='2' y='5' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='3' y='5' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='4' y='5' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='5' y='5' width='1' height='1' fill='%23e6bf82'/%3E%3Crect x='6' y='5' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='7' y='5' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='0' y='6' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='6' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='3' y='6' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='4' y='6' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='5' y='6' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='6' y='6' width='1' height='1' fill='%23a8723c'/%3E%3Crect x='7' y='6' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='1' y='7' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='2' y='7' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='3' y='7' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='4' y='7' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='5' y='7' width='1' height='1' fill='%234d2c12'/%3E%3Crect x='6' y='7' width='1' height='1' fill='%234d2c12'/%3E%3C/svg%3E") 3 / 9px stretch;
+  image-rendering: pixelated;
+  filter: drop-shadow(4px 5px 0 rgb(48 30 15 / 0.4));
+}
+
+.dashboard-icon { width: max(1.25rem, calc(22 * var(--u))); height: max(1.25rem, calc(22 * var(--u))); flex: none; }
+.dashboard-sprout { width: max(1.5rem, calc(30 * var(--u))); height: max(1.5rem, calc(30 * var(--u))); flex: none; }
+
+/* Navbar: 1522 x 80 in the reference (82% of the width), brand left, nav after it, player and logout right. */
+.dashboard-header {
+  width: clamp(min(100%, 62rem), calc(1522 * var(--u)), 100%);
+  margin: 0 auto;
+  left: calc(5 * var(--u));  /* the reference bar sits 5 px right of the content column's centre */
+  min-height: max(4.5rem, calc(80 * var(--u)));
+  padding: 0.35rem max(1rem, calc(22 * var(--u))) 0.35rem max(1rem, calc(28 * var(--u)));
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, calc(94 * var(--u)), 8rem);
+}
+
+.dashboard-brand, .dashboard-nav, .dashboard-account, .dashboard-create-title {
+  display: flex;
+  align-items: center;
+  gap: max(0.65rem, calc(14 * var(--u)));
+}
+
+.dashboard-brand { white-space: nowrap; font-size: max(0.7rem, calc(15 * var(--u))); }
+.dashboard-nav { gap: max(0.5rem, calc(34 * var(--u))); }
+.dashboard-nav a {
+  display: flex;
+  align-items: center;
+  gap: max(0.5rem, calc(10 * var(--u)));
+  min-height: max(2.5rem, calc(44 * var(--u)));
+  padding: 0 max(0.85rem, calc(15 * var(--u)));
+  border: 6px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' width='8' height='8' shape-rendering='crispEdges'%3E%3Crect x='1' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='2' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='3' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='4' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='5' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='6' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='1' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='3' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='4' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='5' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='6' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='1' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='2' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='2' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='3' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='4' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='2' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='3' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='3' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='3' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='3' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='3' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='3' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='4' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='4' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='4' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='4' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='4' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='4' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='5' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='5' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='3' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='4' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='5' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='5' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='6' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='3' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='4' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='5' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='6' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='6' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='2' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='3' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='4' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='5' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='6' y='7' width='1' height='1' fill='%233a2010'/%3E%3C/svg%3E") 3 / 6px stretch;
+  border-image-width: 0;
+  background: transparent;
+  background-clip: padding-box;
+  font-size: max(0.95rem, calc(17 * var(--u)));
+  font-weight: 700;
+}
+.dashboard-nav a:hover { background: rgb(121 69 38 / 0.12); }
+.dashboard-nav .dashboard-nav-active {
+  color: #fff1df;
+  background: #794526;
+  border-image-width: 6px;
+}
+.dashboard-account { margin-left: auto; min-width: 0; font-size: max(0.95rem, calc(17 * var(--u))); gap: max(0.75rem, calc(24 * var(--u))); }
+.dashboard-player { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 10rem; }
+.dashboard-logout {
+  gap: max(0.5rem, calc(10 * var(--u)));
+  padding-inline: max(0.9rem, calc(20 * var(--u)));
+  color: #493521;
+  background: #f5bd4f;
+  border: 2px solid #493521;
+  box-shadow: inset 0 0 0 2px #ffe08a, 0 3px 0 #493521;
+  min-height: max(44px, calc(46 * var(--u)));
+  font-size: max(0.9rem, calc(17 * var(--u)));
+  white-space: nowrap;
+}
+
+/* Content: Start panel 572 x 154 at 106 below the navbar; Retro label 136 x 53; empty panel 547 x 196. */
+.dashboard-content { display: grid; width: clamp(min(100%, 32rem), calc(572 * var(--u)), 100%); margin: max(2.5rem, calc(106 * var(--u))) auto 0; }
+.dashboard-panel { padding: max(0.75rem, calc(19.5 * var(--u))) max(1rem, calc(21 * var(--u))); }
+.dashboard-create-title { font-size: max(0.7rem, calc(18 * var(--u))); line-height: 1.2; margin-bottom: max(1rem, calc(22 * var(--u))); gap: max(0.65rem, calc(14 * var(--u))); }
+.dashboard-create-title .dashboard-sprout { width: max(1.5rem, calc(26 * var(--u))); height: max(1.5rem, calc(26 * var(--u))); }
+.dashboard-form { display: flex; gap: max(0.75rem, calc(15 * var(--u))); }
+.dashboard-field { position: relative; flex: 1; min-width: 0; }
+.dashboard-field-icon {
+  position: absolute;
+  top: 50%;
+  left: max(0.7rem, calc(16 * var(--u)));
+  transform: translateY(-50%);
+  z-index: 1;
+  color: #6f6559;
+  pointer-events: none;
+}
+.dashboard-input {
+  width: 100%;
+  min-width: 0;
+  min-height: max(44px, calc(49 * var(--u)));
+  padding-left: max(2.5rem, calc(52 * var(--u)));
+  font-size: max(0.9rem, calc(17 * var(--u)));
+  border: 2px solid #8b8174;
+  background: #fffdfa;
+}
+.dashboard-create-button {
+  gap: max(0.4rem, calc(8 * var(--u)));
+  flex: 0 0 max(8rem, calc(135 * var(--u)));
+  padding-inline: 0.5rem;
+  color: #fff;
+  background: #63883d;
+  border: 2px solid #3d5a22;
+  box-shadow: inset 0 0 0 2px #86aa55, 0 3px 0 #3d5a22;
+  white-space: nowrap;
+  min-height: max(44px, calc(49 * var(--u)));
+  font-size: max(0.9rem, calc(17 * var(--u)));
+}
+
+.dashboard-retro {
+  width: clamp(min(100%, 30rem), calc(547 * var(--u)), 100%);
+  margin: max(1.5rem, calc(38 * var(--u))) auto 0;
+  scroll-margin-top: 1rem;
+}
+.dashboard-retro-heading {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: max(0.5rem, calc(10 * var(--u)));
+  min-height: max(2.75rem, calc(53 * var(--u)));
+  margin: 0 0 clamp(1rem, calc(19 * var(--u)), 1.5rem);
+  padding: 0 max(1rem, calc(21 * var(--u)));
+  color: #fff1df;
+  background: #794526;
+  background-clip: padding-box;
+  border: 6px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' width='8' height='8' shape-rendering='crispEdges'%3E%3Crect x='1' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='2' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='3' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='4' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='5' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='6' y='0' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='1' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='3' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='4' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='5' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='6' y='1' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='1' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='2' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='2' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='3' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='4' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='2' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='2' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='3' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='3' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='3' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='3' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='3' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='3' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='4' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='4' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='4' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='4' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='4' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='4' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='5' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='5' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='3' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='4' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='5' y='5' width='1' height='1' fill='%23b98147'/%3E%3Crect x='6' y='5' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='5' width='1' height='1' fill='%233a2010'/%3E%3Crect x='0' y='6' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='3' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='4' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='5' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='6' y='6' width='1' height='1' fill='%239a6232'/%3E%3Crect x='7' y='6' width='1' height='1' fill='%233a2010'/%3E%3Crect x='1' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='2' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='3' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='4' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='5' y='7' width='1' height='1' fill='%233a2010'/%3E%3Crect x='6' y='7' width='1' height='1' fill='%233a2010'/%3E%3C/svg%3E") 3 / 6px stretch;
+  filter: drop-shadow(3px 4px 0 rgb(48 30 15 / 0.45));
+  font-size: max(1rem, calc(20 * var(--u)));
+  font-weight: 700;
+}
+.dashboard-empty {
+  display: grid;
+  justify-items: center;
+  gap: max(0.4rem, calc(8 * var(--u)));
+  text-align: center;
+  min-height: max(12rem, calc(196 * var(--u)));
+  align-content: center;
+  padding-block: max(1.5rem, calc(24 * var(--u)));
+}
+.dashboard-empty h3 { font-size: max(1.25rem, calc(24 * var(--u))); font-weight: 700; }
+.dashboard-empty p { font-size: max(0.95rem, calc(15 * var(--u))); }
+.dashboard-sleeper { display: grid; justify-items: center; line-height: 1; position: relative; padding-top: 0.6rem; }
+.dashboard-zzz { position: absolute; top: 0; right: max(-1.6rem, calc(-30 * var(--u))); font-size: max(0.55rem, calc(11 * var(--u))); color: #5b4636; }
+.dashboard-cat { width: max(3.25rem, calc(58 * var(--u))); height: auto; }
+.dashboard-board-list { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.dashboard-board { display: block; height: 100%; font-size: max(1rem, calc(17 * var(--u))); }
+
+@media (min-width: 64rem) {
+  .dashboard-retro-heading { margin-inline-start: calc(-60 * var(--u)); }
+}
+
+@media (max-width: 40rem) {
+  .dashboard-scene { padding: 2.75rem 0.75rem 3rem; }
+  .dashboard-header { flex-wrap: wrap; gap: 0.5rem 1rem; }
+  .dashboard-brand { flex: 1 1 55%; font-size: 0.6rem; }
+  .dashboard-account { margin-left: 0; }
+  .dashboard-player { max-width: 5rem; }
+  .dashboard-nav { order: 3; width: 100%; }
+  .dashboard-content { margin-top: 2rem; }
+  .dashboard-form { flex-direction: column; }
+  .dashboard-create-button { flex: 0 0 auto; }
+}
