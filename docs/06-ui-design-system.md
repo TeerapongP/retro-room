@@ -178,3 +178,7 @@ The board bar (title, meta line, timer, share, end) and the step panel are now o
 
 The step 1 description reads "ทุกคนเขียนการ์ดของตัวเอง คนอื่นจะยังไม่เห็นการ์ดของคุณจนกว่าจะถึงขั้นทบทวน". The Board screen subscribes to cards by step (`seesOthers` is true from step 2 or on a completed board). The admin view is unchanged. Column counts in step 1 count only the cards the member can read.
 
+## Writing only in step 1 (F25, D131 to D134)
+
+The `+` button of every column and the add-card form show only while the board is in step 1 and not completed (`canAdd` in `BoardColumn`); from step 2 on they are hidden, and an open form closes. The step 2 description now says "ขั้นนี้เขียนการ์ดเพิ่มไม่ได้". Editing and deleting one's own cards and the admin tools are unchanged.
+

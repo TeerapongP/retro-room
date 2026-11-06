@@ -45,6 +45,7 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F22 | Board timer (owner request, first item of the earlier "Retrospective Timer" non-goal): the admin starts a countdown on an in-progress board and everyone sees the same time. See D109 to D115 |
 | F23 | Session stepper (owner request): the top navbar of the Board is replaced by a six-step bar (เขียน, ทบทวน, โหวต, ให้คะแนนตัวเอง, โฮสต์คนถัดไป, สรุป) that the admin moves and everyone sees. See D116 to D123 |
 | F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees only their own cards; other members' cards appear from step 2 on. Amends D76 and D119. See D126 to D130 |
+| F25 | Writing only in step 1 (owner request): new cards can be written only while the board is in step 1 (เขียน); from step 2 on nobody can add a card. Amends D119. See D131 to D134 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -316,4 +317,13 @@ The owner approved the three policies below and the ledger approach after an emu
 | D128 | Default: moving the step back to step 1 hides other members' cards again; moving forward shows them. Cards written by a member in step 2 or later are visible to others at once |
 | D129 | A completed board shows every non-hidden card to its members whatever step it ended on, so a session ended in step 1 does not lose its cards. A board without a step counts as step 1 (D117) |
 | D130 | Enforced by Rules, not by the interface: the card read rule checks the board's `phase` and `status`. A member's subscription uses two queries (D76); in step 1 only the query for their own cards is allowed, so the client subscribes by step and renews the subscription when the step changes. The Rules cannot hide a card's existence from the count the member's own query returns, which is only their own cards |
+
+## Writing only in step 1 (F25), owner request; the details marked "default" are my recommended choices
+
+| ID | Decision |
+| --- | --- |
+| D131 | A member can add a new card only while the board is in step 1 (เขียน; a board without a step counts as step 1, D117). From step 2 (ทบทวน) through step 6 nobody can add a card: the `+` buttons and the add form are hidden and the Rules reject the write. Amends D119 and D126 |
+| D132 | Default: this blocks only creating cards. Editing the text of one's own card, deleting a card (author or board owner, D100 for the admin), stacking, hiding, moving and the timer keep working in every step. If the review step should also lock editing and deleting for members, say so and it becomes a separate change |
+| D133 | Default: an admin move of a card into another board (D77) still creates the copy there whatever that board's step is, because it moves an existing card and is not new writing. Moving the step back to step 1 lets members write again |
+| D134 | The step 2 text says that adding cards is closed. A member who had the add form open when the admin moved the step sees the write rejected with the normal permission error message |
 

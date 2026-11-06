@@ -447,6 +447,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
               isOwner={isOwner}
               isAdmin={isAdmin}
               readOnly={isCompleted}
+              canAdd={!isCompleted && board.phase === 1}
               onToggleHidden={handleToggleHidden}
               onChangeColumn={handleChangeColumn}
               onStackWith={(card) => {

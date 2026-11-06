@@ -47,7 +47,6 @@ async function liveBoard(title: string): Promise<string> {
   const boardId = await createBoard(owner.user, title, owner.name, owner.db);
   await joinBoard(boardId, member.user, member.name, member.db);
   await startSession(boardId, owner.db);
-  await setPhase(boardId, 2, admin.db); // other members' cards show from step 2 (D126)
   return boardId;
 }
 
@@ -78,6 +77,7 @@ describe("hide and unhide", () => {
     const boardId = await liveBoard("Hide board");
     await addCard(boardId, member.user, "ideas", "Secret idea", member.db);
     await addCard(boardId, owner.user, "ideas", "Open idea", owner.db);
+    await setPhase(boardId, 2, admin.db); // others' cards show from step 2; writing is already done (D126, D131)
     const ownerView = watch(boardId, owner);
     const memberView = watch(boardId, member);
     const adminView = watch(boardId, admin, true);
@@ -119,6 +119,7 @@ describe("hide and unhide", () => {
     await setCardHidden(boardId, adminView.state.cards![0].id, true, admin.db);
     adminView.stop();
 
+    await setPhase(boardId, 2, admin.db); // others' cards show from step 2; writing is already done (D126, D131)
     const ownerView = watch(boardId, owner);
     await waitUntil(() => ownerView.state.cards !== undefined);
     ownerView.stop();
@@ -273,7 +274,7 @@ describe("session step (D116 to D123)", () => {
     const state = { board: undefined as Board | null | undefined };
     const stop = subscribeToBoard(boardId, (next) => (state.board = next), fail, member.db);
     await waitUntil(() => state.board !== undefined);
-    expect(state.board?.phase).toBe(2);
+    expect(state.board?.phase).toBe(1);
 
     await expect(setPhase(boardId, 4, owner.db)).rejects.toMatchObject({ code: "permission-denied" });
     await setPhase(boardId, 3, admin.db);
@@ -318,6 +319,7 @@ describe("admin stacking (D102 to D106)", () => {
     await addCard(boardId, member.user, "went-well", "Target", member.db);
     await addCard(boardId, member.user, "ideas", "Dragged", member.db);
     const adminView = watch(boardId, admin, true);
+    await setPhase(boardId, 2, admin.db); // others' cards show from step 2; writing is already done (D126, D131)
     const memberView = watch(boardId, member);
     await waitUntil(() => adminView.state.cards?.length === 2);
     const target = adminView.state.cards!.find((card) => card.text === "Target")!;
@@ -340,6 +342,7 @@ describe("admin column move (D101)", () => {
     const boardId = await liveBoard("Columns board");
     await addCard(boardId, member.user, "went-well", "Wrong column", member.db);
     const adminView = watch(boardId, admin, true);
+    await setPhase(boardId, 2, admin.db); // others' cards show from step 2; writing is already done (D126, D131)
     const memberView = watch(boardId, member);
     await waitUntil(() => adminView.state.cards?.length === 1);
     const cardId = adminView.state.cards![0].id;
@@ -382,6 +385,7 @@ describe("admin delete (D100)", () => {
   it(`should still deny a member deleting the owner's card`, async () => {
     const boardId = await liveBoard("Deny delete");
     await addCard(boardId, owner.user, "ideas", "Owner card", owner.db);
+    await setPhase(boardId, 2, admin.db); // others' cards show from step 2; writing is already done (D126, D131)
     const ownerView = watch(boardId, owner);
     await waitUntil(() => ownerView.state.cards?.length === 1);
     const cardId = ownerView.state.cards![0].id;

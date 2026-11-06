@@ -100,6 +100,11 @@ service cloud.firestore {
       return board.get('status', 'in-progress') == 'completed' || board.get('phase', 1) >= 2;
     }
 
+    // New cards can be written only in step 1; a board without a step counts as step 1 (F25, D131).
+    function writingOpen(boardId) {
+      return get(boardPath(boardId)).data.get('phase', 1) == 1;
+    }
+
     function validColumn(columnId) {
       return columnId in ['went-well', 'to-improve', 'ideas'];
     }
@@ -244,6 +249,7 @@ service cloud.firestore {
               || (resource.data.hidden == false && cardsRevealed(boardId))));
         allow create: if (isMember(boardId)
             && sessionInProgress(boardId)
+            && writingOpen(boardId)
             && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])
             && request.resource.data.keys().hasAll(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])
             && request.resource.data.authorId == request.auth.uid

@@ -375,6 +375,11 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     },
 
     async addCard(boardId: string, uid: string, columnId: ColumnId, text: string): Promise<void> {
+      // Same rule as firestore.rules: new cards only in step 1 of an in-progress board (D131).
+      const board = boardOrThrow(boardId);
+      if (board.status !== "in-progress" || clampPhase(board.phase) !== 1) {
+        throw Object.assign(new Error("Adding cards is closed"), { code: "permission-denied" });
+      }
       const id = nextId("card");
       cardsOf(boardId)[id] = { id, columnId, text, authorId: uid, hidden: false, createdAt: now().toISOString() };
       changed();

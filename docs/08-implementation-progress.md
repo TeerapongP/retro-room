@@ -247,3 +247,9 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - NOT RUN in the browser: what a non-admin sees (mock mode is always the admin, so the privacy cannot be seen there; the rules and integration tests are the evidence), the brief permission error a member's open subscription may get at the moment the admin moves the board back to step 1 (the page renews the subscription, but a short error box could flash; not observed because it needs two real users), two browsers.
 - Behavior to know: moving the step back to 1 hides others' cards again (D128); the admin sees everything (D127); ending a session in step 1 shows all non-hidden cards (D129).
 
+## F25 Writing only in step 1 (branch `feature/no-new-cards-after-writing`, not committed)
+
+- IMPLEMENTED: `writingOpen` and the stricter card create rule in `firestore.rules`; `canAdd` in `BoardColumn` and the page; the same rule in the mock `addCard` (error code `permission-denied`); step 2 text. Tests: 6 rules, 2 integration and 1 mock added; existing tests that created cards now use a step-1 board (rules) or add cards before the admin starts the review (integration, mock).
+- Chrome DevTools MCP check (mock mode, 1280x720): in step 1 each column had a `+` button (3); step 2 showed the new description and 0 buttons; step 6 had 0; going back to step 1 showed 3 again; an open add form closed when the step moved to 2; no console errors. NOT RUN: a member's view (mock mode is always the admin; the rules and integration tests cover it), the permission error message when a form is open at the moment the step moves, two browsers.
+- Edit and delete of own cards are NOT locked in review (D132, default). Say if members should lose them in the review step too.
+

@@ -22,6 +22,8 @@ type BoardColumnProps = {
   isOwner: boolean;
   isAdmin: boolean;
   readOnly: boolean;
+  /** New cards can be written only in step 1 of an in-progress board (F25, D131). */
+  canAdd: boolean;
   onToggleHidden: (card: BoardCard) => void;
   onMove: (card: BoardCard) => void;
   onAdminDelete: (card: BoardCard) => void;
@@ -43,6 +45,7 @@ export function BoardColumn({
   isOwner,
   isAdmin,
   readOnly,
+  canAdd,
   onToggleHidden,
   onMove,
   onAdminDelete,
@@ -80,7 +83,7 @@ export function BoardColumn({
         <span className="board-count" aria-label={`${cards.length} การ์ด`}>
           {cards.length}
         </span>
-        {readOnly ? null : (
+        {canAdd ? (
           <button
             type="button"
             className="board-add"
@@ -91,9 +94,9 @@ export function BoardColumn({
           >
             <IconPlus />
           </button>
-        )}
+        ) : null}
       </header>
-      {!readOnly && isComposerOpen ? (
+      {canAdd && isComposerOpen ? (
         <form id={composerId} onSubmit={handleAdd} className="board-composer">
           <label htmlFor={inputId} className="sr-only">
             เพิ่มโน้ตใน {label}

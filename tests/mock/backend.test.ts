@@ -134,6 +134,23 @@ describe("mock private writing step", () => {
   });
 });
 
+describe("mock writing only in step 1", () => {
+  it("should reject new cards from step 2 on and accept them again in step 1", async () => {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Closed", "Aomsin");
+    await expect(backend.addCard(boardId, admin.uid, "ideas", "Before start")).rejects.toMatchObject({ code: "permission-denied" });
+    await backend.startSession(boardId);
+    await backend.addCard(boardId, admin.uid, "ideas", "In step 1");
+
+    await backend.setPhase(boardId, 2);
+    await expect(backend.addCard(boardId, admin.uid, "ideas", "In review")).rejects.toMatchObject({ code: "permission-denied" });
+
+    await backend.setPhase(boardId, 1);
+    await backend.addCard(boardId, admin.uid, "ideas", "Back in step 1");
+  });
+});
+
 describe("mock session step", () => {
   it("should start at step 1, follow setPhase for board listeners and survive a reload", async () => {
     const storage = memoryStorage();
@@ -206,7 +223,6 @@ describe("mock cards", () => {
     const boardId = await backend.createBoard(admin.uid, "Cards", "Aomsin");
     await backend.joinBoard(boardId, "guest", "Guest");
     await backend.startSession(boardId);
-    await backend.setPhase(boardId, 2); // other members' cards show from step 2 (D126)
     return { backend, admin, boardId };
   }
 
@@ -236,6 +252,7 @@ describe("mock cards", () => {
     const { backend, admin, boardId } = await liveBoard();
     await backend.addCard(boardId, "guest", "to-improve", "Private");
     await backend.addCard(boardId, admin.uid, "to-improve", "Open");
+    await backend.setPhase(boardId, 2); // others' cards show from step 2 (D126)
     const adminView = watch(backend, boardId, admin.uid, true);
     const guestView = watch(backend, boardId, "guest", false);
     const otherView = watch(backend, boardId, "third", false);

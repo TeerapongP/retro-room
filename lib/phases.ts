@@ -21,7 +21,7 @@ export const PHASES: readonly Phase[] = [
     id: 2,
     label: "ทบทวน",
     title: "ขั้นที่ 2: ทบทวน",
-    description: "อ่านการ์ดทั้งหมดด้วยกันแล้วคอมเมนต์ ผู้ดำเนินรายการซ้อนการ์ดเรื่องเดียวกันได้",
+    description: "อ่านการ์ดทั้งหมดด้วยกันแล้วคอมเมนต์ ขั้นนี้เขียนการ์ดเพิ่มไม่ได้ ผู้ดำเนินรายการซ้อนการ์ดเรื่องเดียวกันได้",
     isBuilt: true,
   },
   { id: 3, label: "โหวต", title: "ขั้นที่ 3: โหวต", description: COMING_SOON, isBuilt: false },

@@ -251,7 +251,7 @@ describe("normal card writes with the hidden field", () => {
   });
 
   it("should let a member create a card with hidden false", async () => {
-    await assertSucceeds(setDoc(doc(bob(), `boards/${SRC}/cards/fresh`), cardData()));
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WRITING}/cards/fresh`), cardData()));
   });
 
   it("should reject a member creating a card that is already hidden", async () => {
@@ -323,6 +323,55 @@ describe("admin column move (D101)", () => {
     await assertFails(updateDoc(ref, { columnId: "ideas", authorId: "admin", updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(ref, { columnId: "ideas", hidden: true, updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(ref, { columnId: "ideas", updatedAt: seeded }));
+  });
+});
+
+describe("writing only in step 1 (D131 to D134)", () => {
+  const newCard = (authorId: string, overrides: Record<string, unknown> = {}) => ({
+    columnId: "ideas",
+    text: "fresh card",
+    authorId,
+    hidden: false,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  it("should let a member add a card while the board is in step 1", async () => {
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WRITING}/cards/fresh`), newCard("bob")));
+    await assertSucceeds(setDoc(doc(alice(), `boards/${WRITING}/cards/fresh2`), newCard("alice")));
+  });
+
+  it("should reject adding a card in steps 2 to 6", async () => {
+    for (const phase of [2, 3, 4, 5, 6]) {
+      await assertSucceeds(setPhase(WRITING, phase));
+      await assertFails(setDoc(doc(bob(), `boards/${WRITING}/cards/late${phase}`), newCard("bob")));
+      await assertFails(setDoc(doc(alice(), `boards/${WRITING}/cards/late${phase}`), newCard("alice")));
+    }
+  });
+
+  it("should let members write again after the admin moves the board back to step 1", async () => {
+    await assertSucceeds(setPhase(WRITING, 2));
+    await assertFails(setDoc(doc(bob(), `boards/${WRITING}/cards/again`), newCard("bob")));
+    await assertSucceeds(setPhase(WRITING, 1));
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WRITING}/cards/again`), newCard("bob")));
+  });
+
+  it("should reject adding a card on a board in the review step even for a board member who is the owner", async () => {
+    await assertFails(setDoc(doc(alice(), `boards/${SRC}/cards/owner1`), newCard("alice")));
+  });
+
+  it("should still let an author edit and delete their own card in the review step (D132)", async () => {
+    await assertSucceeds(
+      updateDoc(doc(bob(), `boards/${SRC}/cards/visible`), { text: "edited in review", updatedAt: serverTimestamp() }),
+    );
+    await assertSucceeds(deleteDoc(doc(bob(), `boards/${SRC}/cards/visible`)));
+  });
+
+  it("should still let the admin move a card into a board that is in the review step (D133)", async () => {
+    await assertSucceeds(move({ src: [SRC, "visible"], dest: [DEST, "moved"] }));
   });
 });
 
@@ -824,9 +873,9 @@ describe("move a card to another board", () => {
   });
 
   it("should still allow a member to create a card with a fresh id after a move", async () => {
-    await allowed();
+    await allowed({ src: [WRITING, "bobWrote"], dest: [DEST, "movedFromWriting"] });
     await assertSucceeds(
-      setDoc(doc(bob(), `boards/${SRC}/cards/fresh`), {
+      setDoc(doc(bob(), `boards/${WRITING}/cards/fresh`), {
         columnId: "ideas", text: "new", authorId: "bob", hidden: false,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       }),
