@@ -39,6 +39,7 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F16 | Dashboard pixel-art redesign (owner-approved scope extension): countryside backdrop, cream pixel-framed navbar and panels, pixel icons, Retro section spacing and empty state, matching `docs/references/retro-room-dashboard-reference.png`. Visual only: board creation, the realtime board list, loading, error and logout behavior are unchanged |
 | F17 | Admin card controls (owner-approved scope extension): one fixed admin (`thirapong.pin@ascendcorp.com`, verified Google email) can hide and unhide cards, move cards to another `in-progress` board, and list boards to pick a destination. Enforced by Firestore Security Rules; see D74 to D82 |
 | F18 | Board screen redesign (owner-approved scope extension): restyle `/boards/[boardId]` to match `docs/references/retro-room-board-reference.png` (countryside backdrop, `RETRO ROOM` navbar, board sign, framed column headers with count and add button, colored cards with author and relative time). Visual only; see D83 to D88 |
+| F19 | Local mock mode (owner-approved scope extension): `pnpm dev:mock` runs the app without Firebase Auth or Firestore, with a fake signed-in admin and in-memory demo data, so UI work is not blocked by login or deployment. Development only; see D89 to D92 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -218,4 +219,13 @@ The owner approved the three policies below and the ledger approach after an emu
 | D86 | Each column has a framed header with a pixel icon, its English label, a card count and a `+` button. The `+` button opens the existing add-card form inline for that column; the form closes after a successful add. Card colors: Went Well green, To Improve red, Ideas purple |
 | D87 | Layout: the three columns sit in the same 82% wide column as the navbar from 64rem up, and stack in one column below it. Completed boards stay read-only (no `+` button), and the join, loading, error and not-found states use the same scene. The waiting (Title) screen keeps its own existing layout in this step |
 | D88 | Verification targets: 375x812, 768x1024, 1280x720, 1852x849 (the reference size) and 1920x1080, no horizontal scroll, no overlap, readable contrast. Nothing is committed or deployed without owner approval |
+
+## Local mock mode (F19), owner approved
+
+| ID | Decision |
+| --- | --- |
+| D89 | Mock mode is chosen at start-up with `NEXT_PUBLIC_MOCK_MODE=true` (`pnpm dev:mock`). It replaces Firebase Auth and Firestore with an in-memory backend (`lib/mock/backend.ts`); no network call to Firebase is made. No production code path is commented out or removed |
+| D90 | Mock mode is development only: `isMockMode()` is false in production builds and off `localhost`/`127.0.0.1`, and a banner states that data is fake. It wins over emulator mode when both are set |
+| D91 | The mock user is the admin identity (`thirapong.pin@ascendcorp.com`, verified) with a player name, so every admin control can be tried. Demo data: two in-progress boards and two other players. State is kept in `localStorage` (`retro-room:mock-state`); clear that key to reset |
+| D92 | The mock backend does NOT run Firestore Security Rules. It is for looking at and clicking through the UI only. Rules and real access are still verified with `pnpm test:rules`, `pnpm test:integration` and the emulator. Real Google sign-in is not part of mock mode |
 

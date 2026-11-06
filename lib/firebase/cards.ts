@@ -17,6 +17,7 @@ import {
   type Timestamp,
   type Unsubscribe,
 } from "firebase/firestore";
+import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
 import type { BoardCard, ColumnId, MoveTargetBoard } from "./types";
 
@@ -51,6 +52,7 @@ export function subscribeToCards(
   onError: (error: unknown) => void,
   db: Firestore = getFirebaseFirestore(),
 ): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToCards(boardId, viewer, onCards, onError);
   const cardsCollection = collection(db, "boards", boardId, "cards");
 
   if (viewer.isAdmin) {
@@ -99,6 +101,7 @@ export async function addCard(
   text: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().addCard(boardId, user.uid, columnId, text);
   await addDoc(collection(db, "boards", boardId, "cards"), {
     columnId,
     text,
@@ -115,6 +118,7 @@ export async function editCard(
   text: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().editCard(boardId, cardId, text);
   await updateDoc(doc(db, "boards", boardId, "cards", cardId), {
     text,
     updatedAt: serverTimestamp(),
@@ -126,6 +130,7 @@ export async function deleteCard(
   cardId: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().deleteCard(boardId, cardId);
   await deleteDoc(doc(db, "boards", boardId, "cards", cardId));
 }
 
@@ -136,6 +141,7 @@ export async function setCardHidden(
   hidden: boolean,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().setCardHidden(boardId, cardId, hidden);
   await updateDoc(doc(db, "boards", boardId, "cards", cardId), {
     hidden,
     updatedAt: serverTimestamp(),
@@ -147,6 +153,7 @@ export async function listMoveTargetBoards(
   currentBoardId: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<MoveTargetBoard[]> {
+  if (isMockMode()) return getMockBackend().listMoveTargetBoards(currentBoardId);
   const snapshot = await getDocs(
     query(collection(db, "boards"), where("status", "==", "in-progress")),
   );
@@ -166,6 +173,7 @@ export async function moveCard(
   destinationBoardId: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().moveCard(sourceBoardId, card, destinationBoardId);
   const destinationCard = doc(collection(db, "boards", destinationBoardId, "cards"));
   const batch = writeBatch(db);
   batch.set(doc(db, "boards", sourceBoardId, "cardMoves", card.id), {

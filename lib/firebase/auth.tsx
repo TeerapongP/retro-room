@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseAuth } from "./client";
 import { getPlayerName, savePlayerName as savePlayerNameForUser } from "./profile";
 
@@ -79,9 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const wasSignedInRef = useRef(false);
 
   useEffect(() => {
-    return onAuthStateChanged(
-      getFirebaseAuth(),
-      (user) => {
+    const handleUser = (user: User | null) => {
         if (user) {
           wasSignedInRef.current = true;
           setUserSignOutMarker(false);
@@ -95,11 +94,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setFirebaseAuthState({ status: "signedOut" });
           setPlayerProfile({ status: "loading" });
         }
-      },
-      (error) => {
-        console.error("Auth state error", error);
-      },
-    );
+    };
+    // Mock mode (F19) swaps Firebase Auth for the in-memory backend; the rest of this handler is unchanged.
+    if (isMockMode()) return getMockBackend().onAuthChange((user) => handleUser(user as unknown as User | null));
+    return onAuthStateChanged(getFirebaseAuth(), handleUser, (error) => {
+      console.error("Auth state error", error);
+    });
   }, []);
 
   const signedInUid =
@@ -148,13 +148,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [firebaseAuthState.status]);
 
   const signInWithGoogle = useCallback(async () => {
+    if (isMockMode()) {
+      await getMockBackend().signIn();
+      return;
+    }
     await signInWithPopup(getFirebaseAuth(), new GoogleAuthProvider());
   }, []);
 
   const signOutUser = useCallback(async () => {
     setUserSignOutMarker(true);
     try {
-      await signOut(getFirebaseAuth());
+      if (isMockMode()) await getMockBackend().signOut();
+      else await signOut(getFirebaseAuth());
     } catch (error) {
       setUserSignOutMarker(false);
       throw error;

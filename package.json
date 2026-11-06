@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test:rules": "firebase emulators:exec --only firestore --project demo-retro-room \"vitest run tests/rules\"",
     "test:integration": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"vitest run tests/integration\"",
+    "dev:mock": "NEXT_PUBLIC_MOCK_MODE=true next dev",
     "dev:emulator": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true next dev\"",
     "test:assets": "vitest run tests/assets"
   },

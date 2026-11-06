@@ -17,6 +17,7 @@ import {
   type Timestamp,
   type Unsubscribe,
 } from "firebase/firestore";
+import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
 import { type Board, type BoardMember, type BoardRole, type DashboardBoard } from "./types";
 
@@ -36,6 +37,7 @@ export async function createBoard(
   playerName: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<string> {
+  if (isMockMode()) return getMockBackend().createBoard(user.uid, title, playerName);
   const boardRef = doc(collection(db, "boards"));
   const batch = writeBatch(db);
   batch.set(boardRef, {
@@ -59,6 +61,7 @@ export async function startSession(
   boardId: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().startSession(boardId);
   await updateDoc(doc(db, "boards", boardId), {
     status: "in-progress",
     startedAt: serverTimestamp(),
@@ -70,6 +73,7 @@ export async function completeSession(
   boardId: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().completeSession(boardId);
   await updateDoc(doc(db, "boards", boardId), {
     status: "completed",
     completedAt: serverTimestamp(),
@@ -83,6 +87,7 @@ export async function joinBoard(
   playerName: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
+  if (isMockMode()) return getMockBackend().joinBoard(boardId, user.uid, playerName);
   await setDoc(doc(db, "boards", boardId, "members", user.uid), {
     uid: user.uid,
     role: "member",
@@ -96,6 +101,7 @@ export async function getOwnMembership(
   uid: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<BoardMember | null> {
+  if (isMockMode()) return getMockBackend().getOwnMembership(boardId, uid);
   const snapshot = await getDoc(doc(db, "boards", boardId, "members", uid));
   const data = snapshot.data();
   return snapshot.exists() && data ? toMember(data) : null;
@@ -107,6 +113,7 @@ export function subscribeToBoard(
   onError: (error: unknown) => void,
   db: Firestore = getFirebaseFirestore(),
 ): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToBoard(boardId, onBoard, onError);
   return onSnapshot(
     doc(db, "boards", boardId),
     (snapshot) => {
@@ -132,6 +139,7 @@ export function subscribeToMembers(
   onError: (error: unknown) => void,
   db: Firestore = getFirebaseFirestore(),
 ): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToMembers(boardId, onMembers, onError);
   return onSnapshot(
     query(
       collection(db, "boards", boardId, "members"),
@@ -148,6 +156,7 @@ export function subscribeToMemberships(
   onError: (error: unknown) => void,
   db: Firestore = getFirebaseFirestore(),
 ): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToMemberships(uid, onBoards, onError);
   let latestRequest = 0;
   return onSnapshot(
     query(collectionGroup(db, "members"), where("uid", "==", uid)),

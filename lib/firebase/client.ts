@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
+import { isMockMode } from "../mock";
 
 const EMULATOR_PROJECT_ID = "demo-retro-room";
 const AUTH_EMULATOR_URL = "http://127.0.0.1:9099";
@@ -59,6 +60,8 @@ function getFirebaseApp(): FirebaseApp {
 }
 
 export function getFirebaseAuth(): Auth {
+  // Mock mode never talks to Firebase; the placeholder only satisfies default parameters (F19, D89).
+  if (isMockMode()) return {} as Auth;
   const auth = getAuth(getFirebaseApp());
   if (isEmulatorRequested() && !connectedEmulatorServices().has(auth)) {
     connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
@@ -68,6 +71,7 @@ export function getFirebaseAuth(): Auth {
 }
 
 export function getFirebaseFirestore(): Firestore {
+  if (isMockMode()) return {} as Firestore;
   const firestore = getFirestore(getFirebaseApp());
   if (isEmulatorRequested() && !connectedEmulatorServices().has(firestore)) {
     connectFirestoreEmulator(firestore, FIRESTORE_EMULATOR_HOST, FIRESTORE_EMULATOR_PORT);

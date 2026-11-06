@@ -7,6 +7,7 @@ import {
   updateDoc,
   type Firestore,
 } from "firebase/firestore";
+import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
 import { isValidPlayerName, normalizePlayerName } from "./types";
 
@@ -15,6 +16,7 @@ export async function getPlayerName(
   uid: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<string | null> {
+  if (isMockMode()) return getMockBackend().getPlayerName(uid);
   const snapshot = await getDoc(doc(db, "users", uid));
   const data = snapshot.data();
   return snapshot.exists() && data?.nameSetAt ? data.displayName : null;
@@ -26,6 +28,7 @@ export async function savePlayerName(
   rawName: string,
   db: Firestore = getFirebaseFirestore(),
 ): Promise<string> {
+  if (isMockMode()) return getMockBackend().savePlayerName(user.uid, rawName);
   const playerName = normalizePlayerName(rawName);
   if (!isValidPlayerName(playerName)) {
     throw new Error("Invalid player name");
