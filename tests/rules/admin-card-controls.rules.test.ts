@@ -489,6 +489,67 @@ describe("self rating (D145 to D148)", () => {
   });
 });
 
+describe("next host wheel (D149 to D152)", () => {
+  const spin = (client: ReturnType<typeof admin>, winner: unknown, extra: Record<string, unknown> = {}, boardId = VOTING) =>
+    updateDoc(doc(client, `boards/${boardId}`), {
+      nextHostUid: winner,
+      nextHostSpunAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      ...extra,
+    });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  beforeEach(async () => {
+    await assertSucceeds(setPhase(VOTING, 5));
+  });
+
+  it("should let the admin store a board member as the next host in step 5, again and again", async () => {
+    await assertSucceeds(spin(admin(), "bob"));
+    await assertSucceeds(spin(admin(), "alice"));
+  });
+
+  it("should reject a winner who is not a member and malformed winners", async () => {
+    await assertFails(spin(admin(), "stranger"));
+    for (const winner of [null, 5, "", ["bob"], "x".repeat(129)]) {
+      await assertFails(spin(admin(), winner));
+    }
+  });
+
+  it("should reject a wrong spin time, extra fields and a missing field", async () => {
+    await assertFails(spin(admin(), "bob", { nextHostSpunAt: seeded }));
+    await assertFails(spin(admin(), "bob", { title: "renamed" }));
+    await assertFails(updateDoc(doc(admin(), `boards/${VOTING}`), { nextHostUid: "bob", updatedAt: serverTimestamp() }));
+  });
+
+  it("should reject the spin by a member, the owner, a stranger and look-alikes", async () => {
+    await assertFails(spin(bob(), "bob"));
+    await assertFails(spin(alice(), "alice"));
+    await assertFails(spin(stranger(), "bob"));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(spin(makeClient(), "bob"));
+    }
+  });
+
+  it("should reject the spin in every step except 5", async () => {
+    for (const phase of [1, 2, 3, 4, 6]) {
+      await assertSucceeds(setPhase(VOTING, phase));
+      await assertFails(spin(admin(), "bob"));
+    }
+  });
+
+  it("should reject the spin on a waiting board and a completed board", async () => {
+    await assertFails(spin(admin(), "bob", {}, WAITING));
+    await assertFails(spin(admin(), "bob", {}, COMPLETED));
+  });
+
+  it("should let members read the result", async () => {
+    await assertSucceeds(spin(admin(), "bob"));
+    const snapshot = await assertSucceeds(getDoc(doc(bob(), `boards/${VOTING}`)));
+    if (snapshot.data()?.nextHostUid !== "bob") throw new Error("result not readable");
+  });
+});
+
 describe("writing only in step 1 (D131 to D134)", () => {
   const newCard = (authorId: string, overrides: Record<string, unknown> = {}) => ({
     columnId: "ideas",

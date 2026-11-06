@@ -275,3 +275,10 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 ## Timer only in step 1 (owner request, not committed)
 
 - The `ตั้งเวลา` button and the countdown show only in step 1 (`app/boards/[boardId]/page.tsx`); from step 2 on and on a completed board they are hidden. The timer Rules (D112) are unchanged, so a timer started in step 1 stays stored but is not shown later. NOT RUN: browser check of a running timer when the step moves on.
+
+## F29 Next-host wheel, step 5 (not committed; branch `feature/lock-edit-after-writing`)
+
+- IMPLEMENTED: board fields `nextHostUid` and `nextHostSpunAt` (`lib/firebase/types.ts`, `boards.ts` `spinNextHost`), Rules `validHostSpin`, mock `spinNextHost`, `lib/wheel.ts`, `components/HostWheel.tsx`, step 5 made real in `lib/phases.ts`. Docs: D149 to D152 in docs/01, 05, 06.
+- Tests added: wheel unit tests, 2 mock, 7 rules, 1 integration.
+- Chrome DevTools MCP check (mock mode): step 5 showed the wheel with 3 names; the spin ran 5 seconds, ended on the winner under the pointer (rotation matched the winner's index) and showed `โฮสต์คนถัดไป: <name>`; the button became `หมุนอีกครั้ง`. The first screenshot showed a broken layout from stale CSS; after a clean restart it was correct.
+- NOT RUN / known: a member's view (mock mode is always the admin), two browsers at once, phone width, the final layout after the last size tweak (stale CSS in the preview, the page scrolls to the button at 742 px height), a spin that arrives while the page is open on another step.

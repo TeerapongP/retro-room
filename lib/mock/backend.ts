@@ -46,6 +46,8 @@ type StoredBoard = {
   timerEndsAt?: string | null;
   timerDurationSec?: number | null;
   phase?: number;
+  nextHostUid?: string | null;
+  nextHostSpunAt?: string | null;
   createdAt: string;
 };
 type StoredMember = BoardMember & { joinedAt: string };
@@ -211,6 +213,8 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       timerEndsAt: stored.timerEndsAt ? new Date(stored.timerEndsAt) : null,
       timerDurationSec: stored.timerDurationSec ?? null,
       phase: clampPhase(stored.phase),
+      nextHostUid: stored.nextHostUid ?? null,
+      nextHostSpunAt: stored.nextHostSpunAt ? new Date(stored.nextHostSpunAt) : null,
     };
   }
 
@@ -346,6 +350,17 @@ export function createMockBackend(options: MockBackendOptions = {}) {
 
     async setPhase(boardId: string, phase: number): Promise<void> {
       boardOrThrow(boardId).phase = clampPhase(phase);
+      changed();
+    },
+
+    async spinNextHost(boardId: string, winnerUid: string): Promise<void> {
+      // Same rules as firestore.rules: in-progress board, step 5, winner is a member (D149).
+      const board = boardOrThrow(boardId);
+      if (board.status !== "in-progress" || clampPhase(board.phase) !== 5 || !state.members[boardId]?.[winnerUid]) {
+        throw Object.assign(new Error("The wheel is closed or the winner is not a member"), { code: "permission-denied" });
+      }
+      board.nextHostUid = winnerUid;
+      board.nextHostSpunAt = now().toISOString();
       changed();
     },
 

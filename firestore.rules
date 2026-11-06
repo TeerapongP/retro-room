@@ -83,6 +83,22 @@ service cloud.firestore {
     }
 
     // The step of the session, 1 to 6 (F23, D117, D121): the admin changes only the step, on an in-progress board.
+    // Admin spins the next-host wheel in step 5 (F29, D149 to D152): the winner must be a member of the board.
+    function validHostSpin(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        && data.diff(resource.data).affectedKeys().hasOnly(['nextHostUid', 'nextHostSpunAt', 'updatedAt'])
+        && data.keys().hasAll(['nextHostUid', 'nextHostSpunAt'])
+        && data.updatedAt == request.time
+        && data.nextHostSpunAt == request.time
+        && data.nextHostUid is string
+        && data.nextHostUid.size() >= 1
+        && data.nextHostUid.size() <= 128
+        && exists(memberPath(boardId, data.nextHostUid));
+    }
+
     function validPhaseUpdate(boardId) {
       let data = request.resource.data;
       return isAdmin()
@@ -245,7 +261,9 @@ service cloud.firestore {
         // admin starts or stops the shared timer (F22, D112)
         || validTimerUpdate(boardId)
         // admin moves the session step (F23, D121)
-        || validPhaseUpdate(boardId);
+        || validPhaseUpdate(boardId)
+        // admin spins the next-host wheel (F29, D149)
+        || validHostSpin(boardId);
       allow delete: if false;
 
       match /members/{uid} {

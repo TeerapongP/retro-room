@@ -38,7 +38,13 @@ export const PHASES: readonly Phase[] = [
     description: "ให้คะแนนตัวเอง 1 ถึง 5 (ครั้งละ 0.5) สำหรับ sprint นี้ ทุกคนเห็นคะแนนของทุกคนและค่าเฉลี่ย",
     isBuilt: true,
   },
-  { id: 5, label: "โฮสต์คนถัดไป", title: "ขั้นที่ 5: โฮสต์คนถัดไป", description: COMING_SOON, isBuilt: false },
+  {
+    id: 5,
+    label: "โฮสต์คนถัดไป",
+    title: "ขั้นที่ 5: โฮสต์คนถัดไป",
+    description: "หมุนวงล้อสุ่มโฮสต์คนถัดไป ผู้ดำเนินรายการเป็นคนกดหมุน ทุกคนเห็นผลพร้อมกัน",
+    isBuilt: true,
+  },
   { id: 6, label: "สรุป", title: "ขั้นที่ 6: สรุป", description: COMING_SOON, isBuilt: false },
 ];
 

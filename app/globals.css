@@ -1264,3 +1264,12 @@ button.phase-step-button:hover { filter: brightness(1.05); }
 .rating-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.5rem 2rem; margin: 0; padding: 0; list-style: none; font-size: clamp(1rem, 1.4vw, 1.25rem); color: #493521; }
 .rating-people li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0.5rem; border-bottom: 2px dotted #e6bf82; }
 @media (max-width: 40rem) { .rating-scale { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+
+/* Next-host wheel (F29): a spinning wheel of the board's members. The pointer is at the top. */
+.host-wheel-panel { display: grid; justify-items: center; gap: 1rem; width: 100%; padding: clamp(1rem, 2.5vw, 2.5rem); }
+.host-wheel-stage { position: relative; width: min(70vw, 22rem, 30dvh); aspect-ratio: 1; margin-top: 1.2rem; }
+.host-wheel-pointer { position: absolute; z-index: 2; top: -0.9rem; left: 50%; width: 0; height: 0; transform: translateX(-50%); border-left: 0.9rem solid transparent; border-right: 0.9rem solid transparent; border-top: 1.6rem solid #493521; }
+.host-wheel { position: relative; width: 100%; height: 100%; border-radius: 50%; border: 6px solid #493521; box-shadow: inset 0 0 0 4px #e6bf82, 0 6px 0 rgb(48 30 15 / 0.4); }
+.host-wheel-label { position: absolute; top: 50%; left: 50%; width: 42%; transform: rotate(calc(var(--label-angle) - 90deg)) translateX(8%); transform-origin: 0 0; font-weight: 800; color: #493521; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; padding-right: 0.25rem; }
+.host-wheel-result { margin: 0; font-size: clamp(1.25rem, 2.4vw, 2rem); font-weight: 800; color: #493521; text-align: center; }
+.host-wheel-hint { margin: 0; color: #493521; }

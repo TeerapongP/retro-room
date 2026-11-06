@@ -171,6 +171,38 @@ describe("mock self rating", () => {
   });
 });
 
+describe("mock next host wheel", () => {
+  async function wheelBoard() {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Wheel", "Aomsin");
+    await backend.joinBoard(boardId, "guest", "Guest");
+    await backend.startSession(boardId);
+    await backend.setPhase(boardId, 5);
+    return { backend, admin, boardId };
+  }
+
+  it("should store the winner and the spin time for every listener", async () => {
+    const { backend, boardId } = await wheelBoard();
+    let board: { nextHostUid: string | null; nextHostSpunAt: Date | null } | null = null;
+    const stop = backend.subscribeToBoard(boardId, (next) => (board = next), fail);
+    await flush();
+    expect(board).toMatchObject({ nextHostUid: null, nextHostSpunAt: null });
+
+    await backend.spinNextHost(boardId, "guest");
+    stop();
+    expect(board).toMatchObject({ nextHostUid: "guest" });
+    expect(board!.nextHostSpunAt).toBeInstanceOf(Date);
+  });
+
+  it("should refuse a non-member winner and spins outside step 5", async () => {
+    const { backend, boardId } = await wheelBoard();
+    await expect(backend.spinNextHost(boardId, "stranger")).rejects.toMatchObject({ code: "permission-denied" });
+    await backend.setPhase(boardId, 4);
+    await expect(backend.spinNextHost(boardId, "guest")).rejects.toMatchObject({ code: "permission-denied" });
+  });
+});
+
 describe("mock voting", () => {
   async function votingBoard() {
     const backend = setup();

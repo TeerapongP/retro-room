@@ -5,6 +5,7 @@ import {
   createBoard,
   joinBoard,
   setPhase,
+  spinNextHost,
   startSession,
   startTimer,
   stopTimer,
@@ -280,6 +281,24 @@ describe("self rating (D145 to D148)", () => {
     await expect(saveMyRating(boardId, member.uid, 2, member.db)).rejects.toMatchObject({
       code: "permission-denied",
     });
+  });
+});
+
+describe("next host wheel (D149 to D152)", () => {
+  it(`should let the admin spin in step 5 and show every member the same winner`, async () => {
+    const boardId = await liveBoard("Wheel board");
+    await expect(spinNextHost(boardId, member.uid, admin.db)).rejects.toMatchObject({ code: "permission-denied" });
+
+    await setPhase(boardId, 5, admin.db);
+    await expect(spinNextHost(boardId, member.uid, member.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(spinNextHost(boardId, "nobody", admin.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await spinNextHost(boardId, member.uid, admin.db);
+
+    const seen = { board: undefined as Board | null | undefined };
+    const stop = subscribeToBoard(boardId, (next) => (seen.board = next), fail, owner.db);
+    await waitUntil(() => seen.board?.nextHostUid === member.uid);
+    expect(seen.board?.nextHostSpunAt).toBeInstanceOf(Date);
+    stop();
   });
 });
 

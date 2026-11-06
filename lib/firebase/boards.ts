@@ -94,6 +94,20 @@ export async function setPhase(
   await updateDoc(doc(db, "boards", boardId), { phase, updatedAt: serverTimestamp() });
 }
 
+/** Admin only (F29, D149): stores the wheel result. Rules allow it only in step 5 and only for a member of the board. */
+export async function spinNextHost(
+  boardId: string,
+  winnerUid: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().spinNextHost(boardId, winnerUid);
+  await updateDoc(doc(db, "boards", boardId), {
+    nextHostUid: winnerUid,
+    nextHostSpunAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 /** Admin only: stops the countdown. */
 export async function stopTimer(boardId: string, db: Firestore = getFirebaseFirestore()): Promise<void> {
   if (isMockMode()) return getMockBackend().stopTimer(boardId);
@@ -163,6 +177,8 @@ export function subscribeToBoard(
               timerEndsAt: toDate(data.timerEndsAt),
               timerDurationSec: typeof data.timerDurationSec === "number" ? data.timerDurationSec : null,
               phase: clampPhase(data.phase),
+              nextHostUid: typeof data.nextHostUid === "string" ? data.nextHostUid : null,
+              nextHostSpunAt: toDate(data.nextHostSpunAt),
             }
           : null,
       );

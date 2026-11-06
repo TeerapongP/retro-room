@@ -35,6 +35,9 @@ export type Board = {
   timerDurationSec: number | null;
   /** Shared session step, 1 to 6 (F23, D117). */
   phase: number;
+  /** Result of the next-host wheel (F29, D149): the winner's uid and when the wheel was spun, or null before any spin. */
+  nextHostUid: string | null;
+  nextHostSpunAt: Date | null;
 };
 
 export type BoardMember = {

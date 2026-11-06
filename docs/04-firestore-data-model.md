@@ -43,6 +43,8 @@ Columns are fixed in the client (D1): `went-well`, `to-improve`, `ideas`. They a
 | Field | Type | Notes |
 | --- | --- | --- |
 | `timerEndsAt` | timestamp or `null` | End of the shared countdown; absent or `null` when no timer runs. Set from the admin's clock, at most 2 hours ahead |
+| `nextHostUid` | string | Winner of the next-host wheel (F29, D149): uid of a board member. Written by the admin in step 5 |
+| `nextHostSpunAt` | timestamp | When the wheel was spun (server time); clients replay a spin younger than 10 seconds |
 | `timerDurationSec` | integer or `null` | The length it was started with (1 to 7200) |
 | `phase` | integer 1 to 6 | F23 (D117). The shared session step; absent means 1. Only the admin changes it |
 
