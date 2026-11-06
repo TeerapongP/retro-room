@@ -43,7 +43,14 @@ export type BoardCard = {
   columnId: ColumnId;
   text: string;
   authorId: string;
+  hidden: boolean;
   createdAt: Date | null;
+};
+
+/** A board the admin can move a card into (listed with the admin-only board query). */
+export type MoveTargetBoard = {
+  id: string;
+  title: string;
 };
 
 export type DashboardBoard = {
