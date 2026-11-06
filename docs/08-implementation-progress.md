@@ -271,3 +271,7 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - IMPLEMENTED: `ratings` subcollection and Rules (`ratingOpen`, `validRating`), `lib/ratings.ts`, `lib/firebase/ratings.ts`, mock `subscribeToRatings`/`saveMyRating`, `components/RatingPanel.tsx`, step 4 made real in `lib/phases.ts`, page hides the columns in step 4. Docs: D145 to D148 in docs/01, 04, 05, 06.
 - Tests added: 8 rules tests, 1 integration, 2 mock, ratings unit tests. NOT DEPLOYED: Rules need deploy with the others.
 - NOT RUN: a member's view in the browser and two browsers at once (mock mode is always the admin).
+
+## Timer only in step 1 (owner request, not committed)
+
+- The `ตั้งเวลา` button and the countdown show only in step 1 (`app/boards/[boardId]/page.tsx`); from step 2 on and on a completed board they are hidden. The timer Rules (D112) are unchanged, so a timer started in step 1 stays stored but is not shown later. NOT RUN: browser check of a running timer when the step moves on.

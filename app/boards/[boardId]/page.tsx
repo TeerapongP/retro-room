@@ -345,7 +345,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
                 โหวตเหลือ {votesLeft(myVotes)}/{VOTES_PER_MEMBER}
               </span>
             ) : null}
-            {isCompleted ? null : (
+            {isCompleted || board.phase !== 1 ? null : (
               <BoardTimer
                 board={board}
                 isAdmin={isAdmin}
