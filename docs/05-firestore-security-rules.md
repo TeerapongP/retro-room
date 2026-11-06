@@ -151,6 +151,8 @@ Implemented in `firestore.rules`; 174 emulator rules tests (66 new, in `tests/ru
 
 - `isAdmin()`: `request.auth.token.email == 'thirapong.pin@ascendcorp.com'` and `email_verified == true`.
 - Cards: read by the admin, or by a member when `resource.data.hidden == false` or the member is the author. Do not rewrite this as `get('hidden', false) == false`: the spike showed an unfiltered member query then returns hidden cards on the emulator. Member create requires `hidden: false` and no ledger for that id; author update may only change `text` and `updatedAt`; admin update may only change `hidden` and `updatedAt` on an `in-progress` board.
+- Session step (D121): on `boards/{boardId}` the admin may update only `phase` (an integer from 1 to 6) and `updatedAt`, on an `in-progress` board.
+- Board timer (D112): on `boards/{boardId}` the admin may update only `timerEndsAt`, `timerDurationSec` and `updatedAt`, on an `in-progress` board: `timerEndsAt` null or a timestamp later than the request time and at most 2 hours later; `timerDurationSec` null or an integer from 1 to 7200. The owner's rename, start and complete rules are unchanged.
 - Stack (D102 to D106): the admin may update only `groupId` (a string of 1 to 64 characters, `null` or absent), `columnId` (valid) and `updatedAt` of a card on an `in-progress` board. The Rules do not check that a group exists. Members cannot create a card with a `groupId`.
 - Column move (D101): the admin may update only `columnId` (a valid column) and `updatedAt` of a card on an `in-progress` board. Nobody else can change a card's column.
 - Delete (D100): the admin may delete any card of an `in-progress` board, member or not. Authors and owners keep their rights.

@@ -1,4 +1,5 @@
 import { ADMIN_EMAIL } from "../firebase/admin";
+import { clampPhase } from "../phases";
 import {
   isValidPlayerName,
   normalizePlayerName,
@@ -25,14 +26,24 @@ export type MockUser = {
   email: string;
   emailVerified: boolean;
   displayName: string;
-  photoURL: null;
+  photoURL: string | null;
 };
+
+/** A drawn avatar for the mock admin, so the account chip shows a photo like a real Google sign-in (D124). */
+const MOCK_ADMIN_PHOTO =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='#c98b4e'/><circle cx='16' cy='12' r='6' fill='#fff3df'/><rect x='6' y='21' width='20' height='11' rx='5' fill='#fff3df'/></svg>",
+  );
 
 type StoredBoard = {
   id: string;
   title: string;
   ownerId: string;
   status: BoardStatus;
+  timerEndsAt?: string | null;
+  timerDurationSec?: number | null;
+  phase?: number;
   createdAt: string;
 };
 type StoredMember = BoardMember & { joinedAt: string };
@@ -88,10 +99,10 @@ function seedState(): MockState {
   return {
     session: null,
     profiles: { [MOCK_ADMIN_UID]: "Aomsin", "mock-ploy": "Ploy", "mock-nok": "Nok" },
-    boards: { sprint12: board("sprint12", "Sprint 12"), sprint13: board("sprint13", "Sprint 13") },
-    members: { sprint12: members(), sprint13: members() },
+    boards: { sprint23: board("sprint23", "Sprint 23"), sprint13: board("sprint13", "Sprint 13") },
+    members: { sprint23: members(), sprint13: members() },
     cards: {
-      sprint12: {
+      sprint23: {
         a: card("a", "went-well", "Deploy was smooth this sprint", "mock-ploy", false, 1),
         b: card("b", "to-improve", "Stand-ups run too long", "mock-nok", false, 2),
         c: card("c", "to-improve", "Private feedback about the review process", "mock-nok", true, 3),
@@ -159,7 +170,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       email: uid === MOCK_ADMIN_UID ? ADMIN_EMAIL : `${uid}@example.test`,
       emailVerified: true,
       displayName: state.profiles[uid] ?? "Mock player",
-      photoURL: null,
+      photoURL: uid === MOCK_ADMIN_UID ? MOCK_ADMIN_PHOTO : null,
     };
   }
 
@@ -186,7 +197,15 @@ export function createMockBackend(options: MockBackendOptions = {}) {
   }
 
   function toBoard(stored: StoredBoard): Board {
-    return { id: stored.id, title: stored.title, ownerId: stored.ownerId, status: stored.status };
+    return {
+      id: stored.id,
+      title: stored.title,
+      ownerId: stored.ownerId,
+      status: stored.status,
+      timerEndsAt: stored.timerEndsAt ? new Date(stored.timerEndsAt) : null,
+      timerDurationSec: stored.timerDurationSec ?? null,
+      phase: clampPhase(stored.phase),
+    };
   }
 
   function toCard(stored: StoredCard): BoardCard {
@@ -262,6 +281,25 @@ export function createMockBackend(options: MockBackendOptions = {}) {
 
     async startSession(boardId: string): Promise<void> {
       boardOrThrow(boardId).status = "in-progress";
+      changed();
+    },
+
+    async setPhase(boardId: string, phase: number): Promise<void> {
+      boardOrThrow(boardId).phase = clampPhase(phase);
+      changed();
+    },
+
+    async startTimer(boardId: string, minutes: number): Promise<void> {
+      const board = boardOrThrow(boardId);
+      board.timerEndsAt = new Date(now().getTime() + minutes * 60_000).toISOString();
+      board.timerDurationSec = Math.round(minutes * 60);
+      changed();
+    },
+
+    async stopTimer(boardId: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      board.timerEndsAt = null;
+      board.timerDurationSec = null;
       changed();
     },
 

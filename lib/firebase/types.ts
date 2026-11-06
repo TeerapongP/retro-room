@@ -30,6 +30,11 @@ export type Board = {
   title: string;
   ownerId: string;
   status: BoardStatus;
+  /** Shared countdown (F22, D111): end time and the length it was started with, or null when no timer runs. */
+  timerEndsAt: Date | null;
+  timerDurationSec: number | null;
+  /** Shared session step, 1 to 6 (F23, D117). */
+  phase: number;
 };
 
 export type BoardMember = {

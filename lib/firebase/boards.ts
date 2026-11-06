@@ -1,5 +1,6 @@
 import type { User } from "firebase/auth";
 import {
+  Timestamp,
   collection,
   collectionGroup,
   doc,
@@ -14,10 +15,10 @@ import {
   writeBatch,
   type DocumentData,
   type Firestore,
-  type Timestamp,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getMockBackend, isMockMode } from "../mock";
+import { clampPhase } from "../phases";
 import { getFirebaseFirestore } from "./client";
 import { type Board, type BoardMember, type BoardRole, type DashboardBoard } from "./types";
 
@@ -65,6 +66,40 @@ export async function startSession(
   await updateDoc(doc(db, "boards", boardId), {
     status: "in-progress",
     startedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Admin only (D110, D112): starts the shared countdown. Rules reject anyone else, a past end time and more than 2 hours. */
+export async function startTimer(
+  boardId: string,
+  minutes: number,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().startTimer(boardId, minutes);
+  await updateDoc(doc(db, "boards", boardId), {
+    timerEndsAt: Timestamp.fromMillis(Date.now() + minutes * 60_000),
+    timerDurationSec: Math.round(minutes * 60),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Admin only (D117, D121): moves the shared session step (1 to 6). Rules reject anyone else. */
+export async function setPhase(
+  boardId: string,
+  phase: number,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().setPhase(boardId, phase);
+  await updateDoc(doc(db, "boards", boardId), { phase, updatedAt: serverTimestamp() });
+}
+
+/** Admin only: stops the countdown. */
+export async function stopTimer(boardId: string, db: Firestore = getFirebaseFirestore()): Promise<void> {
+  if (isMockMode()) return getMockBackend().stopTimer(boardId);
+  await updateDoc(doc(db, "boards", boardId), {
+    timerEndsAt: null,
+    timerDurationSec: null,
     updatedAt: serverTimestamp(),
   });
 }
@@ -125,6 +160,9 @@ export function subscribeToBoard(
               title: data.title,
               ownerId: data.ownerId,
               status: data.status ?? "in-progress",
+              timerEndsAt: toDate(data.timerEndsAt),
+              timerDurationSec: typeof data.timerDurationSec === "number" ? data.timerDurationSec : null,
+              phase: clampPhase(data.phase),
             }
           : null,
       );

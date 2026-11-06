@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ADMIN_EMAIL, isAdminUser } from "@/lib/firebase/admin";
-import { completeSession, createBoard, joinBoard, startSession } from "@/lib/firebase/boards";
+import {
+  completeSession,
+  createBoard,
+  joinBoard,
+  setPhase,
+  startSession,
+  startTimer,
+  stopTimer,
+  subscribeToBoard,
+} from "@/lib/firebase/boards";
 import {
   addCard,
   deleteCard,
@@ -12,7 +21,7 @@ import {
   subscribeToCards,
   unstackCard,
 } from "@/lib/firebase/cards";
-import type { BoardCard } from "@/lib/firebase/types";
+import type { Board, BoardCard } from "@/lib/firebase/types";
 import { createTestUser, resetEmulators, waitUntil, type TestUser } from "./helpers";
 
 let owner: TestUser;
@@ -202,6 +211,51 @@ describe("move to another board", () => {
     expect(sourceView.state.cards?.map((card) => card.text)).toEqual(["Stay"]);
     sourceView.stop();
     destinationView.stop();
+  });
+});
+
+describe("session step (D116 to D123)", () => {
+  it(`should let the admin move the shared step that members see and deny the owner`, async () => {
+    const boardId = await liveBoard("Step board");
+    const state = { board: undefined as Board | null | undefined };
+    const stop = subscribeToBoard(boardId, (next) => (state.board = next), fail, member.db);
+    await waitUntil(() => state.board !== undefined);
+    expect(state.board?.phase).toBe(1);
+
+    await expect(setPhase(boardId, 2, owner.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await setPhase(boardId, 3, admin.db);
+    await waitUntil(() => state.board?.phase === 3);
+    await expect(setPhase(boardId, 7, admin.db)).rejects.toMatchObject({ code: "permission-denied" });
+    stop();
+  });
+});
+
+describe("board timer (D109 to D115)", () => {
+  it(`should let the admin start and stop a shared timer that members see, and deny the owner`, async () => {
+    const boardId = await liveBoard("Timer board");
+    const state = { board: undefined as Board | null | undefined };
+    const stop = subscribeToBoard(boardId, (next) => (state.board = next), fail, member.db);
+    await waitUntil(() => state.board !== undefined);
+    expect(state.board?.timerEndsAt).toBeNull();
+
+    await expect(startTimer(boardId, 5, owner.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await startTimer(boardId, 5, admin.db);
+    await waitUntil(() => state.board?.timerEndsAt instanceof Date);
+    expect(state.board?.timerDurationSec).toBe(300);
+    const left = state.board!.timerEndsAt!.getTime() - Date.now();
+    expect(left).toBeGreaterThan(280_000);
+    expect(left).toBeLessThanOrEqual(300_000);
+
+    await stopTimer(boardId, admin.db);
+    await waitUntil(() => state.board?.timerEndsAt === null);
+    stop();
+  });
+
+  it(`should reject a timer longer than 2 hours and a timer on a completed board`, async () => {
+    const boardId = await liveBoard("Long timer board");
+    await expect(startTimer(boardId, 121, admin.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await completeSession(boardId, owner.db);
+    await expect(startTimer(boardId, 5, admin.db)).rejects.toMatchObject({ code: "permission-denied" });
   });
 });
 

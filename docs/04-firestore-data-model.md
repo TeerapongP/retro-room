@@ -38,6 +38,14 @@ Email is not stored (D8). Readable and writable only by the user with that `uid`
 
 Columns are fixed in the client (D1): `went-well`, `to-improve`, `ideas`. They are not stored on the Board.
 
+### Timer fields on `boards/{boardId}` (F22, D111)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `timerEndsAt` | timestamp or `null` | End of the shared countdown; absent or `null` when no timer runs. Set from the admin's clock, at most 2 hours ahead |
+| `timerDurationSec` | integer or `null` | The length it was started with (1 to 7200) |
+| `phase` | integer 1 to 6 | F23 (D117). The shared session step; absent means 1. Only the admin changes it |
+
 ## boards/{boardId}/members/{uid}
 
 | Field | Type | Notes |

@@ -88,7 +88,7 @@ export function LoadingNotice({ message = "กำลังโหลด...", scen
   return (
     <div role="status" className="flex flex-1 items-center justify-center p-8">
       <div className="pixel-panel flex items-center gap-4 px-6 py-4">
-        <span aria-hidden className="pixel-bounce font-pixel text-xl">
+        <span aria-hidden className="pixel-bounce font-pixel text-[32px]">
           ♥
         </span>
         <span>{message}</span>

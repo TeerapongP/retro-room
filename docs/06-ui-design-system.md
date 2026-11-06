@@ -146,3 +146,31 @@ The admin card menu also lists `ย้ายไป Went Well`, `ย้ายไ�
 
 `components/CardStack.tsx` shows a stack as the top card with two layered edges (`::before`, `::after` in the column color) and a `กองการ์ด ×N` button; opened, it lists every card inside a dashed frame with a `พับกอง` button. `lib/card-groups.ts` builds the stacks. For the admin each card is `draggable`; dropping one card on another shows a dashed gold outline and stacks them (moving the card into the target's column). The menu fallback is `ซ้อนกับการ์ดอื่น...` (`components/StackCardDialog.tsx`) and `แยกออกจากกอง`. HTML5 drag and drop does not work on touch screens, so the menu is the touch path.
 
+## Pop-up dialogs (owner request)
+
+The confirm and choice dialogs of the Board (end session, delete card, move to another board, stack card) are real pop-ups: `components/ModalDialog.tsx` wraps the pixel `DialogueBox` in a native `<dialog>` opened with `showModal()`, so the page behind is dimmed (`.modal-dialog::backdrop`), focus stays inside, Escape and a click outside close it, and the box is centered. The move dialog does not close while a move is running. Page-level messages (error, board not found, join prompt) stay inline `DialogueBox`es.
+
+## Center alerts (owner request)
+
+Success notices and action errors of the Board (hide, move, stack, delete, copy and similar) and the board switcher no longer sit in a panel under the heading. `components/CenterAlert.tsx` shows them in the middle of the screen as a `ModalDialog`: a success notice titled `Done` closes itself after 2.5 seconds, an error titled `Error` stays until `ตกลง`. The standing "session completed, read-only" notice stays inline.
+
+## Board timer and a lighter heading (F22, D109 to D115)
+
+The board switcher is gone. The heading row is the sign, the chip `Member · N คน · IN PROGRESS`, the timer and the share and end buttons. `components/BoardTimer.tsx`: with no timer the admin sees `⏱ ตั้งเวลา` (nobody else sees anything); it opens the `Set timer` pop-up (`TimerDialog.tsx`: 3, 5, 10, 15 minutes or 1 to 120 custom). A running timer is a cream chip with the pixel-font clock (`02:56`, `H:MM:SS` from one hour) and, for the admin, `หยุด`. At 00:00 the chip turns pink with `หมดเวลา` and the admin gets `ล้าง`; if the page was open when time ran out, a non-blocking `⏱ หมดเวลาแล้ว!` box shows in the middle of the screen for 6 seconds and a soft beep plays (`lib/beep.ts`).
+
+## Session stepper and account chip (F23, D116 to D123)
+
+The Board has no navbar. Top right, `components/AccountChip.tsx` is a cream chip with the player name and a gold `ออกจากระบบ` button (shown in every Board state). Below it, `components/PhaseStepper.tsx` shows the six steps in a grid: six columns from 64rem, three from 30rem, two below. A done step has a green check circle, the current step is the wood-brown pill with a cream number circle, later steps show their number on cream. Under the bar a cream panel gives the step title and description; the admin gets `ขั้นถัดไป ›` there and can click any step; others read `ผู้ดำเนินรายการจะพาทีมไปขั้นถัดไป`. Steps 3 to 6 say `เร็ว ๆ นี้: ขั้นตอนนี้ยังไม่เปิดใช้`. `lib/phases.ts` holds the step list. The earlier navbar comparison with `retro-room-board-reference.png` no longer applies to the top of the Board. `DashboardHeader.tsx` was deleted; its CSS (`.dashboard-header`, `-nav`, `-brand`, `-account`) is unused.
+
+## One board bar (owner request, redesign of the heading row)
+
+The heading row had four boxes of different styles (wood sign, meta chip, timer chip, gold share button). It is now one cream plank, `.board-bar`: on the left the sprout icon, the board title and, under it in small text, `Member · N คน · IN PROGRESS`; on the right a divider, the timer (flat, no box of its own) and the actions (`คัดลอกลิงก์แชร์` as a quiet button, `จบเซสชัน` in red for the owner). The old `.board-sign`, `.board-meta`, `.board-heading` and `.board-tools` rules were removed.
+
+## Pixel font TA GBA monothai MAX (D125)
+
+`--font-pixel` is now TA GBA monothai MAX, loaded with `next/font/local` from `app/fonts/TA-GBA-monothai-MAX.ttf` (license `app/fonts/OFL.txt`, `FONTLOG.txt`). It covers Thai and Latin, so Thai text in `.font-pixel` elements (for example the time-up box) is pixel text too. It is drawn on 16 pixels per em: use 32 px (2 px cells) for headings and labels, 48 px for the time-up box and 64 or 96 px for the Title screen name; 16 px is too small to read (1 px cells). Sizes now: dialog titles, mock and emulator banners, the timer clock and the Title button 32 px; time-up box 48 px; Title screen 64 px, 96 px from the `sm` breakpoint; `.font-pixel` line height 1.4. Body text, cards and descriptions stay IBM Plex Sans Thai.
+
+## Board bar and step panel merged into one panel (owner request)
+
+The board bar (title, meta line, timer, share, end) and the step panel are now one cream panel under the step bar (`.phase-panel`, built by `PhaseStepper` with the `boardInfo` and `actions` slots): at the left the sprout icon, board title and `Member · N คน · IN PROGRESS`, a divider, the current step title and description in the middle, and at the right the timer, `คัดลอกลิงก์แชร์`, `จบเซสชัน` (owner) and, for the admin, `ขั้นถัดไป ›`. The text for non-admins ("ผู้ดำเนินรายการจะพาทีมไปขั้นถัดไป") sits under the step description. On phones the three parts stack. The `.board-bar*` rules from the previous redesign were removed.
+

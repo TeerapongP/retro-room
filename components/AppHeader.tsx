@@ -16,7 +16,7 @@ export function AppHeader() {
 
   return (
     <header className="pixel-sign mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:mx-6">
-      <Link href="/boards" className="font-pixel text-xs sm:text-sm">
+      <Link href="/boards" className="font-pixel text-[32px]">
         RETRO ROOM
       </Link>
       {firebaseAuthState.status === "signedIn" ? (

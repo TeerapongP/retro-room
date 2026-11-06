@@ -320,6 +320,133 @@ describe("admin column move (D101)", () => {
   });
 });
 
+describe("session step (D116 to D123)", () => {
+  const phaseUpdate = (client: ReturnType<typeof admin>, boardId: string, data: Record<string, unknown>) =>
+    updateDoc(doc(client, `boards/${boardId}`), { ...data, updatedAt: serverTimestamp() });
+
+  it("should let a verified admin set any step from 1 to 6 without being a member", async () => {
+    for (const phase of [2, 6, 1, 4]) await assertSucceeds(phaseUpdate(admin(), SRC, { phase }));
+  });
+
+  it("should reject a step outside 1 to 6 or that is not a whole number", async () => {
+    for (const phase of [0, 7, -1, 2.5, "3", null, true]) {
+      await assertFails(phaseUpdate(admin(), SRC, { phase }));
+    }
+  });
+
+  it("should reject a step change on a completed or a waiting board", async () => {
+    await assertFails(phaseUpdate(admin(), COMPLETED, { phase: 2 }));
+    await assertFails(phaseUpdate(admin(), WAITING, { phase: 2 }));
+  });
+
+  it("should reject changing anything else together with the step", async () => {
+    await assertFails(phaseUpdate(admin(), SRC, { phase: 2, title: "Renamed" }));
+    await assertFails(phaseUpdate(admin(), SRC, { phase: 2, status: "completed" }));
+    await assertFails(phaseUpdate(admin(), SRC, { phase: 2, ownerId: "admin" }));
+  });
+
+  it("should reject a step update that does not set updatedAt to the request time", async () => {
+    await assertFails(updateDoc(doc(admin(), `boards/${SRC}`), { phase: 2, updatedAt: seeded }));
+  });
+
+  it("should reject a step change by the board owner, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(phaseUpdate(client, SRC, { phase: 2 }));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject a step change by a ${label}`, async () => {
+      await assertFails(phaseUpdate(makeClient(), SRC, { phase: 2 }));
+    });
+  }
+
+  it("should let every member read the current step", async () => {
+    await assertSucceeds(phaseUpdate(admin(), SRC, { phase: 3 }));
+    const snapshot = await assertSucceeds(getDoc(doc(bob(), `boards/${SRC}`)));
+    if (snapshot.data()?.phase !== 3) throw new Error("step should be readable");
+  });
+});
+
+describe("board timer (D109 to D115)", () => {
+  const inMinutes = (minutes: number) => Timestamp.fromMillis(Date.now() + minutes * 60_000);
+  const timerUpdate = (client: ReturnType<typeof admin>, boardId: string, data: Record<string, unknown>) =>
+    updateDoc(doc(client, `boards/${boardId}`), { ...data, updatedAt: serverTimestamp() });
+  const startTimer = (client: ReturnType<typeof admin>, boardId = SRC, minutes = 5) =>
+    timerUpdate(client, boardId, { timerEndsAt: inMinutes(minutes), timerDurationSec: minutes * 60 });
+
+  it("should let a verified admin start and stop a timer without being a member", async () => {
+    await assertSucceeds(startTimer(admin()));
+    await assertSucceeds(timerUpdate(admin(), SRC, { timerEndsAt: null, timerDurationSec: null }));
+  });
+
+  it("should accept the longest allowed timer of 2 hours", async () => {
+    await assertSucceeds(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(119), timerDurationSec: 7200 }),
+    );
+  });
+
+  it("should reject an end time in the past or more than 2 hours ahead", async () => {
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(-1), timerDurationSec: 60 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(125), timerDurationSec: 60 }));
+  });
+
+  it("should reject values of the wrong type or range", async () => {
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: "soon", timerDurationSec: 60 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: "300" }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 0 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 7201 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 1.5 }));
+  });
+
+  it("should reject a timer on a completed or a waiting board", async () => {
+    await assertFails(startTimer(admin(), COMPLETED));
+    await assertFails(startTimer(admin(), WAITING));
+  });
+
+  it("should reject changing anything else on the board together with the timer", async () => {
+    await assertFails(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 300, title: "Renamed" }),
+    );
+    await assertFails(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 300, status: "completed" }),
+    );
+    await assertFails(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 300, ownerId: "admin" }),
+    );
+  });
+
+  it("should reject a timer update that does not set updatedAt to the request time", async () => {
+    await assertFails(
+      updateDoc(doc(admin(), `boards/${SRC}`), { timerEndsAt: inMinutes(5), timerDurationSec: 300, updatedAt: seeded }),
+    );
+  });
+
+  it("should reject starting a timer by the board owner, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(startTimer(client));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject starting a timer by a ${label}`, async () => {
+      await assertFails(startTimer(makeClient()));
+    });
+  }
+
+  it("should keep the owner's rename of the board working", async () => {
+    await assertSucceeds(
+      updateDoc(doc(alice(), `boards/${SRC}`), { title: "Renamed by owner", updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("should let every member read the running timer", async () => {
+    await assertSucceeds(startTimer(admin()));
+    const snapshot = await assertSucceeds(getDoc(doc(bob(), `boards/${SRC}`)));
+    if (!snapshot.data()?.timerEndsAt) throw new Error("timer should be readable");
+  });
+});
+
 describe("admin stacking (D102 to D106)", () => {
   const groupUpdate = (client: ReturnType<typeof admin>, cardId: string, data: Record<string, unknown>, boardId = SRC) =>
     updateDoc(doc(client, `boards/${boardId}/cards/${cardId}`), { ...data, updatedAt: serverTimestamp() });

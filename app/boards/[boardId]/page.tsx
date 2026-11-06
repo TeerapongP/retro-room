@@ -4,12 +4,15 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { BoardColumn } from "@/components/BoardColumn";
-import { BoardSwitcher } from "@/components/BoardSwitcher";
-import { DashboardHeader } from "@/components/DashboardHeader";
+import { BoardTimer } from "@/components/BoardTimer";
+import { CenterAlert } from "@/components/CenterAlert";
+import { AccountChip } from "@/components/AccountChip";
 import { DashboardSprout } from "@/components/DashboardSprout";
 import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
+import { ModalDialog } from "@/components/ModalDialog";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
+import { PhaseStepper } from "@/components/PhaseStepper";
 import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
@@ -19,7 +22,10 @@ import {
   completeSession,
   getOwnMembership,
   joinBoard,
+  setPhase,
   startSession,
+  startTimer,
+  stopTimer,
   subscribeToBoard,
   subscribeToMembers,
 } from "@/lib/firebase/boards";
@@ -161,7 +167,7 @@ function BoardPageContent() {
       <div aria-hidden="true" className="dashboard-backdrop">
         <div className="dashboard-backdrop-art" />
       </div>
-      <DashboardHeader />
+      <AccountChip />
       <main className="board-content">{content}</main>
     </div>
   );
@@ -271,11 +277,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
             <p>{liveError}</p>
           </DialogueBox>
         ) : null}
-        {actionError ? (
-          <p role="alert" className="board-notice">
-            {actionError}
-          </p>
-        ) : null}
+        {actionError ? <CenterAlert tone="error" message={actionError} onClose={() => setActionError(null)} /> : null}
         <TitleScreen
           board={board}
           isOwner={isOwner}
@@ -288,34 +290,52 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
 
   return (
     <>
-      <div className="board-heading">
-        <div className="board-sign">
-          <DashboardSprout />
-          <h1>{board.title}</h1>
-        </div>
-        <p className="board-meta">
-          {isOwner ? "Owner" : "Member"} · {members.length} คน · {isCompleted ? "COMPLETED" : "IN PROGRESS"}
-        </p>
-        <BoardSwitcher currentBoardId={board.id} />
-        <div className="board-tools">
-          <button type="button" className="board-button" onClick={handleCopyLink}>
-            {copyState === "copied"
-              ? "คัดลอกลิงก์แล้ว"
-              : copyState === "failed"
-                ? "คัดลอกไม่สำเร็จ"
-                : "คัดลอกลิงก์แชร์"}
-          </button>
-          {isOwner && !isCompleted ? (
-            <button type="button" className="board-button board-button-danger" onClick={() => setIsConfirmingComplete(true)}>
-              จบเซสชัน
+      <PhaseStepper
+        phase={board.phase}
+        isAdmin={isAdmin}
+        isLocked={isCompleted}
+        onChange={(phase) => void runAction(() => setPhase(board.id, phase))}
+        boardInfo={
+          <>
+            <DashboardSprout />
+            <div>
+              <h1>{board.title}</h1>
+              <p>
+                {isOwner ? "Owner" : "Member"} · {members.length} คน · {isCompleted ? "COMPLETED" : "IN PROGRESS"}
+              </p>
+            </div>
+          </>
+        }
+        actions={
+          <>
+            {isCompleted ? null : (
+              <BoardTimer
+                board={board}
+                isAdmin={isAdmin}
+                onStart={(minutes) => void runAction(() => startTimer(board.id, minutes))}
+                onStop={() => void runAction(() => stopTimer(board.id))}
+              />
+            )}
+            <button type="button" className="board-button board-button-quiet" onClick={handleCopyLink}>
+              {copyState === "copied"
+                ? "คัดลอกลิงก์แล้ว"
+                : copyState === "failed"
+                  ? "คัดลอกไม่สำเร็จ"
+                  : "คัดลอกลิงก์แชร์"}
             </button>
-          ) : null}
-        </div>
-      </div>
+            {isOwner && !isCompleted ? (
+              <button type="button" className="board-button board-button-danger" onClick={() => setIsConfirmingComplete(true)}>
+                จบเซสชัน
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {isConfirmingComplete ? (
-        <DialogueBox
+        <ModalDialog
           title="End session?"
+          onClose={() => setIsConfirmingComplete(false)}
           actions={
             <>
               <button
@@ -340,7 +360,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
           }
         >
           <p>เมื่อจบแล้ว บอร์ดจะเป็นแบบอ่านอย่างเดียวและเริ่มใหม่ไม่ได้</p>
-        </DialogueBox>
+        </ModalDialog>
       ) : null}
 
       {isCompleted ? (
@@ -354,16 +374,8 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
           <p>{liveError}</p>
         </DialogueBox>
       ) : null}
-      {actionError ? (
-        <p role="alert" className="board-notice">
-          {actionError}
-        </p>
-      ) : null}
-      {notice ? (
-        <p role="status" className="board-notice">
-          {notice}
-        </p>
-      ) : null}
+      {actionError ? <CenterAlert tone="error" message={actionError} onClose={() => setActionError(null)} /> : null}
+      {notice ? <CenterAlert tone="success" message={notice} onClose={() => setNotice(null)} /> : null}
 
       {movingCard ? (
         <MoveCardDialog
@@ -391,8 +403,9 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       ) : null}
 
       {deletingCard ? (
-        <DialogueBox
+        <ModalDialog
           title="Delete card?"
+          onClose={() => setDeletingCard(null)}
           actions={
             <>
               <button
@@ -416,7 +429,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         >
           <p className="board-card-preview">{deletingCard.text}</p>
           <p>การ์ดนี้จะถูกลบถาวรและกู้คืนไม่ได้</p>
-        </DialogueBox>
+        </ModalDialog>
       ) : null}
 
       {cards === null && !liveError ? (

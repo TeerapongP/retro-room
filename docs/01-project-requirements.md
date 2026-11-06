@@ -42,6 +42,8 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F19 | Local mock mode (owner-approved scope extension): `pnpm dev:mock` runs the app without Firebase Auth or Firestore, with a fake signed-in admin and in-memory demo data, so UI work is not blocked by login or deployment. Development only; see D89 to D92 |
 | F20 | Skip the Dashboard (owner request): after sign-in the app opens a board directly; there is no board list page. A board switcher with a new-board form lives on the Board screen. See D94 to D99 |
 | F21 | Stack cards (owner request): the admin can stack cards about the same topic by dragging one onto another, or from the card menu. A stack shows as a pile with a count and opens to show all its cards. See D102 to D108 |
+| F22 | Board timer (owner request, first item of the earlier "Retrospective Timer" non-goal): the admin starts a countdown on an in-progress board and everyone sees the same time. See D109 to D115 |
+| F23 | Session stepper (owner request): the top navbar of the Board is replaced by a six-step bar (เขียน, ทบทวน, โหวต, ให้คะแนนตัวเอง, โฮสต์คนถัดไป, สรุป) that the admin moves and everyone sees. See D116 to D123 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -266,4 +268,41 @@ The owner approved the three policies below and the ledger approach after an emu
 | D106 | Rules: the admin may change only `groupId`, `columnId` (valid column) and `updatedAt` of a card on an in-progress board, without being a member. Nobody else can change them. The Rules do not check that a group exists or that the group is in one column; the admin is trusted for that (D74) |
 | D107 | A card hidden from others (D76) stays hidden inside a stack; other members see the stack without it. A card moved to another board (D77) arrives without a group. Deleting a card (D100) leaves the rest of its stack as is |
 | D108 | No change for authors, owners and members: they cannot stack, unstack or change columns. No new package; HTML5 drag and drop is used |
+
+## Board timer (F22), owner confirmed the three choices; the board switcher is removed (F20 amendment)
+
+| ID | Decision |
+| --- | --- |
+| D109 | The board switcher and the `+ บอร์ดใหม่` form are removed from the Board screen (owner request); this supersedes D96. The heading row keeps only the chip `Member · N คน · IN PROGRESS`, the timer and the share and end buttons. Consequence: the app no longer has a place to create or switch boards. The launcher (D94, D95) still opens the last board or creates `My Retro` when the user has none |
+| D110 | Timer: a countdown. The admin picks a length (3, 5, 10 or 15 minutes, or 1 to 120 custom minutes) and starts it; the admin can stop it. Only one timer per board |
+| D111 | Shared: the board document has `timerEndsAt` (timestamp) and `timerDurationSec` (integer), both `null` or absent when no timer runs. Every browser shows the remaining time from `timerEndsAt`, so all members see the same countdown. The end time is computed from the admin's clock (Rules only check it is in the future and at most 2 hours ahead), so browsers with a wrong clock show a time that is off by the clock difference |
+| D112 | Rules: the admin may change only `timerEndsAt`, `timerDurationSec` and `updatedAt` of an in-progress board, without being a member: `timerEndsAt` null, or a timestamp later than the request time and at most 2 hours later; `timerDurationSec` null, or an integer from 1 to 7200. The owner's own rights on the board (rename, start, complete) are unchanged. Nobody else can change the timer |
+| D113 | When time runs out, a small alert appears in the middle of the screen (not a blocking modal) and a short soft beep plays if the browser allows sound. Writing cards is never blocked by the timer |
+| D114 | The timer is shown while the board is in progress. A completed board shows no timer. Nothing stops a card being written after time is up |
+| D115 | Not in this step: pause and resume, extending a running timer (stop and start again instead), per-phase timers, timer history |
+
+## Session stepper (F23), owner confirmed the four choices
+
+| ID | Decision |
+| --- | --- |
+| D116 | The `RETRO ROOM` navbar (brand, Home, Retro, player name, logout) is removed from the Board screen and replaced by a step bar of six steps: 1 เขียน, 2 ทบทวน, 3 โหวต, 4 ให้คะแนนตัวเอง, 5 โฮสต์คนถัดไป, 6 สรุป. Done steps show a check, the current step is highlighted, later steps show their number. Below it a panel names the current step, explains it and, for the admin, has a next-step button. This supersedes D85 (Dashboard navbar on the Board) |
+| D117 | The step is shared: the board document has `phase`, an integer from 1 to 6 (absent means 1). Only the admin changes it, on an in-progress board, without being a member; the admin can click any step to jump to it or use the next-step button. Everyone else sees the same step and cannot change it |
+| D118 | Only steps 1 and 2 have real content (writing cards; reviewing together, where the admin can already stack, hide and move cards). Steps 3 to 6 are placeholders that show `เร็ว ๆ นี้`: voting, self-score, next host and summary are NOT built, and voting is still not approved in the requirements |
+| D119 | The step is only an indicator. It never blocks writing, editing, deleting, stacking or the timer. The description texts must not claim restrictions that do not exist |
+| D120 | The player name and a logout button move to a small chip in the top right of the Board screen, shown in every Board state (loading, join, error, live). The brand logo, Home and Retro are gone from the Board; the launcher at `/boards` is still the route after sign-in |
+| D121 | Rules: the admin may change only `phase` (integer 1 to 6) and `updatedAt` of an in-progress board. The owner's rename, start and complete rights and the admin's timer rights (D112) are unchanged. A board without `phase` counts as step 1 |
+| D122 | A completed board shows the step bar read-only at the step it ended on. A waiting board (Title screen) shows no step bar |
+| D123 | Not in this step: a step timer per phase, automatic moves between steps, step history. The Dashboard-style navbar code and CSS are left in the repository, unused by the Board, for later clean-up |
+
+## Google profile photo in the account chip (F23 amendment), owner request
+
+| ID | Decision |
+| --- | --- |
+| D124 | The account chip shows the signed-in user's Google profile photo (`user.photoURL`) as a 30 px round avatar before the player name; if there is no photo or it fails to load, the first letter of the player name is shown. The player name is still the name the player chose (D24 is unchanged: the Google name is not used). The Google email and full name are not shown. The photo is shown only to its own user in this chip; showing other players' photos (for example on cards) needs the `photoURL` stored on the profile to be readable by other members and is not part of this step |
+
+## Pixel font TA GBA monothai MAX (owner request), amends D35
+
+| ID | Decision |
+| --- | --- |
+| D125 | The pixel font (`--font-pixel`, class `font-pixel`) changes from Press Start 2P to TA GBA monothai MAX (TA Font, Taweechai Assawarangsitsang, SIL Open Font License 1.1, free for commercial use and embedding). Scope: headings and labels only (dialog titles, timer clock, time-up box, Title screen, loading, emulator and mock banners, Login and Setup pixel text). IBM Plex Sans Thai stays the font for body text, cards and descriptions. This supersedes the "no new font" part of D35. The owner downloaded the font; the TTF of the MAX variant is stored in `app/fonts/` with `OFL.txt` and `FONTLOG.txt` (the license must travel with the font). The Mini variant is not used. The font is a single regular weight with Thai and Latin; it is drawn on 16 pixels per em, so pixel text uses multiples of 16 px (16, 32, 48) |
 

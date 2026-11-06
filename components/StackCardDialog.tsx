@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { DialogueBox } from "@/components/DialogueBox";
+import { ModalDialog } from "@/components/ModalDialog";
 import { BOARD_COLUMNS, type BoardCard } from "@/lib/firebase/types";
 
 type StackCardDialogProps = {
@@ -18,8 +18,9 @@ export function StackCardDialog({ card, candidates, onClose, onConfirm }: StackC
   const columnLabel = (columnId: string) => BOARD_COLUMNS.find((column) => column.id === columnId)?.label ?? columnId;
 
   return (
-    <DialogueBox
+    <ModalDialog
       title="Stack card?"
+      onClose={onClose}
       actions={
         <>
           <button type="button" className="pixel-button" disabled={!target} onClick={() => target && onConfirm(target)}>
@@ -54,6 +55,6 @@ export function StackCardDialog({ card, candidates, onClose, onConfirm }: StackC
           <p className="text-sm">การ์ดจะย้ายไปอยู่คอลัมน์เดียวกับการ์ดที่เลือกและซ้อนเป็นกองเดียวกัน</p>
         </>
       )}
-    </DialogueBox>
+    </ModalDialog>
   );
 }

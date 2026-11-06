@@ -67,6 +67,33 @@ service cloud.firestore {
       return title is string && title.size() >= 1 && title.size() <= 80;
     }
 
+    // The shared countdown of a board (F22, D111, D112): the admin changes only the timer fields, on an in-progress board.
+    function validTimerUpdate(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && data.diff(resource.data).affectedKeys().hasOnly(['timerEndsAt', 'timerDurationSec', 'updatedAt'])
+        && data.updatedAt == request.time
+        && (data.get('timerEndsAt', null) == null
+          || (data.timerEndsAt is timestamp
+            && data.timerEndsAt > request.time
+            && data.timerEndsAt <= request.time + duration.value(2, 'h')))
+        && (data.get('timerDurationSec', null) == null
+          || (data.timerDurationSec is int && data.timerDurationSec >= 1 && data.timerDurationSec <= 7200));
+    }
+
+    // The step of the session, 1 to 6 (F23, D117, D121): the admin changes only the step, on an in-progress board.
+    function validPhaseUpdate(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && data.diff(resource.data).affectedKeys().hasOnly(['phase', 'updatedAt'])
+        && data.updatedAt == request.time
+        && data.phase is int
+        && data.phase >= 1
+        && data.phase <= 6;
+    }
+
     function validColumn(columnId) {
       return columnId in ['went-well', 'to-improve', 'ideas'];
     }
@@ -153,7 +180,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
         && getAfter(memberPath(boardId, request.auth.uid)).data.role == 'owner';
-      allow update: if isOwner(boardId)
+      allow update: if (isOwner(boardId)
         && request.resource.data.updatedAt == request.time
         && (
           // rename
@@ -171,7 +198,11 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['status', 'completedAt', 'updatedAt'])
             && request.resource.data.completedAt == request.time)
-        );
+        ))
+        // admin starts or stops the shared timer (F22, D112)
+        || validTimerUpdate(boardId)
+        // admin moves the session step (F23, D121)
+        || validPhaseUpdate(boardId);
       allow delete: if false;
 
       match /members/{uid} {

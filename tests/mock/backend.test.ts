@@ -104,6 +104,71 @@ describe("mock boards", () => {
   });
 });
 
+describe("mock session step", () => {
+  it("should start at step 1, follow setPhase for board listeners and survive a reload", async () => {
+    const storage = memoryStorage();
+    const backend = setup({ storage });
+    const user = await backend.signIn();
+    const boardId = await backend.createBoard(user.uid, "Steps", "Aomsin");
+    await backend.startSession(boardId);
+    const phases: number[] = [];
+    const stop = backend.subscribeToBoard(boardId, (board) => board && phases.push(board.phase), fail);
+    await flush();
+
+    await backend.setPhase(boardId, 2);
+    await backend.setPhase(boardId, 6);
+    stop();
+
+    expect(phases).toEqual([1, 2, 6]);
+    const reloaded: number[] = [];
+    const stopReloaded = setup({ storage }).subscribeToBoard(boardId, (board) => board && reloaded.push(board.phase), fail);
+    await flush();
+    stopReloaded();
+    expect(reloaded).toEqual([6]);
+  });
+});
+
+describe("mock board timer", () => {
+  it("should start a timer that board listeners see, and stop it again", async () => {
+    const backend = setup();
+    const user = await backend.signIn();
+    const boardId = await backend.createBoard(user.uid, "Timed", "Aomsin");
+    await backend.startSession(boardId);
+    const seen: Array<{ endsAt: Date | null; duration: number | null }> = [];
+    const stop = backend.subscribeToBoard(
+      boardId,
+      (board) => board && seen.push({ endsAt: board.timerEndsAt, duration: board.timerDurationSec }),
+      fail,
+    );
+    await flush();
+
+    await backend.startTimer(boardId, 5);
+    await backend.stopTimer(boardId);
+    stop();
+
+    expect(seen[0]).toEqual({ endsAt: null, duration: null });
+    expect(seen[1].duration).toBe(300);
+    expect(seen[1].endsAt).toBeInstanceOf(Date);
+    expect(seen[2]).toEqual({ endsAt: null, duration: null });
+  });
+
+  it("should keep the timer after a reload from storage", async () => {
+    const storage = memoryStorage();
+    const first = setup({ storage });
+    const user = await first.signIn();
+    const boardId = await first.createBoard(user.uid, "Timed", "Aomsin");
+    await first.startSession(boardId);
+    await first.startTimer(boardId, 10);
+
+    const second = setup({ storage });
+    const boards: Array<number | null> = [];
+    const stop = second.subscribeToBoard(boardId, (board) => board && boards.push(board.timerDurationSec), fail);
+    await flush();
+    stop();
+    expect(boards).toEqual([600]);
+  });
+});
+
 describe("mock cards", () => {
   async function liveBoard() {
     const backend = setup();
@@ -262,7 +327,7 @@ describe("mock persistence and seed", () => {
     const stop = backend.subscribeToMemberships(user.uid, (boards) => titles.splice(0, titles.length, ...boards.map((b) => b.title)), fail);
     await flush();
     stop();
-    expect(titles.sort()).toEqual(["Sprint 12", "Sprint 13"]);
+    expect(titles.sort()).toEqual(["Sprint 13", "Sprint 23"]);
   });
 
   it("should restore boards and the session from storage in a new backend", async () => {
