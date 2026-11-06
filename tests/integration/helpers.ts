@@ -27,7 +27,7 @@ const createdApps: FirebaseApp[] = [];
 export async function createTestUser(
   sub: string,
   displayName: string,
-  options: { withPlayerName?: boolean } = {},
+  options: { withPlayerName?: boolean; email?: string; emailVerified?: boolean } = {},
 ): Promise<TestUser> {
   const app = initializeApp(
     { apiKey: "emulator-fake-api-key", projectId: PROJECT_ID, appId: "emulator-fake-app-id" },
@@ -41,8 +41,8 @@ export async function createTestUser(
   const credential = GoogleAuthProvider.credential(
     JSON.stringify({
       sub,
-      email: `${sub}@example.test`,
-      email_verified: true,
+      email: options.email ?? `${sub}@example.test`,
+      email_verified: options.emailVerified ?? true,
       name: displayName,
     }),
   );

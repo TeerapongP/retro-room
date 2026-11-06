@@ -37,6 +37,8 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F14 | Global background music (owner-approved scope extension, supersedes F10): `public/sound/menu-sound.mp3` loops at 15% across the whole app with a mute button |
 | F15 | Retro loading screen (owner-approved scope extension): full-page loading, error and retry states use the farm scene from `docs/references/retro-room-loading.png` |
 | F16 | Dashboard pixel-art redesign (owner-approved scope extension): countryside backdrop, cream pixel-framed navbar and panels, pixel icons, Retro section spacing and empty state, matching `docs/references/retro-room-dashboard-reference.png`. Visual only: board creation, the realtime board list, loading, error and logout behavior are unchanged |
+| F17 | Admin card controls (owner-approved scope extension): one fixed admin (`thirapong.pin@ascendcorp.com`, verified Google email) can hide and unhide cards, move cards to another `in-progress` board, and list boards to pick a destination. Enforced by Firestore Security Rules; see D74 to D82 |
+| F18 | Board screen redesign (owner-approved scope extension): restyle `/boards/[boardId]` to match `docs/references/retro-room-board-reference.png` (countryside backdrop, `RETRO ROOM` navbar, board sign, framed column headers with count and add button, colored cards with author and relative time). Visual only; see D83 to D88 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -189,3 +191,31 @@ D28 to D30 describe the original `/login`-only sound. Since F14 the sound plays 
 | O3 | Behavior on offline, reconnect, and concurrent edit conflicts | UNCONFIRMED. Proposed: last write wins, show connection error state |
 | O4 | Whether a user who left or lost access can rejoin | N/A in Phase 1 (no remove or leave) |
 | O5 | Board list ordering on Dashboard | UNCONFIRMED. Proposed: newest joined first |
+
+## Admin card controls (F17), owner approved
+
+The owner approved the three policies below and the ledger approach after an emulator spike (55 of 55 tests passed on emulator 1.22.0). Production behavior is NOT VERIFIED until the Rules are deployed.
+
+| ID | Decision |
+| --- | --- |
+| D74 | Admin is one fixed identity: `request.auth.token.email == 'thirapong.pin@ascendcorp.com'` and `request.auth.token.email_verified == true`. The client check (`lib/firebase/admin.ts`) only controls UI visibility. Rules enforce everything. Admin does not need to be a board member for the approved operations. Admin is not a new board role and D12 (Owner is the board admin) is unchanged. Changing the admin email needs a Rules change and a deploy |
+| D75 | Hide and unhide: a card has a `hidden` boolean. Only admin can change it, only on an `in-progress` board, and the update may change nothing but `hidden` and `updatedAt`. New cards are created with `hidden: false` |
+| D76 | A hidden card is completely invisible to other members, with no placeholder. Its author can still read it. Admin reads all cards. Rules are not filters, so a member subscribes with two queries (`hidden == false`, and `authorId == uid`) and merges and sorts them on the client, without `orderBy` to avoid a composite index. Admin uses one unfiltered query. New cards must carry `hidden: false`. A card without a `hidden` field is readable only by its author and the admin: the emulator spike showed that the `get('hidden', false)` Rules form lets an unfiltered member query return hidden cards, so Rules use the plain `resource.data.hidden == false` form. No such cards exist in the real project (no boards yet). Offline persistence stays off |
+| D77 | Move to another board: only admin, only when the source and the destination boards are both `in-progress` (completed and waiting boards stay untouched). Firestore cannot move a document, so one atomic batch writes three documents: the ledger `boards/{src}/cardMoves/{cardId}`, the destination card and the source card delete. Rules bind them in both directions with `getAfter()`/`existsAfter()`: the destination must equal the source in `text`, `authorId`, `columnId` and `hidden`, carries `movedFromBoardId` and `movedFromCardId`, and the source delete is only allowed with the matching ledger and destination. A ledger is created once and can never be changed or deleted, so a source cannot be copied twice. Admin has no other way to delete a card it is not allowed to delete already |
+| D78 | The moved card gets a new `createdAt` (`request.time`), so it appears at the end of the destination board. Content, author and hidden state are kept |
+| D79 | A card id that already has a ledger cannot be reused for a new card in that board (normal create or move). This prevents a stale ledger from blocking a later move |
+| D80 | Admin may `list` boards (to choose a destination). All other users keep `list: false` |
+| D81 | One move per batch is the design. The 20 document access call limit allows at most 4 cards per batch (measured on the emulator), so the UI moves one card at a time |
+| D82 | UI: a compact action menu on each card, visible only to admin, in the existing wooden pixel style, with icons for hide/unhide and move. Moving asks for confirmation and shows success and error messages. No permanent buttons are added to every card for other users. Deploying Rules and testing against the real project are separate steps that need owner approval; nothing is deployed by this work |
+
+## Board screen redesign (F18), owner approved the plan with the recommended defaults
+
+| ID | Decision |
+| --- | --- |
+| D83 | F18 changes the look of the Board screen only. Firestore Rules, data, auth, Login, Setup, Dashboard behavior and the F17 admin controls are unchanged. The board keeps its 3 columns (D1: Went Well, To Improve, Ideas); the reference's 5 columns are not adopted |
+| D84 | No likes or votes (voting stays unapproved). The reference's avatars and Anonymous author are not adopted: a card shows the stored author name and a relative time computed from `createdAt` (`just now`, `5m ago`, `2h ago`, `3d ago`) |
+| D85 | The Board uses the Dashboard scene: the fixed countryside backdrop, the `RETRO ROOM` navbar (`DashboardHeader current="board"`: Home is highlighted like in the reference, Retro links to `/dashboard#retro`) and the proportional `--u` unit. The global music control is kept. The shared header of other screens is not modified |
+| D86 | Each column has a framed header with a pixel icon, its English label, a card count and a `+` button. The `+` button opens the existing add-card form inline for that column; the form closes after a successful add. Card colors: Went Well green, To Improve red, Ideas purple |
+| D87 | Layout: the three columns sit in the same 82% wide column as the navbar from 64rem up, and stack in one column below it. Completed boards stay read-only (no `+` button), and the join, loading, error and not-found states use the same scene. The waiting (Title) screen keeps its own existing layout in this step |
+| D88 | Verification targets: 375x812, 768x1024, 1280x720, 1852x849 (the reference size) and 1920x1080, no horizontal scroll, no overlap, readable contrast. Nothing is committed or deployed without owner approval |
+

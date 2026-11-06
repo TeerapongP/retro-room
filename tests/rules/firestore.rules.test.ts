@@ -90,7 +90,7 @@ beforeEach(async () => {
       });
     }
     await setDoc(doc(db, `boards/${COMPLETED_BOARD_ID}/cards/doneCard`), {
-      columnId: "ideas", text: "Done card", authorId: "bob",
+      columnId: "ideas", text: "Done card", authorId: "bob", hidden: false,
       createdAt: seededTimestamp, updatedAt: seededTimestamp,
     });
     await setDoc(doc(db, `boards/${BOARD_ID}/members/alice`), {
@@ -109,6 +109,7 @@ beforeEach(async () => {
       columnId: "went-well",
       text: "Bob card",
       authorId: "bob",
+      hidden: false,
       createdAt: seededTimestamp,
       updatedAt: seededTimestamp,
     });
@@ -116,6 +117,7 @@ beforeEach(async () => {
       columnId: "ideas",
       text: "Alice card",
       authorId: "alice",
+      hidden: false,
       createdAt: seededTimestamp,
       updatedAt: seededTimestamp,
     });
@@ -133,6 +135,7 @@ const newCard = (authorId: string, overrides: Record<string, unknown> = {}) => (
   columnId: "to-improve",
   text: "New card",
   authorId,
+  hidden: false,
   createdAt: serverTimestamp(),
   updatedAt: serverTimestamp(),
   ...overrides,
@@ -814,8 +817,14 @@ describe("members", () => {
 });
 
 describe("cards", () => {
-  it(`should allow a member to read cards`, async () => {
-    await assertSucceeds(getDocs(collection(bob(), `boards/${BOARD_ID}/cards`)));
+  it(`should allow a member to read cards that are not hidden`, async () => {
+    await assertSucceeds(
+      getDocs(query(collection(bob(), `boards/${BOARD_ID}/cards`), where("hidden", "==", false))),
+    );
+  });
+
+  it(`should deny a member an unfiltered card list, because hidden cards could match (F17)`, async () => {
+    await assertFails(getDocs(collection(bob(), `boards/${BOARD_ID}/cards`)));
   });
 
   it(`should deny a non-member reading cards`, async () => {

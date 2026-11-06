@@ -144,3 +144,15 @@ The rules currently deployed to the Firebase project have NOT been checked: the 
 Allowed: sign-in user creates board with owner membership batch; join as member; member creates, edits, deletes own card; owner deletes another's card; owner renames board.
 
 Denied: signed-out access to everything; board list; non-member reads cards or members; self-join as `owner`; change role or `ownerId`; member edits another's card; member deletes another's card; card over 500 characters; invalid column; extra fields; write `users/{other}`.
+
+## Admin card controls (F17, D74 to D82)
+
+Implemented in `firestore.rules`; 174 emulator rules tests (66 new, in `tests/rules/admin-card-controls.rules.test.ts`) and 41 integration tests PASSED on emulator 1.22.0. NOT DEPLOYED and NOT VERIFIED against the real project.
+
+- `isAdmin()`: `request.auth.token.email == 'thirapong.pin@ascendcorp.com'` and `email_verified == true`.
+- Cards: read by the admin, or by a member when `resource.data.hidden == false` or the member is the author. Do not rewrite this as `get('hidden', false) == false`: the spike showed an unfiltered member query then returns hidden cards on the emulator. Member create requires `hidden: false` and no ledger for that id; author update may only change `text` and `updatedAt`; admin update may only change `hidden` and `updatedAt` on an `in-progress` board.
+- Move: ledger `cardMoves/{cardId}`, destination card and source delete in one batch, tied together with `getAfter()`/`existsAfter()` (details in D77). Both boards must be `in-progress`. At most 4 cards per batch (20 access calls); the UI moves one card.
+- `boards`: `list` allowed for the admin only.
+- Known limits: the Admin SDK bypasses Rules; access call counts were measured on the emulator and may differ in production; cards created before F17 have no `hidden` field.
+- Deploying these Rules is a separate step that needs owner approval, and `firebase login` is not working on the dev machine yet.
+

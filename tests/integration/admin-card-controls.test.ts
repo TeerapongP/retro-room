@@ -1,0 +1,211 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ADMIN_EMAIL, isAdminUser } from "@/lib/firebase/admin";
+import { completeSession, createBoard, joinBoard, startSession } from "@/lib/firebase/boards";
+import {
+  addCard,
+  listMoveTargetBoards,
+  moveCard,
+  setCardHidden,
+  subscribeToCards,
+} from "@/lib/firebase/cards";
+import type { BoardCard } from "@/lib/firebase/types";
+import { createTestUser, resetEmulators, waitUntil, type TestUser } from "./helpers";
+
+let owner: TestUser;
+let member: TestUser;
+let admin: TestUser;
+
+beforeEach(async () => {
+  await resetEmulators();
+  owner = await createTestUser("owner", "Owner");
+  member = await createTestUser("member", "Member");
+  admin = await createTestUser("admin", "Admin", { email: ADMIN_EMAIL });
+});
+
+afterEach(async () => {
+  await resetEmulators();
+});
+
+const fail = (error: unknown) => {
+  throw error;
+};
+
+async function liveBoard(title: string): Promise<string> {
+  const boardId = await createBoard(owner.user, title, owner.name, owner.db);
+  await joinBoard(boardId, member.user, member.name, member.db);
+  await startSession(boardId, owner.db);
+  return boardId;
+}
+
+function watch(boardId: string, user: TestUser, isAdmin = false) {
+  const state = { cards: undefined as BoardCard[] | undefined };
+  const stop = subscribeToCards(
+    boardId,
+    { uid: user.uid, isAdmin },
+    (next) => (state.cards = next),
+    fail,
+    user.db,
+  );
+  return { state, stop };
+}
+
+describe("admin identity on the client", () => {
+  it(`should treat only a verified account with the admin email as admin`, () => {
+    expect(isAdminUser(admin.user)).toBe(true);
+    expect(isAdminUser({ email: ADMIN_EMAIL, emailVerified: false })).toBe(false);
+    expect(isAdminUser({ email: ADMIN_EMAIL.toUpperCase(), emailVerified: true })).toBe(false);
+    expect(isAdminUser(owner.user)).toBe(false);
+    expect(isAdminUser(null)).toBe(false);
+  });
+});
+
+describe("hide and unhide", () => {
+  it(`should hide a card from other members, keep it for its author and the admin, and restore it on unhide`, async () => {
+    const boardId = await liveBoard("Hide board");
+    await addCard(boardId, member.user, "ideas", "Secret idea", member.db);
+    await addCard(boardId, owner.user, "ideas", "Open idea", owner.db);
+    const ownerView = watch(boardId, owner);
+    const memberView = watch(boardId, member);
+    const adminView = watch(boardId, admin, true);
+    await waitUntil(() => ownerView.state.cards?.length === 2 && adminView.state.cards?.length === 2);
+    const secret = adminView.state.cards!.find((card) => card.text === "Secret idea")!;
+
+    await setCardHidden(boardId, secret.id, true, admin.db);
+
+    await waitUntil(() => ownerView.state.cards?.length === 1);
+    expect(ownerView.state.cards?.map((card) => card.text)).toEqual(["Open idea"]);
+    expect(memberView.state.cards?.map((card) => card.text).sort()).toEqual(["Open idea", "Secret idea"]);
+    expect(adminView.state.cards?.find((card) => card.id === secret.id)?.hidden).toBe(true);
+
+    await setCardHidden(boardId, secret.id, false, admin.db);
+    await waitUntil(() => ownerView.state.cards?.length === 2);
+    for (const view of [ownerView, memberView, adminView]) view.stop();
+  });
+
+  it(`should deny hiding by the owner and the author`, async () => {
+    const boardId = await liveBoard("Deny hide");
+    await addCard(boardId, member.user, "ideas", "Card", member.db);
+    const adminView = watch(boardId, admin, true);
+    await waitUntil(() => adminView.state.cards?.length === 1);
+    const cardId = adminView.state.cards![0].id;
+    adminView.stop();
+
+    for (const user of [owner, member]) {
+      await expect(setCardHidden(boardId, cardId, true, user.db)).rejects.toMatchObject({
+        code: "permission-denied",
+      });
+    }
+  });
+
+  it(`should never return a hidden card through a member's own queries`, async () => {
+    const boardId = await liveBoard("No leak");
+    await addCard(boardId, member.user, "ideas", "Hidden soon", member.db);
+    const adminView = watch(boardId, admin, true);
+    await waitUntil(() => adminView.state.cards?.length === 1);
+    await setCardHidden(boardId, adminView.state.cards![0].id, true, admin.db);
+    adminView.stop();
+
+    const ownerView = watch(boardId, owner);
+    await waitUntil(() => ownerView.state.cards !== undefined);
+    ownerView.stop();
+
+    expect(ownerView.state.cards).toEqual([]);
+  });
+});
+
+describe("move to another board", () => {
+  it(`should move a card with its content, author and hidden state to the end of another in-progress board`, async () => {
+    const source = await liveBoard("Source");
+    const destination = await liveBoard("Destination");
+    await addCard(destination, owner.user, "ideas", "Already there", owner.db);
+    await addCard(source, member.user, "to-improve", "Move me", member.db);
+    const sourceAdmin = watch(source, admin, true);
+    await waitUntil(() => sourceAdmin.state.cards?.length === 1);
+    const card = sourceAdmin.state.cards![0];
+    await setCardHidden(source, card.id, true, admin.db);
+    await waitUntil(() => sourceAdmin.state.cards?.[0]?.hidden === true);
+
+    const targets = await listMoveTargetBoards(source, admin.db);
+    expect(targets.map((board) => board.title)).toEqual(["Destination"]);
+
+    await moveCard(source, sourceAdmin.state.cards![0], destination, admin.db);
+
+    const destinationAdmin = watch(destination, admin, true);
+    await waitUntil(() => destinationAdmin.state.cards?.length === 2);
+    await waitUntil(() => sourceAdmin.state.cards?.length === 0);
+    const moved = destinationAdmin.state.cards![1];
+    expect(destinationAdmin.state.cards![0].text).toBe("Already there");
+    expect(moved).toMatchObject({
+      text: "Move me",
+      columnId: "to-improve",
+      authorId: member.uid,
+      hidden: true,
+    });
+    sourceAdmin.stop();
+    destinationAdmin.stop();
+  });
+
+  it(`should deny moving by the owner and a member`, async () => {
+    const source = await liveBoard("Source");
+    const destination = await liveBoard("Destination");
+    await addCard(source, member.user, "ideas", "Stay", member.db);
+    const adminView = watch(source, admin, true);
+    await waitUntil(() => adminView.state.cards?.length === 1);
+    const card = adminView.state.cards![0];
+    adminView.stop();
+
+    for (const user of [owner, member]) {
+      await expect(moveCard(source, card, destination, user.db)).rejects.toMatchObject({
+        code: "permission-denied",
+      });
+    }
+  });
+
+  it(`should not offer or allow a completed board as a destination or a source`, async () => {
+    const source = await liveBoard("Source");
+    const finished = await liveBoard("Finished");
+    await addCard(source, member.user, "ideas", "Stay", member.db);
+    await addCard(finished, member.user, "ideas", "Frozen", member.db);
+    const sourceView = watch(source, admin, true);
+    const finishedView = watch(finished, admin, true);
+    await waitUntil(() => sourceView.state.cards?.length === 1 && finishedView.state.cards?.length === 1);
+    await completeSession(finished, owner.db);
+
+    expect((await listMoveTargetBoards(source, admin.db)).map((board) => board.title)).toEqual([]);
+    await expect(
+      moveCard(source, sourceView.state.cards![0], finished, admin.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(
+      moveCard(finished, finishedView.state.cards![0], source, admin.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+    sourceView.stop();
+    finishedView.stop();
+  });
+
+  it(`should keep the source card and create no copy when a move is rejected`, async () => {
+    const source = await liveBoard("Source");
+    const destination = await liveBoard("Destination");
+    await addCard(source, member.user, "ideas", "Stay", member.db);
+    const sourceView = watch(source, admin, true);
+    await waitUntil(() => sourceView.state.cards?.length === 1);
+    await expect(
+      moveCard(source, sourceView.state.cards![0], destination, member.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+
+    const destinationView = watch(destination, admin, true);
+    await waitUntil(() => destinationView.state.cards !== undefined);
+    expect(destinationView.state.cards).toEqual([]);
+    expect(sourceView.state.cards?.map((card) => card.text)).toEqual(["Stay"]);
+    sourceView.stop();
+    destinationView.stop();
+  });
+});
+
+describe("board listing", () => {
+  it(`should deny a member listing boards`, async () => {
+    await liveBoard("Any");
+    await expect(listMoveTargetBoards("none", member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+  });
+});

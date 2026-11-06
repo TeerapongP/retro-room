@@ -17,6 +17,21 @@ service cloud.firestore {
       return signedIn() && exists(memberPath(boardId, request.auth.uid));
     }
 
+    // Verified admin account (D74). Rules enforce it; the client check only hides buttons.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.get('email', null) == 'thirapong.pin@ascendcorp.com'
+        && request.auth.token.get('email_verified', false) == true;
+    }
+
+    function cardPath(boardId, cardId) {
+      return /databases/$(database)/documents/boards/$(boardId)/cards/$(cardId);
+    }
+
+    function movePath(boardId, cardId) {
+      return /databases/$(database)/documents/boards/$(boardId)/cardMoves/$(cardId);
+    }
+
     function isOwner(boardId) {
       return isMember(boardId)
         && get(memberPath(boardId, request.auth.uid)).data.role == 'owner';
@@ -60,6 +75,44 @@ service cloud.firestore {
       return text is string && text.size() >= 1 && text.size() <= 500;
     }
 
+    // Move of a card to another board (D77): admin only, one atomic batch of three writes
+    // (ledger, destination card, source delete) that Rules bind to each other with getAfter().
+    function validMovedCard(destBoardId, destCardId) {
+      let data = request.resource.data;
+      let sourceBoardId = data.movedFromBoardId;
+      let sourceCardId = data.movedFromCardId;
+      return isAdmin()
+        && data.keys().hasOnly(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt', 'movedFromBoardId', 'movedFromCardId'])
+        && data.keys().hasAll(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt', 'movedFromBoardId', 'movedFromCardId'])
+        && sourceBoardId is string && sourceCardId is string
+        && sourceBoardId != destBoardId
+        && sessionInProgress(destBoardId) && sessionInProgress(sourceBoardId)
+        && exists(cardPath(sourceBoardId, sourceCardId))
+        && !existsAfter(cardPath(sourceBoardId, sourceCardId))
+        && !exists(movePath(sourceBoardId, sourceCardId))
+        && !exists(movePath(destBoardId, destCardId))
+        && getAfter(movePath(sourceBoardId, sourceCardId)).data.destBoardId == destBoardId
+        && getAfter(movePath(sourceBoardId, sourceCardId)).data.destCardId == destCardId
+        && data.text == get(cardPath(sourceBoardId, sourceCardId)).data.text
+        && data.authorId == get(cardPath(sourceBoardId, sourceCardId)).data.authorId
+        && data.columnId == get(cardPath(sourceBoardId, sourceCardId)).data.columnId
+        && data.hidden == get(cardPath(sourceBoardId, sourceCardId)).data.get('hidden', false)
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function validMovedSourceDelete(boardId, cardId) {
+      let ledgerAfter = getAfter(movePath(boardId, cardId)).data;
+      let destinationAfter = getAfter(cardPath(ledgerAfter.destBoardId, ledgerAfter.destCardId)).data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && !exists(movePath(boardId, cardId))
+        && existsAfter(movePath(boardId, cardId))
+        && existsAfter(cardPath(ledgerAfter.destBoardId, ledgerAfter.destCardId))
+        && destinationAfter.movedFromBoardId == boardId
+        && destinationAfter.movedFromCardId == cardId;
+    }
+
     match /users/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow create: if signedIn() && request.auth.uid == uid
@@ -82,7 +135,8 @@ service cloud.firestore {
 
     match /boards/{boardId} {
       allow get: if signedIn();
-      allow list: if false;
+      // Only the admin may list boards (to pick a move destination, D80).
+      allow list: if isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['title', 'ownerId', 'status', 'createdAt', 'updatedAt'])
         && request.resource.data.keys().hasAll(['title', 'ownerId', 'status', 'createdAt', 'updatedAt'])
@@ -134,28 +188,61 @@ service cloud.firestore {
       }
 
       match /cards/{cardId} {
-        allow read: if isMember(boardId);
-        allow create: if isMember(boardId)
+        // Rules are not filters: members must query with hidden == false or authorId == uid (D76).
+        // The plain `resource.data.hidden == false` form is required: the `get('hidden', false)` form
+        // let an unfiltered member query return hidden cards in the emulator (spike, 2026-11-06).
+        // A card without a hidden field is therefore readable by its author and the admin only.
+        allow read: if isAdmin()
+          || (isMember(boardId)
+            && (resource.data.hidden == false
+              || resource.data.authorId == request.auth.uid));
+        allow create: if (isMember(boardId)
+            && sessionInProgress(boardId)
+            && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])
+            && request.resource.data.keys().hasAll(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])
+            && request.resource.data.authorId == request.auth.uid
+            && request.resource.data.hidden == false
+            && validColumn(request.resource.data.columnId)
+            && validCardText(request.resource.data.text)
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && !exists(movePath(boardId, cardId)))
+          || validMovedCard(boardId, cardId);
+        allow update: if (isMember(boardId)
+            && sessionInProgress(boardId)
+            && resource.data.authorId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'updatedAt'])
+            && validCardText(request.resource.data.text)
+            && request.resource.data.updatedAt == request.time)
+          // admin hide / unhide (D75)
+          || (isAdmin()
+            && sessionInProgress(boardId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hidden', 'updatedAt'])
+            && request.resource.data.hidden is bool
+            && request.resource.data.updatedAt == request.time);
+        allow delete: if (isMember(boardId)
+            && sessionInProgress(boardId)
+            && (resource.data.authorId == request.auth.uid || isOwner(boardId)))
+          || validMovedSourceDelete(boardId, cardId);
+      }
+
+      // Ledger of moved cards (D77): created once together with the move, then immutable.
+      match /cardMoves/{cardId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.keys().hasOnly(['destBoardId', 'destCardId', 'movedAt'])
+          && request.resource.data.destBoardId is string
+          && request.resource.data.destCardId is string
+          && request.resource.data.destBoardId != boardId
+          && request.resource.data.movedAt == request.time
           && sessionInProgress(boardId)
-          && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'createdAt', 'updatedAt'])
-          && request.resource.data.keys().hasAll(['columnId', 'text', 'authorId', 'createdAt', 'updatedAt'])
-          && request.resource.data.authorId == request.auth.uid
-          && validColumn(request.resource.data.columnId)
-          && validCardText(request.resource.data.text)
-          && request.resource.data.createdAt == request.time
-          && request.resource.data.updatedAt == request.time;
-        allow update: if isMember(boardId)
-          && sessionInProgress(boardId)
-          && resource.data.authorId == request.auth.uid
-          && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'createdAt', 'updatedAt'])
-          && request.resource.data.authorId == resource.data.authorId
-          && request.resource.data.createdAt == resource.data.createdAt
-          && request.resource.data.columnId == resource.data.columnId
-          && validCardText(request.resource.data.text)
-          && request.resource.data.updatedAt == request.time;
-        allow delete: if isMember(boardId)
-          && sessionInProgress(boardId)
-          && (resource.data.authorId == request.auth.uid || isOwner(boardId));
+          && sessionInProgress(request.resource.data.destBoardId)
+          && exists(cardPath(boardId, cardId))
+          && !existsAfter(cardPath(boardId, cardId))
+          && existsAfter(cardPath(request.resource.data.destBoardId, request.resource.data.destCardId))
+          && getAfter(cardPath(request.resource.data.destBoardId, request.resource.data.destCardId)).data.movedFromBoardId == boardId
+          && getAfter(cardPath(request.resource.data.destBoardId, request.resource.data.destCardId)).data.movedFromCardId == cardId;
+        allow update, delete: if false;
       }
     }
 

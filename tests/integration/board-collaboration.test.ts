@@ -203,7 +203,13 @@ describe("session lifecycle", () => {
     ).rejects.toMatchObject({ code: "permission-denied" });
     await expect(startSession(boardId, userA.db)).rejects.toMatchObject({ code: "permission-denied" });
     const watcherB = { cards: undefined as BoardCard[] | undefined };
-    const unsubscribe = subscribeToCards(boardId, (next) => (watcherB.cards = next), fail, userB.db);
+    const unsubscribe = subscribeToCards(
+      boardId,
+      { uid: userB.uid, isAdmin: false },
+      (next) => (watcherB.cards = next),
+      fail,
+      userB.db,
+    );
     await waitUntil(() => watcherB.cards !== undefined);
     unsubscribe();
     expect(watcherB.cards?.map((card) => card.text)).toEqual(["Kept"]);
@@ -222,6 +228,7 @@ describe("real-time cards", () => {
     const state = { cards: undefined as BoardCard[] | undefined, calls: 0 };
     const unsubscribe = subscribeToCards(
       boardId,
+      { uid: user.uid, isAdmin: false },
       (next) => {
         state.cards = next;
         state.calls += 1;
@@ -294,6 +301,7 @@ describe("real-time cards", () => {
     let errorCode: string | undefined;
     const unsubscribe = subscribeToCards(
       boardId,
+      { uid: userC.uid, isAdmin: false },
       () => {},
       (error) => (errorCode = (error as { code: string }).code),
       userC.db,

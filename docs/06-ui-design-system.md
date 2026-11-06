@@ -125,3 +125,12 @@ Layers and styles live in `app/globals.css` under the Dashboard comment and in `
 - Honor `prefers-reduced-motion`. Ambient animation is optional and subtle.
 - Touch targets comfortable on mobile. Columns stack on narrow screens.
 - Thai and English text readable at body size.
+
+## Admin card menu (F17, D82)
+
+Board screen only, shown only when `isAdminUser(user)` is true and the board is not completed. A 36 px wooden button with three pixel dots sits at the top right of each sticky note (`components/CardMenu.tsx`, styles under "Admin card menu" in `app/globals.css`). It opens a small cream menu with two items: hide or show the card (pixel eye icons) and move to another board (pixel arrow). Moving opens `components/MoveCardDialog.tsx` as a dialogue box with a board select and a confirm step. Hidden cards, shown to the admin and to their author, use a dashed border and the label "ซ่อนจากสมาชิกคนอื่น". Success and error messages use the existing `role="status"` and `role="alert"` panels. Not verified: phone width (375 px) and keyboard navigation of the menu.
+
+## Board screen redesign (F18, D83 to D88)
+
+`/boards/[boardId]` uses the Dashboard scene (`dashboard-scene board-scene`, countryside backdrop, `DashboardHeader current="board"` with Home highlighted like the reference). Its `--u` is one pixel of the 1672 px wide Board reference, not the 1852 px Dashboard one and the `board-*` styles at the end of `app/globals.css`. Components: `BoardColumn.tsx` (framed header with icon, label, count and `+`, inline composer), `StickyNote.tsx` (colored card with author, relative time from `lib/relative-time.ts`, edit and delete, F17 admin menu), `BoardIcons.tsx` (pixel flower, arrow and bulb). Card colors: Went Well green, To Improve red, Ideas purple. Navbar 1307 px wide and 64 tall, content column 1548 px wide (the sign sits at the column's left edge), 16 px column gap, 70 px column heads, 5 px between cards; three columns from 64rem up, one column below. Dialogue boxes inside the scene are reskinned by `.board-scene .pixel-panel`. The waiting (Title) screen keeps its own layout inside the scene.
+
