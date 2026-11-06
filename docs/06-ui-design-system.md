@@ -186,3 +186,7 @@ The `+` button of every column and the add-card form show only while the board i
 
 From step 3 each card shows a thumbs-up count in its meta row, after the time: in step 3 it is a button (`board-vote`; gold when the member voted; disabled when they have no votes left and have not voted for that card), from step 4 on and on completed boards a static count. In step 3 the actions of the panel start with the gold chip `โหวตเหลือ N/3`. Steps 1 and 2 show no vote UI. `lib/votes.ts` holds the limit and counting; the thumb is `IconThumb` in `CardMenuIcons.tsx`.
 
+Vote button position (owner request): the vote button is at the bottom right of the card, in a footer row (`.board-card-foot`) with the author's `แก้ไข` and `ลบ` buttons on the left. It replaces the earlier place next to the time. Chrome DevTools MCP check (mock mode): on 4 cards the button sat 17 px from the right and 12 px from the bottom edge with no overlap with the admin menu; on an own card it shared the row with the edit and delete buttons; at 375 px it stayed 17 px from the right with no horizontal scroll.
+
+Alignment (owner request): the admin menu button (`.card-menu`) now takes its right offset from the card padding (`max(0.85rem, 18 * --u)`), so its right edge equals the vote button's right edge. Chrome DevTools MCP check (mock mode): all 5 cards at 1280x720 had both right edges at the same pixel; at 375x812 all cards aligned with no horizontal scroll.
+

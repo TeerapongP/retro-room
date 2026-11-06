@@ -147,42 +147,46 @@ export function StickyNote({
             <span className="board-card-author">{authorName}</span>
             {card.createdAt ? <span aria-hidden="true">·</span> : null}
             <time dateTime={card.createdAt?.toISOString()}>{formatRelativeTime(card.createdAt)}</time>
-            {vote.showCount ? (
-              vote.isOpen ? (
-                <button
-                  type="button"
-                  className={`board-vote ${vote.hasVoted ? "board-vote-on" : ""}`}
-                  aria-pressed={vote.hasVoted}
-                  aria-label={vote.hasVoted ? `เอาโหวตออก (ตอนนี้ ${vote.count} โหวต)` : `โหวตการ์ดนี้ (ตอนนี้ ${vote.count} โหวต)`}
-                  disabled={vote.isDisabled}
-                  onClick={vote.onToggle}
-                >
-                  <IconThumb />
-                  {vote.count}
-                </button>
-              ) : (
-                <span className={`board-vote board-vote-static ${vote.hasVoted ? "board-vote-on" : ""}`} aria-label={`${vote.count} โหวต`}>
-                  <IconThumb />
-                  {vote.count}
-                </span>
-              )
-            ) : null}
           </p>
-          {canEdit || canDelete ? (
-            <div className="board-card-actions">
-              {canEdit ? (
-                <button type="button" className="board-button board-button-quiet" onClick={() => setIsEditing(true)}>
-                  แก้ไข
-                </button>
+          {canEdit || canDelete || vote.showCount ? (
+            <div className="board-card-foot">
+              {canEdit || canDelete ? (
+                <div className="board-card-actions">
+                  {canEdit ? (
+                    <button type="button" className="board-button board-button-quiet" onClick={() => setIsEditing(true)}>
+                      แก้ไข
+                    </button>
+                  ) : null}
+                  {canDelete ? (
+                    <button
+                      type="button"
+                      className="board-button board-button-danger"
+                      onClick={() => onDelete(card.id)}
+                    >
+                      ลบ
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
-              {canDelete ? (
-                <button
-                  type="button"
-                  className="board-button board-button-danger"
-                  onClick={() => onDelete(card.id)}
-                >
-                  ลบ
-                </button>
+              {vote.showCount ? (
+                vote.isOpen ? (
+                  <button
+                    type="button"
+                    className={`board-vote ${vote.hasVoted ? "board-vote-on" : ""}`}
+                    aria-pressed={vote.hasVoted}
+                    aria-label={vote.hasVoted ? `เอาโหวตออก (ตอนนี้ ${vote.count} โหวต)` : `โหวตการ์ดนี้ (ตอนนี้ ${vote.count} โหวต)`}
+                    disabled={vote.isDisabled}
+                    onClick={vote.onToggle}
+                  >
+                    <IconThumb />
+                    {vote.count}
+                  </button>
+                ) : (
+                  <span className={`board-vote board-vote-static ${vote.hasVoted ? "board-vote-on" : ""}`} aria-label={`${vote.count} โหวต`}>
+                    <IconThumb />
+                    {vote.count}
+                  </span>
+                )
               ) : null}
             </div>
           ) : null}
