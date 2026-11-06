@@ -12,11 +12,14 @@ import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
 import { ModalDialog } from "@/components/ModalDialog";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
+import { RatingPanel } from "@/components/RatingPanel";
 import { PhaseStepper } from "@/components/PhaseStepper";
 import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
+import { saveMyRating, subscribeToRatings } from "@/lib/firebase/ratings";
 import { saveMyVotes, subscribeToVotes } from "@/lib/firebase/votes";
+import type { Rating } from "@/lib/ratings";
 import { VOTES_PER_MEMBER, countVotes, toggleVote, votesLeft, type Voter } from "@/lib/votes";
 import { rememberLastBoard } from "@/lib/last-board";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
@@ -200,6 +203,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   const [deletingCard, setDeletingCard] = useState<BoardCard | null>(null);
   const [stackingCard, setStackingCard] = useState<BoardCard | null>(null);
   const [voters, setVoters] = useState<Voter[]>([]);
+  const [ratings, setRatings] = useState<Rating[]>([]);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
@@ -231,6 +235,12 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
     if (!showVotes) return;
     return subscribeToVotes(board.id, setVoters, (error) => setLiveError(describeFirebaseError(error)));
   }, [board.id, showVotes]);
+
+  const isRatingStep = board.phase === 4 && !isCompleted;
+  useEffect(() => {
+    if (!isRatingStep) return;
+    return subscribeToRatings(board.id, setRatings, (error) => setLiveError(describeFirebaseError(error)));
+  }, [board.id, isRatingStep]);
 
   const voteCounts = countVotes(voters);
   const myVotes = voters.find((voter) => voter.uid === uid)?.cardIds ?? [];
@@ -276,6 +286,10 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   async function handleToggleVote(cardId: string) {
     const next = toggleVote(myVotes, cardId);
     if (next) await runAction(() => saveMyVotes(board.id, uid, next));
+  }
+
+  async function handleRate(score: number) {
+    await runAction(() => saveMyRating(board.id, uid, score));
   }
 
   async function handleCopyLink() {
@@ -455,7 +469,9 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         </ModalDialog>
       ) : null}
 
-      {cards === null && !liveError ? (
+      {isRatingStep ? (
+        <RatingPanel ratings={ratings} members={members} uid={uid} onRate={(score) => void handleRate(score)} />
+      ) : cards === null && !liveError ? (
         <LoadingNotice />
       ) : (
         <div className="board-columns">

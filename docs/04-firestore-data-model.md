@@ -83,6 +83,15 @@ Ledger of a card moved out of this board. Document ID is the moved card's id. Fi
 
 The document ID is the voter's uid. Counts per card are computed on the client from all voter documents (`lib/votes.ts`).
 
+## boards/{boardId}/ratings/{uid} (F28, D145 to D147)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `score` | number | 1 to 5 in steps of 0.5 |
+| `updatedAt` | timestamp | Server timestamp |
+
+The document ID is the member's uid. The average is computed on the client (`lib/ratings.ts`).
+
 ## Queries and indexes
 
 | Query | Index |
@@ -91,6 +100,7 @@ The document ID is the voter's uid. Counts per card are computed on the client f
 | Board cards, admin: `cards.orderBy('createdAt')` | Single-field, automatic |
 | Board cards, member (D76): `cards.where('hidden','==',false)` and `cards.where('authorId','==',uid)`, merged and sorted on the client | Single-field equality, automatic. No `orderBy`, so no composite index |
 | Votes: `boards/{id}/voters` (whole subcollection read) | none |
+| Ratings: `boards/{id}/ratings` (whole subcollection read) | none |
 | Admin move targets: `boards.where('status','==','in-progress')` | Single-field, automatic |
 | Board members: `members` subcollection read | none |
 

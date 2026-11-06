@@ -1,5 +1,6 @@
 import { ADMIN_EMAIL } from "../firebase/admin";
 import { clampPhase } from "../phases";
+import { isValidRating, type Rating } from "../ratings";
 import { VOTES_PER_MEMBER, type Voter } from "../votes";
 import {
   isValidPlayerName,
@@ -65,6 +66,8 @@ type MockState = {
   cards: Record<string, Record<string, StoredCard>>;
   /** Voter documents per board (F26); absent in states saved before voting existed. */
   votes?: Record<string, Record<string, string[]>>;
+  /** Self ratings per board (F28); absent in states saved before ratings existed. */
+  ratings?: Record<string, Record<string, number>>;
   counter: number;
 };
 
@@ -315,6 +318,29 @@ export function createMockBackend(options: MockBackendOptions = {}) {
         throw Object.assign(new Error("Voting is closed or not allowed"), { code: "permission-denied" });
       }
       ((state.votes ??= {})[boardId] ??= {})[uid] = [...cardIds];
+      changed();
+    },
+
+    subscribeToRatings(boardId: string, onRatings: (ratings: Rating[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(
+        () => Object.entries(state.ratings?.[boardId] ?? {}).map(([uid, score]) => ({ uid, score })),
+        onRatings,
+        onError,
+      );
+    },
+
+    async saveMyRating(boardId: string, uid: string, score: number): Promise<void> {
+      // Same rules as firestore.rules: member, in-progress board, step 4, score 1 to 5 in steps of 0.5 (D145, D146).
+      const board = boardOrThrow(boardId);
+      if (
+        !state.members[boardId]?.[uid] ||
+        board.status !== "in-progress" ||
+        clampPhase(board.phase) !== 4 ||
+        !isValidRating(score)
+      ) {
+        throw Object.assign(new Error("Rating is closed or not allowed"), { code: "permission-denied" });
+      }
+      ((state.ratings ??= {})[boardId] ??= {})[uid] = score;
       changed();
     },
 

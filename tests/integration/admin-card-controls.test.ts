@@ -21,7 +21,9 @@ import {
   subscribeToCards,
   unstackCard,
 } from "@/lib/firebase/cards";
+import { saveMyRating, subscribeToRatings } from "@/lib/firebase/ratings";
 import { saveMyVotes, subscribeToVotes } from "@/lib/firebase/votes";
+import type { Rating } from "@/lib/ratings";
 import type { Board, BoardCard } from "@/lib/firebase/types";
 import { countVotes, type Voter } from "@/lib/votes";
 import { createTestUser, pause, resetEmulators, waitUntil, type TestUser } from "./helpers";
@@ -245,6 +247,37 @@ describe("voting (D135 to D142)", () => {
 
     await setPhase(boardId, 4, admin.db);
     await expect(saveMyVotes(boardId, member.uid, ["a"], member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+  });
+});
+
+describe("self rating (D145 to D148)", () => {
+  it(`should let members rate themselves in step 4 only and show everyone every score`, async () => {
+    const boardId = await liveBoard("Rating board");
+    await setPhase(boardId, 3, admin.db);
+    await expect(saveMyRating(boardId, member.uid, 3, member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+
+    await setPhase(boardId, 4, admin.db);
+    await saveMyRating(boardId, member.uid, 4.5, member.db);
+    await saveMyRating(boardId, owner.uid, 3, owner.db);
+    const seen = { ratings: undefined as Rating[] | undefined };
+    const stop = subscribeToRatings(boardId, (next) => (seen.ratings = next), fail, owner.db);
+    await waitUntil(() => seen.ratings?.length === 2);
+    expect(seen.ratings?.find((rating) => rating.uid === member.uid)?.score).toBe(4.5);
+    stop();
+
+    await expect(saveMyRating(boardId, member.uid, 5.5, member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+    await expect(saveMyRating(boardId, owner.uid, 3, member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+
+    await setPhase(boardId, 5, admin.db);
+    await expect(saveMyRating(boardId, member.uid, 2, member.db)).rejects.toMatchObject({
       code: "permission-denied",
     });
   });

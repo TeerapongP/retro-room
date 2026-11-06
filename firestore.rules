@@ -100,7 +100,7 @@ service cloud.firestore {
       return board.get('status', 'in-progress') == 'completed' || board.get('phase', 1) >= 2;
     }
 
-    // New cards can be written only in step 1; a board without a step counts as step 1 (F25, D131).
+    // Members create, edit and delete cards only in step 1; a board without a step counts as step 1 (F25, F27, D131, D143).
     function writingOpen(boardId) {
       return get(boardPath(boardId)).data.get('phase', 1) == 1;
     }
@@ -108,6 +108,19 @@ service cloud.firestore {
     // Votes can be placed only in step 3 (F26, D135).
     function votingOpen(boardId) {
       return get(boardPath(boardId)).data.get('phase', 1) == 3;
+    }
+
+    // Self ratings can be placed only in step 4 (F28, D145).
+    function ratingOpen(boardId) {
+      return get(boardPath(boardId)).data.get('phase', 1) == 4;
+    }
+
+    // A score from 1 to 5 in steps of 0.5 (D146).
+    function validRating(score) {
+      return score is number
+        && score >= 1
+        && score <= 5
+        && score * 2 == math.floor(score * 2);
     }
 
     function validVoteId(id) {
@@ -281,6 +294,7 @@ service cloud.firestore {
           || validMovedCard(boardId, cardId);
         allow update: if (isMember(boardId)
             && sessionInProgress(boardId)
+            && writingOpen(boardId)
             && resource.data.authorId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'updatedAt'])
             && validCardText(request.resource.data.text)
@@ -306,6 +320,7 @@ service cloud.firestore {
             && request.resource.data.updatedAt == request.time);
         allow delete: if (isMember(boardId)
             && sessionInProgress(boardId)
+            && writingOpen(boardId)
             && (resource.data.authorId == request.auth.uid || isOwner(boardId)))
           // The admin may delete any card of an in-progress board (D100). The move still needs its ledger to create
           // the copy, so a copy cannot be made without deleting the source.
@@ -329,6 +344,20 @@ service cloud.firestore {
           && isMember(boardId)
           && sessionInProgress(boardId)
           && votingOpen(boardId);
+      }
+
+      // One self rating per member (F28, D145 to D148): a score from 1 to 5 in steps of 0.5, written by the member only
+      // while the board is in progress and in step 4. Members and the admin read all ratings. There is no delete.
+      match /ratings/{uid} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && isMember(boardId)
+          && sessionInProgress(boardId)
+          && ratingOpen(boardId)
+          && request.resource.data.keys().hasOnly(['score', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['score', 'updatedAt'])
+          && validRating(request.resource.data.score)
+          && request.resource.data.updatedAt == request.time;
       }
 
       // Ledger of moved cards (D77): created once together with the move, then immutable.

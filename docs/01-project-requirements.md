@@ -47,6 +47,8 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees only their own cards; other members' cards appear from step 2 on. Amends D76 and D119. See D126 to D130 |
 | F25 | Writing only in step 1 (owner request): new cards can be written only while the board is in step 1 (เขียน); from step 2 on nobody can add a card. Amends D119. See D131 to D134 |
 | F26 | Voting (owner request; the first real use of step 3, โหวต): each member has up to 3 votes on a board and puts them on cards. This approves the earlier non-goal "Voting" for this form only. See D135 to D142 |
+| F27 | No editing or deleting after step 1 (owner request): from step 2 on, members can no longer edit or delete cards; the `แก้ไข` and `ลบ` buttons are removed. Settles the open point of D132. See D143 and D144 |
+| F28 | Self rating (owner request): in step 4 (ให้คะแนนตัวเอง) the cards are hidden and each member gives one score from 1 to 5 in steps of 0.5. Everyone sees every member's score and the average | Planned scope: D145 to D148 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -324,7 +326,7 @@ The owner approved the three policies below and the ledger approach after an emu
 | ID | Decision |
 | --- | --- |
 | D131 | A member can add a new card only while the board is in step 1 (เขียน; a board without a step counts as step 1, D117). From step 2 (ทบทวน) through step 6 nobody can add a card: the `+` buttons and the add form are hidden and the Rules reject the write. Amends D119 and D126 |
-| D132 | Default: this blocks only creating cards. Editing the text of one's own card, deleting a card (author or board owner, D100 for the admin), stacking, hiding, moving and the timer keep working in every step. If the review step should also lock editing and deleting for members, say so and it becomes a separate change |
+| D132 | Default: this blocks only creating cards. Editing the text of one's own card, deleting a card (author or board owner, D100 for the admin), stacking, hiding, moving and the timer keep working in every step. Superseded by D143 and D144: from step 2 on members cannot edit or delete either |
 | D133 | Default: an admin move of a card into another board (D77) still creates the copy there whatever that board's step is, because it moves an existing card and is not new writing. Moving the step back to step 1 lets members write again |
 | D134 | The step 2 text says that adding cards is closed. A member who had the add form open when the admin moved the step sees the write rejected with the normal permission error message |
 
@@ -340,4 +342,15 @@ The owner approved the three policies below and the ledger approach after an emu
 | D140 | Deleting a card leaves its id in voter documents; counts ignore ids of cards that no longer exist. A card moved to another board arrives without votes (it is a new card there). A stack (D102) shows the votes of each card separately |
 | D141 | Not in this step: a results list or summary (step 6), a secret ballot, a reset of votes by the admin, votes on more than one column rule, vote history |
 | D142 | Step 3 stops being a placeholder: its description reads "เลือกการ์ดที่สำคัญที่สุด โหวตได้สูงสุด 3 อัน". Steps 4 to 6 stay placeholders. Writing stays closed in step 3 (D131) |
+
+## No editing or deleting after step 1 (F27), owner request
+
+| ID | Decision |
+| --- | --- |
+| D143 | From step 2 (ทบทวน) through step 6, and on a board that is not in step 1, a member cannot edit the text of a card or delete a card: the `แก้ไข` and `ลบ` buttons are not shown, an edit form that was open closes, and the Rules reject the write. This covers authors and the board owner (the owner's delete right on others' cards, D15 era, also stops after step 1). In step 1 both work as before. Replaces the default of D132 |
+| D144 | The admin tools are not affected: the admin can still delete any card of an in-progress board (D100), hide, stack and move cards and change columns in every step. Moving the step back to step 1 gives members edit and delete again. The step 2 text reads "ขั้นนี้เขียน แก้ไข หรือลบการ์ดไม่ได้" |
+| D145 | Step 4 shows no columns and no cards (cards stay hidden for everyone, the admin included, in the UI). The page shows a row of score buttons, the average and each member's score. Each member has one score per board; pressing another button changes it. The score can be written only by that member, on an in-progress board in step 4 | Owner request, options approved in chat: one score per member, whole board hidden |
+| D146 | Scale: 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5. The Rules reject any other number, type or extra field. No delete: a score can be changed in step 4 but not removed | Owner example `1 1.5 2, 2.5 to 5` |
+| D147 | Visibility: every board member and the admin read all scores (like votes, D136); the page shows the average (rounded to 2 decimals) and how many members chose each score. Scores are shown only in step 4; later steps do not show them yet | Approved option |
+| D148 | Moving the step away from 4 freezes the scores (no writes); moving back to 4 lets members change them again. The admin does not rate unless a board member. Cards are only hidden by the page, not by Rules: the Rules for reading cards are unchanged (D126) | Default |
 

@@ -190,3 +190,6 @@ Vote button position (owner request): the vote button is at the bottom right of 
 
 Alignment (owner request): the admin menu button (`.card-menu`) now takes its right offset from the card padding (`max(0.85rem, 18 * --u)`), so its right edge equals the vote button's right edge. Chrome DevTools MCP check (mock mode): all 5 cards at 1280x720 had both right edges at the same pixel; at 375x812 all cards aligned with no horizontal scroll.
 
+No edit and delete after step 1 (owner request, D143): `แก้ไข` and `ลบ` show only while the board is in step 1 (`canAdd`). From step 2 on the footer row holds only the vote button, and an open edit form closes when the step moves. The admin menu keeps its delete item.
+
+Self rating step (F28, D145): in step 4 the three columns are replaced by `RatingPanel` (`.rating-panel`, a `pixel-panel`): a row of 9 score buttons (1 to 5 in steps of 0.5; the chosen one is gold, each shows how many members picked it), the average line, and a list of every member with their score. At 640 px and narrower the buttons wrap to 5 per row.

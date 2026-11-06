@@ -134,6 +134,43 @@ describe("mock private writing step", () => {
   });
 });
 
+describe("mock self rating", () => {
+  async function ratingBoard() {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Ratings", "Aomsin");
+    await backend.joinBoard(boardId, "guest", "Guest");
+    await backend.startSession(boardId);
+    await backend.setPhase(boardId, 4);
+    return { backend, admin, boardId };
+  }
+
+  it("should save scores, let listeners see every member and allow changing them in step 4", async () => {
+    const { backend, admin, boardId } = await ratingBoard();
+    let ratings: Array<{ uid: string; score: number }> = [];
+    const stop = backend.subscribeToRatings(boardId, (next) => (ratings = next), fail);
+    await flush();
+
+    await backend.saveMyRating(boardId, admin.uid, 4.5);
+    await backend.saveMyRating(boardId, "guest", 3);
+    await backend.saveMyRating(boardId, admin.uid, 5);
+    stop();
+
+    expect(ratings.find((rating) => rating.uid === admin.uid)?.score).toBe(5);
+    expect(ratings.find((rating) => rating.uid === "guest")?.score).toBe(3);
+  });
+
+  it("should refuse bad scores, a non-member and ratings outside step 4", async () => {
+    const { backend, admin, boardId } = await ratingBoard();
+    for (const bad of [0, 0.5, 5.5, 1.2]) {
+      await expect(backend.saveMyRating(boardId, admin.uid, bad)).rejects.toMatchObject({ code: "permission-denied" });
+    }
+    await expect(backend.saveMyRating(boardId, "stranger", 3)).rejects.toMatchObject({ code: "permission-denied" });
+    await backend.setPhase(boardId, 3);
+    await expect(backend.saveMyRating(boardId, admin.uid, 3)).rejects.toMatchObject({ code: "permission-denied" });
+  });
+});
+
 describe("mock voting", () => {
   async function votingBoard() {
     const backend = setup();

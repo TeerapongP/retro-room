@@ -85,6 +85,12 @@ beforeEach(async () => {
         uid, role, displayName: name, joinedAt: seededTimestamp,
       });
     }
+    for (const [cardId, author, text, column] of [["bobCard", "bob", "Bob card", "went-well"], ["aliceCard", "alice", "Alice card", "ideas"]]) {
+      await setDoc(doc(db, `boards/${WRITE_BOARD_ID}/cards/${cardId}`), {
+        columnId: column, text, authorId: author, hidden: false,
+        createdAt: seededTimestamp, updatedAt: seededTimestamp,
+      });
+    }
     const otherBoards = {
       [WAITING_BOARD_ID]: { status: "waiting" },
       [COMPLETED_BOARD_ID]: { status: "completed", startedAt: seededTimestamp, completedAt: seededTimestamp },
@@ -925,7 +931,7 @@ describe("cards", () => {
 
   it(`should allow an author to edit their own card`, async () => {
     await assertSucceeds(
-      updateDoc(doc(bob(), `boards/${BOARD_ID}/cards/bobCard`), {
+      updateDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/bobCard`), {
         text: "Edited",
         updatedAt: serverTimestamp(),
       }),
@@ -934,7 +940,7 @@ describe("cards", () => {
 
   it(`should deny a member editing another member's card`, async () => {
     await assertFails(
-      updateDoc(doc(bob(), `boards/${BOARD_ID}/cards/aliceCard`), {
+      updateDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/aliceCard`), {
         text: "Edited",
         updatedAt: serverTimestamp(),
       }),
@@ -943,7 +949,7 @@ describe("cards", () => {
 
   it(`should deny the owner editing a member's card`, async () => {
     await assertFails(
-      updateDoc(doc(alice(), `boards/${BOARD_ID}/cards/bobCard`), {
+      updateDoc(doc(alice(), `boards/${WRITE_BOARD_ID}/cards/bobCard`), {
         text: "Edited",
         updatedAt: serverTimestamp(),
       }),
@@ -952,7 +958,7 @@ describe("cards", () => {
 
   it(`should deny changing a card's column`, async () => {
     await assertFails(
-      updateDoc(doc(bob(), `boards/${BOARD_ID}/cards/bobCard`), {
+      updateDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/bobCard`), {
         columnId: "ideas",
         updatedAt: serverTimestamp(),
       }),
@@ -961,7 +967,7 @@ describe("cards", () => {
 
   it(`should deny changing a card's authorId`, async () => {
     await assertFails(
-      updateDoc(doc(bob(), `boards/${BOARD_ID}/cards/bobCard`), {
+      updateDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/bobCard`), {
         authorId: "alice",
         updatedAt: serverTimestamp(),
       }),
@@ -970,7 +976,7 @@ describe("cards", () => {
 
   it(`should deny editing a card to exceed 500 characters`, async () => {
     await assertFails(
-      updateDoc(doc(bob(), `boards/${BOARD_ID}/cards/bobCard`), {
+      updateDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/bobCard`), {
         text: "x".repeat(501),
         updatedAt: serverTimestamp(),
       }),
@@ -978,19 +984,19 @@ describe("cards", () => {
   });
 
   it(`should allow an author to delete their own card`, async () => {
-    await assertSucceeds(deleteDoc(doc(bob(), `boards/${BOARD_ID}/cards/bobCard`)));
+    await assertSucceeds(deleteDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/bobCard`)));
   });
 
   it(`should deny a member deleting another member's card`, async () => {
-    await assertFails(deleteDoc(doc(bob(), `boards/${BOARD_ID}/cards/aliceCard`)));
+    await assertFails(deleteDoc(doc(bob(), `boards/${WRITE_BOARD_ID}/cards/aliceCard`)));
   });
 
   it(`should allow the owner to delete a member's card`, async () => {
-    await assertSucceeds(deleteDoc(doc(alice(), `boards/${BOARD_ID}/cards/bobCard`)));
+    await assertSucceeds(deleteDoc(doc(alice(), `boards/${WRITE_BOARD_ID}/cards/bobCard`)));
   });
 
   it(`should deny a non-member deleting a card`, async () => {
-    await assertFails(deleteDoc(doc(carol(), `boards/${BOARD_ID}/cards/bobCard`)));
+    await assertFails(deleteDoc(doc(carol(), `boards/${WRITE_BOARD_ID}/cards/bobCard`)));
   });
 });
 

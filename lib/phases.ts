@@ -21,7 +21,7 @@ export const PHASES: readonly Phase[] = [
     id: 2,
     label: "ทบทวน",
     title: "ขั้นที่ 2: ทบทวน",
-    description: "อ่านการ์ดทั้งหมดด้วยกันแล้วคอมเมนต์ ขั้นนี้เขียนการ์ดเพิ่มไม่ได้ ผู้ดำเนินรายการซ้อนการ์ดเรื่องเดียวกันได้",
+    description: "อ่านการ์ดทั้งหมดด้วยกันแล้วคอมเมนต์ ขั้นนี้เขียน แก้ไข หรือลบการ์ดไม่ได้ ผู้ดำเนินรายการซ้อนการ์ดเรื่องเดียวกันได้",
     isBuilt: true,
   },
   {
@@ -31,7 +31,13 @@ export const PHASES: readonly Phase[] = [
     description: "เลือกการ์ดที่สำคัญที่สุด โหวตได้สูงสุด 3 อัน",
     isBuilt: true,
   },
-  { id: 4, label: "ให้คะแนนตัวเอง", title: "ขั้นที่ 4: ให้คะแนนตัวเอง", description: COMING_SOON, isBuilt: false },
+  {
+    id: 4,
+    label: "ให้คะแนนตัวเอง",
+    title: "ขั้นที่ 4: ให้คะแนนตัวเอง",
+    description: "ให้คะแนนตัวเอง 1 ถึง 5 (ครั้งละ 0.5) สำหรับ sprint นี้ ทุกคนเห็นคะแนนของทุกคนและค่าเฉลี่ย",
+    isBuilt: true,
+  },
   { id: 5, label: "โฮสต์คนถัดไป", title: "ขั้นที่ 5: โฮสต์คนถัดไป", description: COMING_SOON, isBuilt: false },
   { id: 6, label: "สรุป", title: "ขั้นที่ 6: สรุป", description: COMING_SOON, isBuilt: false },
 ];

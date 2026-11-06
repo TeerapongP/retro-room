@@ -91,6 +91,7 @@ beforeEach(async () => {
     await setDoc(doc(db, `boards/${SRC}/cards/legacy`), seedCard("legacy", "bob", undefined));
     await setDoc(doc(db, `boards/${WRITING}/cards/bobWrote`), seedCard("bob wrote", "bob", false));
     await setDoc(doc(db, `boards/${WRITING}/cards/aliceWrote`), seedCard("alice wrote", "alice", false));
+    await setDoc(doc(db, `boards/${WRITING}/cards/bobHidden`), seedCard("bob hidden", "bob", true));
     await setDoc(doc(db, `boards/${DEST}/cards/existing`), seedCard("existing", "bob", false));
     await setDoc(doc(db, `boards/${COMPLETED}/cards/done`), seedCard("done", "bob", false));
     await setDoc(doc(db, `boards/${WAITING}/cards/early`), seedCard("early", "bob", false));
@@ -275,7 +276,7 @@ describe("normal card writes with the hidden field", () => {
 
   it("should let the author edit the text of their own hidden card and keep it hidden", async () => {
     await assertSucceeds(
-      updateDoc(doc(bob(), `boards/${SRC}/cards/secret`), { text: "edited", updatedAt: serverTimestamp() }),
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobHidden`), { text: "edited", updatedAt: serverTimestamp() }),
     );
   });
 
@@ -414,6 +415,80 @@ describe("voting (D135 to D142)", () => {
   });
 });
 
+describe("self rating (D145 to D148)", () => {
+  const ratingPath = (uid: string, boardId = VOTING) => `boards/${boardId}/ratings/${uid}`;
+  const rate = (client: ReturnType<typeof admin>, uid: string, score: unknown, boardId = VOTING, extra: Record<string, unknown> = {}) =>
+    setDoc(doc(client, ratingPath(uid, boardId)), { score, updatedAt: serverTimestamp(), ...extra });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  beforeEach(async () => {
+    await assertSucceeds(setPhase(VOTING, 4));
+  });
+
+  it("should let a member save and change their own score from 1 to 5 in steps of 0.5 in step 4", async () => {
+    for (const score of [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]) {
+      await assertSucceeds(rate(bob(), "bob", score));
+    }
+    await assertSucceeds(rate(alice(), "alice", 3));
+  });
+
+  it("should reject scores outside the scale", async () => {
+    for (const score of [0, 0.5, 5.5, 6, -1, 1.2, 2.75, "3", null, true, [3]]) {
+      await assertFails(rate(bob(), "bob", score));
+    }
+  });
+
+  it("should reject extra fields, a missing field and a wrong updatedAt", async () => {
+    await assertFails(rate(bob(), "bob", 3, VOTING, { admin: true }));
+    await assertFails(setDoc(doc(bob(), ratingPath("bob")), { score: 3 }));
+    await assertFails(setDoc(doc(bob(), ratingPath("bob")), { updatedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(bob(), ratingPath("bob")), { score: 3, updatedAt: seeded }));
+  });
+
+  it("should reject rating for someone else, by a stranger, by the admin who is not a member and by look-alikes", async () => {
+    await assertFails(rate(bob(), "alice", 3));
+    await assertFails(rate(stranger(), "stranger", 3));
+    await assertFails(rate(admin(), "admin", 3));
+    for (const [label, makeClient] of Object.entries(impostors)) {
+      await assertFails(rate(makeClient(), label.replace(/\s/g, "-"), 3));
+    }
+  });
+
+  it("should reject ratings in every step except 4", async () => {
+    for (const phase of [1, 2, 3, 5, 6]) {
+      await assertSucceeds(setPhase(VOTING, phase));
+      await assertFails(rate(bob(), "bob", 3));
+    }
+    await assertSucceeds(setPhase(VOTING, 4));
+    await assertSucceeds(rate(bob(), "bob", 3));
+  });
+
+  it("should freeze the score after step 4 and allow no delete", async () => {
+    await assertSucceeds(rate(bob(), "bob", 3));
+    await assertFails(deleteDoc(doc(bob(), ratingPath("bob"))));
+    await assertSucceeds(setPhase(VOTING, 5));
+    await assertFails(rate(bob(), "bob", 4));
+  });
+
+  it("should reject ratings on a waiting board and a completed board", async () => {
+    await assertFails(rate(bob(), "bob", 3, WAITING));
+    await assertFails(rate(bob(), "bob", 3, COMPLETED));
+  });
+
+  it("should let board members and the admin read every rating and nobody else", async () => {
+    await assertSucceeds(rate(bob(), "bob", 4));
+    await assertSucceeds(getDoc(doc(alice(), ratingPath("bob"))));
+    await assertSucceeds(getDoc(doc(admin(), ratingPath("bob"))));
+    await assertSucceeds(getDocs(collection(alice(), `boards/${VOTING}/ratings`)));
+    await assertFails(getDoc(doc(stranger(), ratingPath("bob"))));
+    await assertFails(getDocs(collection(stranger(), `boards/${VOTING}/ratings`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(getDoc(doc(makeClient(), ratingPath("bob"))));
+    }
+  });
+});
+
 describe("writing only in step 1 (D131 to D134)", () => {
   const newCard = (authorId: string, overrides: Record<string, unknown> = {}) => ({
     columnId: "ideas",
@@ -451,11 +526,42 @@ describe("writing only in step 1 (D131 to D134)", () => {
     await assertFails(setDoc(doc(alice(), `boards/${SRC}/cards/owner1`), newCard("alice")));
   });
 
-  it("should still let an author edit and delete their own card in the review step (D132)", async () => {
-    await assertSucceeds(
+  it("should reject an author editing or deleting their own card in the review step (D143)", async () => {
+    await assertFails(
       updateDoc(doc(bob(), `boards/${SRC}/cards/visible`), { text: "edited in review", updatedAt: serverTimestamp() }),
     );
-    await assertSucceeds(deleteDoc(doc(bob(), `boards/${SRC}/cards/visible`)));
+    await assertFails(deleteDoc(doc(bob(), `boards/${SRC}/cards/visible`)));
+  });
+
+  it("should reject the board owner deleting a member's card in the review step (D143)", async () => {
+    await assertFails(deleteDoc(doc(alice(), `boards/${SRC}/cards/visible`)));
+  });
+
+  it("should let authors and the board owner edit and delete in step 1 (D143)", async () => {
+    await assertSucceeds(
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`), { text: "edited", updatedAt: serverTimestamp() }),
+    );
+    await assertSucceeds(deleteDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`)));
+    await assertSucceeds(deleteDoc(doc(alice(), `boards/${WRITING}/cards/bobHidden`)));
+  });
+
+  it("should stop members editing and deleting again after the admin moves a step-1 board to review, and allow it when moved back (D143, D144)", async () => {
+    await assertSucceeds(setPhase(WRITING, 2));
+    await assertFails(
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`), { text: "late edit", updatedAt: serverTimestamp() }),
+    );
+    await assertFails(deleteDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`)));
+    await assertSucceeds(setPhase(WRITING, 1));
+    await assertSucceeds(
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`), { text: "edit after step 1 again", updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("should keep the admin tools working in the review step (D144)", async () => {
+    await assertSucceeds(
+      updateDoc(doc(admin(), `boards/${SRC}/cards/visible`), { hidden: true, updatedAt: serverTimestamp() }),
+    );
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/secret`)));
   });
 
   it("should still let the admin move a card into a board that is in the review step (D133)", async () => {
@@ -478,7 +584,7 @@ describe("private writing step (D126 to D130)", () => {
     const own = await assertSucceeds(
       getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("authorId", "==", "bob"))),
     );
-    if (own.size !== 1) throw new Error(`expected 1 own card, got ${own.size}`);
+    if (own.size !== 2) throw new Error(`expected 2 own cards, got ${own.size}`);
     await assertFails(
       getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("hidden", "==", false))),
     );
@@ -487,7 +593,7 @@ describe("private writing step (D126 to D130)", () => {
 
   it("should let the admin read every card in step 1", async () => {
     const all = await assertSucceeds(getDocs(collection(admin(), `boards/${WRITING}/cards`)));
-    if (all.size !== 2) throw new Error(`expected 2 cards, got ${all.size}`);
+    if (all.size !== 3) throw new Error(`expected 3 cards, got ${all.size}`);
   });
 
   it("should keep a stranger and look-alike accounts out in step 1", async () => {

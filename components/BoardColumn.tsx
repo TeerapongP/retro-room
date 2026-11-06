@@ -22,7 +22,7 @@ type BoardColumnProps = {
   isOwner: boolean;
   isAdmin: boolean;
   readOnly: boolean;
-  /** New cards can be written only in step 1 of an in-progress board (F25, D131). */
+  /** Members write, edit and delete cards only in step 1 of an in-progress board (F25, F27, D131, D143). */
   canAdd: boolean;
   onToggleHidden: (card: BoardCard) => void;
   onMove: (card: BoardCard) => void;
@@ -129,8 +129,8 @@ export function BoardColumn({
               key={card.id}
               card={card}
               authorName={authorNames.get(card.authorId) ?? FALLBACK_DISPLAY_NAME}
-              canEdit={!readOnly && card.authorId === uid}
-              canDelete={!readOnly && (card.authorId === uid || isOwner)}
+              canEdit={canAdd && card.authorId === uid}
+              canDelete={canAdd && (card.authorId === uid || isOwner)}
               showAdminMenu={isAdmin && !readOnly}
               onToggleHidden={() => onToggleHidden(card)}
               onMove={() => onMove(card)}

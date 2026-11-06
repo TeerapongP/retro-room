@@ -251,7 +251,7 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 
 - IMPLEMENTED: `writingOpen` and the stricter card create rule in `firestore.rules`; `canAdd` in `BoardColumn` and the page; the same rule in the mock `addCard` (error code `permission-denied`); step 2 text. Tests: 6 rules, 2 integration and 1 mock added; existing tests that created cards now use a step-1 board (rules) or add cards before the admin starts the review (integration, mock).
 - Chrome DevTools MCP check (mock mode, 1280x720): in step 1 each column had a `+` button (3); step 2 showed the new description and 0 buttons; step 6 had 0; going back to step 1 showed 3 again; an open add form closed when the step moved to 2; no console errors. NOT RUN: a member's view (mock mode is always the admin; the rules and integration tests cover it), the permission error message when a form is open at the moment the step moves, two browsers.
-- Edit and delete of own cards are NOT locked in review (D132, default). Say if members should lose them in the review step too.
+- Edit and delete of own cards were not locked in review (D132, default); locked later by F27 (D143, D144).
 
 ## F26 Voting (branch `feature/voting`, not committed)
 
@@ -259,3 +259,15 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - Tests added: 9 helper, 11 rules, 1 integration, 3 mock. Chrome DevTools MCP check (mock mode, 1280x720): steps 1 and 2 showed no vote UI; step 3 showed 4 buttons, `โหวตเหลือ 3/3`, three votes turned the buttons gold with `0/3` left and the fourth card's button disabled, a click on it did nothing, taking one vote back gave `1/3`; step 4 showed 4 static counts and no buttons; back to step 3 kept the votes; no console errors; after a layout fix the vote button no longer overlaps the admin menu. NOT RUN: two real members voting at once (mock mode has one user), a member's view with votes of others, phone width, the emulator through the UI.
 - Known limit (D136): vote records are readable by members, so the ballot is not secret. Votes survive card deletion as ids that counts ignore (D140).
 
+
+## F27 No edit or delete after step 1 (branch `feature/lock-edit-after-writing`, not committed)
+
+- IMPLEMENTED: `firestore.rules` card update (author edit) and delete (author or owner) require `writingOpen`; `BoardColumn` passes `canEdit`/`canDelete` only when `canAdd`; `StickyNote` closes an open edit form when edit is no longer allowed; step 2 text in `lib/phases.ts`. Admin tools unchanged (D144). Resolves the open default of D132.
+- Tests: rules and integration tests updated (author edit and delete work in step 1 and are denied with `permission-denied` from step 2 for the author and for the owner; admin delete still works). Mock `editCard`/`deleteCard` are not gated by the step; only the UI hides the buttons in mock mode.
+- NOT DEPLOYED. Deploy with the other Rules.
+
+## F28 Self rating, step 4 (not committed; made on branch `feature/lock-edit-after-writing` with the F27 changes)
+
+- IMPLEMENTED: `ratings` subcollection and Rules (`ratingOpen`, `validRating`), `lib/ratings.ts`, `lib/firebase/ratings.ts`, mock `subscribeToRatings`/`saveMyRating`, `components/RatingPanel.tsx`, step 4 made real in `lib/phases.ts`, page hides the columns in step 4. Docs: D145 to D148 in docs/01, 04, 05, 06.
+- Tests added: 8 rules tests, 1 integration, 2 mock, ratings unit tests. NOT DEPLOYED: Rules need deploy with the others.
+- NOT RUN: a member's view in the browser and two browsers at once (mock mode is always the admin).

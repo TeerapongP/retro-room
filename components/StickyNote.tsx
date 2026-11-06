@@ -58,6 +58,8 @@ export function StickyNote({
   onDelete,
 }: StickyNoteProps) {
   const [isEditing, setIsEditing] = useState(false);
+  // Editing is locked outside step 1 (D143): a form that was open when the step moved closes and stays closed.
+  if (isEditing && !canEdit) setIsEditing(false);
   const [draft, setDraft] = useState(card.text);
   const [isDropTarget, setIsDropTarget] = useState(false);
 
