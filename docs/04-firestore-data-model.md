@@ -74,6 +74,15 @@ Anonymous posting is not supported, so author is stored and may be displayed.
 
 Ledger of a card moved out of this board. Document ID is the moved card's id. Fields: `destBoardId`, `destCardId`, `movedAt` (server timestamp). Written once by the admin together with the destination card and the source delete; never updated or deleted; readable only by the admin.
 
+## boards/{boardId}/voters/{uid} (F26, D137)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `cardIds` | list of strings | At most 3 distinct card ids (each 1 to 64 characters) the member voted for |
+| `updatedAt` | timestamp | Server timestamp |
+
+The document ID is the voter's uid. Counts per card are computed on the client from all voter documents (`lib/votes.ts`).
+
 ## Queries and indexes
 
 | Query | Index |
@@ -81,6 +90,7 @@ Ledger of a card moved out of this board. Document ID is the moved card's id. Fi
 | Dashboard: `collectionGroup('members').where('uid','==',uid)` | Collection-group field override on `members.uid` (ascending) |
 | Board cards, admin: `cards.orderBy('createdAt')` | Single-field, automatic |
 | Board cards, member (D76): `cards.where('hidden','==',false)` and `cards.where('authorId','==',uid)`, merged and sorted on the client | Single-field equality, automatic. No `orderBy`, so no composite index |
+| Votes: `boards/{id}/voters` (whole subcollection read) | none |
 | Admin move targets: `boards.where('status','==','in-progress')` | Single-field, automatic |
 | Board members: `members` subcollection read | none |
 

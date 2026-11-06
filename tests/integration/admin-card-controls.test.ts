@@ -21,7 +21,9 @@ import {
   subscribeToCards,
   unstackCard,
 } from "@/lib/firebase/cards";
+import { saveMyVotes, subscribeToVotes } from "@/lib/firebase/votes";
 import type { Board, BoardCard } from "@/lib/firebase/types";
+import { countVotes, type Voter } from "@/lib/votes";
 import { createTestUser, pause, resetEmulators, waitUntil, type TestUser } from "./helpers";
 
 let owner: TestUser;
@@ -213,6 +215,38 @@ describe("move to another board", () => {
     expect(sourceView.state.cards?.map((card) => card.text)).toEqual(["Stay"]);
     sourceView.stop();
     destinationView.stop();
+  });
+});
+
+describe("voting (D135 to D142)", () => {
+  it(`should let members place up to 3 votes in step 3 only, and show everyone the counts`, async () => {
+    const boardId = await liveBoard("Vote board");
+    await expect(saveMyVotes(boardId, member.uid, ["a"], member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+
+    await setPhase(boardId, 3, admin.db);
+    await saveMyVotes(boardId, member.uid, ["a", "b", "c"], member.db);
+    await saveMyVotes(boardId, owner.uid, ["a"], owner.db);
+    const seen = { voters: undefined as Voter[] | undefined };
+    const stop = subscribeToVotes(boardId, (next) => (seen.voters = next), fail, owner.db);
+    await waitUntil(() => seen.voters?.length === 2);
+    const counts = countVotes(seen.voters!);
+    expect(counts.get("a")).toBe(2);
+    expect(counts.get("b")).toBe(1);
+    stop();
+
+    await expect(saveMyVotes(boardId, member.uid, ["a", "b", "c", "d"], member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+    await expect(saveMyVotes(boardId, owner.uid, ["z"], member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+
+    await setPhase(boardId, 4, admin.db);
+    await expect(saveMyVotes(boardId, member.uid, ["a"], member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
   });
 });
 

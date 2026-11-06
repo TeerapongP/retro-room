@@ -134,6 +134,58 @@ describe("mock private writing step", () => {
   });
 });
 
+describe("mock voting", () => {
+  async function votingBoard() {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Votes", "Aomsin");
+    await backend.joinBoard(boardId, "guest", "Guest");
+    await backend.startSession(boardId);
+    await backend.setPhase(boardId, 3);
+    return { backend, admin, boardId };
+  }
+
+  it("should save votes, let listeners see every voter and allow changing them in step 3", async () => {
+    const { backend, admin, boardId } = await votingBoard();
+    let voters: Array<{ uid: string; cardIds: string[] }> = [];
+    const stop = backend.subscribeToVotes(boardId, (next) => (voters = next), fail);
+    await flush();
+
+    await backend.saveMyVotes(boardId, admin.uid, ["c1", "c2"]);
+    await backend.saveMyVotes(boardId, "guest", ["c1"]);
+    await backend.saveMyVotes(boardId, admin.uid, ["c2"]);
+    stop();
+
+    expect(voters.find((voter) => voter.uid === admin.uid)?.cardIds).toEqual(["c2"]);
+    expect(voters.find((voter) => voter.uid === "guest")?.cardIds).toEqual(["c1"]);
+  });
+
+  it("should refuse a fourth vote, repeated ids, a non-member and votes outside step 3", async () => {
+    const { backend, admin, boardId } = await votingBoard();
+    await expect(backend.saveMyVotes(boardId, admin.uid, ["a", "b", "c", "d"])).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(backend.saveMyVotes(boardId, admin.uid, ["a", "a"])).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(backend.saveMyVotes(boardId, "stranger", ["a"])).rejects.toMatchObject({ code: "permission-denied" });
+    await backend.setPhase(boardId, 4);
+    await expect(backend.saveMyVotes(boardId, admin.uid, ["a"])).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it("should keep votes after a reload from storage", async () => {
+    const storage = memoryStorage();
+    const first = setup({ storage });
+    const admin = await first.signIn();
+    const boardId = await first.createBoard(admin.uid, "Votes", "Aomsin");
+    await first.startSession(boardId);
+    await first.setPhase(boardId, 3);
+    await first.saveMyVotes(boardId, admin.uid, ["c1"]);
+
+    let voters: Array<{ uid: string; cardIds: string[] }> = [];
+    const stop = setup({ storage }).subscribeToVotes(boardId, (next) => (voters = next), fail);
+    await flush();
+    stop();
+    expect(voters).toEqual([{ uid: admin.uid, cardIds: ["c1"] }]);
+  });
+});
+
 describe("mock writing only in step 1", () => {
   it("should reject new cards from step 2 on and accept them again in step 1", async () => {
     const backend = setup();

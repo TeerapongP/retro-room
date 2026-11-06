@@ -16,6 +16,8 @@ import { PhaseStepper } from "@/components/PhaseStepper";
 import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
+import { saveMyVotes, subscribeToVotes } from "@/lib/firebase/votes";
+import { VOTES_PER_MEMBER, countVotes, toggleVote, votesLeft, type Voter } from "@/lib/votes";
 import { rememberLastBoard } from "@/lib/last-board";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
 import {
@@ -197,6 +199,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   const [movingCard, setMovingCard] = useState<BoardCard | null>(null);
   const [deletingCard, setDeletingCard] = useState<BoardCard | null>(null);
   const [stackingCard, setStackingCard] = useState<BoardCard | null>(null);
+  const [voters, setVoters] = useState<Voter[]>([]);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
@@ -222,6 +225,16 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       (error) => setLiveError(describeFirebaseError(error)),
     );
   }, [board.id, board.phase, board.status, isWaiting, uid, isAdmin]);
+
+  const showVotes = board.phase >= 3 || isCompleted;
+  useEffect(() => {
+    if (!showVotes) return;
+    return subscribeToVotes(board.id, setVoters, (error) => setLiveError(describeFirebaseError(error)));
+  }, [board.id, showVotes]);
+
+  const voteCounts = countVotes(voters);
+  const myVotes = voters.find((voter) => voter.uid === uid)?.cardIds ?? [];
+  const isVotingOpen = board.phase === 3 && !isCompleted;
 
   const authorNames = new Map(members.map((member) => [member.uid, member.displayName]));
   const isOwner = role === "owner";
@@ -258,6 +271,11 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
 
   async function handleUnstack(card: BoardCard) {
     if (await runAction(() => unstackCard(board.id, card.id))) setNotice("แยกการ์ดออกจากกองแล้ว");
+  }
+
+  async function handleToggleVote(cardId: string) {
+    const next = toggleVote(myVotes, cardId);
+    if (next) await runAction(() => saveMyVotes(board.id, uid, next));
   }
 
   async function handleCopyLink() {
@@ -308,6 +326,11 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         }
         actions={
           <>
+            {isVotingOpen ? (
+              <span className="vote-meter" role="status">
+                โหวตเหลือ {votesLeft(myVotes)}/{VOTES_PER_MEMBER}
+              </span>
+            ) : null}
             {isCompleted ? null : (
               <BoardTimer
                 board={board}
@@ -449,6 +472,14 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
               readOnly={isCompleted}
               canAdd={!isCompleted && board.phase === 1}
               onToggleHidden={handleToggleHidden}
+              voteInfoFor={(card) => ({
+                count: voteCounts.get(card.id) ?? 0,
+                showCount: showVotes,
+                isOpen: isVotingOpen,
+                hasVoted: myVotes.includes(card.id),
+                isDisabled: votesLeft(myVotes) === 0 && !myVotes.includes(card.id),
+                onToggle: () => void handleToggleVote(card.id),
+              })}
               onChangeColumn={handleChangeColumn}
               onStackWith={(card) => {
                 setNotice(null);

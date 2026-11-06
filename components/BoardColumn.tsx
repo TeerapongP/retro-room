@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { ColumnIcon } from "@/components/BoardIcons";
 import { IconPlus } from "@/components/DashboardIcons";
 import { CardStack } from "@/components/CardStack";
-import { StickyNote } from "@/components/StickyNote";
+import { StickyNote, type CardVoteInfo } from "@/components/StickyNote";
 import { groupCards } from "@/lib/card-groups";
 import {
   CARD_TEXT_MAX_LENGTH,
@@ -31,6 +31,7 @@ type BoardColumnProps = {
   onStackWith: (card: BoardCard) => void;
   onUnstack: (card: BoardCard) => void;
   onStackDrop: (draggedCardId: string, target: BoardCard) => void;
+  voteInfoFor: (card: BoardCard) => CardVoteInfo;
   onAdd: (text: string) => Promise<boolean>;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
@@ -53,6 +54,7 @@ export function BoardColumn({
   onStackWith,
   onUnstack,
   onStackDrop,
+  voteInfoFor,
   onAdd,
   onEdit,
   onDelete,
@@ -138,6 +140,7 @@ export function BoardColumn({
               onStackWith={() => onStackWith(card)}
               onUnstack={() => onUnstack(card)}
               onStackDrop={(draggedCardId) => onStackDrop(draggedCardId, card)}
+              vote={voteInfoFor(card)}
               onEdit={onEdit}
               onDelete={onDelete}
             />

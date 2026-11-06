@@ -29,6 +29,7 @@ const OTHER = "other";
 const COMPLETED = "completed";
 const WAITING = "waiting";
 const WRITING = "writing";
+const VOTING = "voting";
 const seeded = Timestamp.fromDate(new Date("2026-01-01T00:00:00Z"));
 
 let testEnv: RulesTestEnvironment;
@@ -62,6 +63,7 @@ beforeEach(async () => {
       [DEST]: "in-progress",
       [OTHER]: "in-progress",
       [WRITING]: "in-progress",
+      [VOTING]: "in-progress",
       [COMPLETED]: "completed",
       [WAITING]: "waiting",
     };
@@ -72,6 +74,7 @@ beforeEach(async () => {
         status,
         // step 1 (no phase field) keeps other members' cards private (D126); the other boards are already in the review step
         ...([SRC, DEST, OTHER].includes(boardId) ? { phase: 2 } : {}),
+        ...(boardId === VOTING ? { phase: 3 } : {}),
         createdAt: seeded,
         updatedAt: seeded,
       });
@@ -323,6 +326,91 @@ describe("admin column move (D101)", () => {
     await assertFails(updateDoc(ref, { columnId: "ideas", authorId: "admin", updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(ref, { columnId: "ideas", hidden: true, updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(ref, { columnId: "ideas", updatedAt: seeded }));
+  });
+});
+
+describe("voting (D135 to D142)", () => {
+  const voterPath = (uid: string, boardId = VOTING) => `boards/${boardId}/voters/${uid}`;
+  const vote = (client: ReturnType<typeof admin>, uid: string, cardIds: unknown, boardId = VOTING, extra: Record<string, unknown> = {}) =>
+    setDoc(doc(client, voterPath(uid, boardId)), { cardIds, updatedAt: serverTimestamp(), ...extra });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  it("should let a member save and change up to 3 votes of their own in step 3", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+    await assertSucceeds(vote(bob(), "bob", ["c1", "c2", "c3"]));
+    await assertSucceeds(vote(bob(), "bob", []));
+    await assertSucceeds(vote(alice(), "alice", ["c2"]));
+  });
+
+  it("should let a member clear their votes by deleting their own document in step 3", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+    await assertSucceeds(deleteDoc(doc(bob(), voterPath("bob"))));
+  });
+
+  it("should reject a fourth vote, repeated card ids and values that are not a list of short strings", async () => {
+    await assertFails(vote(bob(), "bob", ["c1", "c2", "c3", "c4"]));
+    await assertFails(vote(bob(), "bob", ["c1", "c1"]));
+    await assertFails(vote(bob(), "bob", ["c1", 2]));
+    await assertFails(vote(bob(), "bob", [""]));
+    await assertFails(vote(bob(), "bob", ["x".repeat(65)]));
+    await assertFails(vote(bob(), "bob", "c1"));
+    await assertFails(vote(bob(), "bob", null));
+  });
+
+  it("should reject extra fields, a missing field and a wrong updatedAt", async () => {
+    await assertFails(vote(bob(), "bob", ["c1"], VOTING, { admin: true }));
+    await assertFails(setDoc(doc(bob(), voterPath("bob")), { cardIds: ["c1"] }));
+    await assertFails(setDoc(doc(bob(), voterPath("bob")), { updatedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(bob(), voterPath("bob")), { cardIds: ["c1"], updatedAt: seeded }));
+  });
+
+  it("should reject voting for someone else", async () => {
+    await assertFails(vote(bob(), "alice", ["c1"]));
+    await assertFails(vote(alice(), "bob", ["c1"]));
+  });
+
+  it("should reject a vote by a stranger, the admin who is not a member and look-alike accounts", async () => {
+    await assertFails(vote(stranger(), "stranger", ["c1"]));
+    await assertFails(vote(admin(), "admin", ["c1"]));
+    for (const [label, makeClient] of Object.entries(impostors)) {
+      await assertFails(vote(makeClient(), label.replace(/\s/g, "-"), ["c1"]));
+    }
+  });
+
+  it("should reject votes in every step except 3", async () => {
+    for (const phase of [1, 2, 4, 5, 6]) {
+      await assertSucceeds(setPhase(VOTING, phase));
+      await assertFails(vote(bob(), "bob", ["c1"]));
+    }
+    await assertSucceeds(setPhase(VOTING, 3));
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+  });
+
+  it("should freeze the votes after step 3: no change and no delete", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+    await assertSucceeds(setPhase(VOTING, 4));
+    await assertFails(vote(bob(), "bob", ["c2"]));
+    await assertFails(deleteDoc(doc(bob(), voterPath("bob"))));
+  });
+
+  it("should reject votes on a board in the review step, a waiting board and a completed board", async () => {
+    await assertFails(vote(bob(), "bob", ["c1"], SRC));
+    await assertFails(vote(bob(), "bob", ["c1"], WAITING));
+    await assertFails(vote(bob(), "bob", ["c1"], COMPLETED));
+  });
+
+  it("should let board members and the admin read every voter document and nobody else", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1", "c2"]));
+    await assertSucceeds(getDoc(doc(alice(), voterPath("bob"))));
+    await assertSucceeds(getDoc(doc(bob(), voterPath("bob"))));
+    await assertSucceeds(getDoc(doc(admin(), voterPath("bob"))));
+    await assertSucceeds(getDocs(collection(alice(), `boards/${VOTING}/voters`)));
+    await assertFails(getDoc(doc(stranger(), voterPath("bob"))));
+    await assertFails(getDocs(collection(stranger(), `boards/${VOTING}/voters`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(getDoc(doc(makeClient(), voterPath("bob"))));
+    }
   });
 });
 
@@ -655,14 +743,14 @@ describe("admin delete (D100)", () => {
 describe("admin board listing", () => {
   it("should let a verified admin list boards", async () => {
     const snapshot = await assertSucceeds(getDocs(collection(admin(), "boards")));
-    if (snapshot.size !== 6) throw new Error(`expected 6 boards, got ${snapshot.size}`);
+    if (snapshot.size !== 7) throw new Error(`expected 7 boards, got ${snapshot.size}`);
   });
 
   it("should let a verified admin list in-progress boards with a status filter", async () => {
     const snapshot = await assertSucceeds(
       getDocs(query(collection(admin(), "boards"), where("status", "==", "in-progress"))),
     );
-    if (snapshot.size !== 4) throw new Error(`expected 4 boards, got ${snapshot.size}`);
+    if (snapshot.size !== 5) throw new Error(`expected 5 boards, got ${snapshot.size}`);
   });
 
   it("should keep listing boards denied for members, owners and strangers", async () => {

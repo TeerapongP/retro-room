@@ -46,6 +46,7 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F23 | Session stepper (owner request): the top navbar of the Board is replaced by a six-step bar (เขียน, ทบทวน, โหวต, ให้คะแนนตัวเอง, โฮสต์คนถัดไป, สรุป) that the admin moves and everyone sees. See D116 to D123 |
 | F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees only their own cards; other members' cards appear from step 2 on. Amends D76 and D119. See D126 to D130 |
 | F25 | Writing only in step 1 (owner request): new cards can be written only while the board is in step 1 (เขียน); from step 2 on nobody can add a card. Amends D119. See D131 to D134 |
+| F26 | Voting (owner request; the first real use of step 3, โหวต): each member has up to 3 votes on a board and puts them on cards. This approves the earlier non-goal "Voting" for this form only. See D135 to D142 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -326,4 +327,17 @@ The owner approved the three policies below and the ledger approach after an emu
 | D132 | Default: this blocks only creating cards. Editing the text of one's own card, deleting a card (author or board owner, D100 for the admin), stacking, hiding, moving and the timer keep working in every step. If the review step should also lock editing and deleting for members, say so and it becomes a separate change |
 | D133 | Default: an admin move of a card into another board (D77) still creates the copy there whatever that board's step is, because it moves an existing card and is not new writing. Moving the step back to step 1 lets members write again |
 | D134 | The step 2 text says that adding cards is closed. A member who had the add form open when the admin moved the step sees the write rejected with the normal permission error message |
+
+## Voting (F26), owner request: a vote button with at most 3 votes; details marked "default" are my recommended choices
+
+| ID | Decision |
+| --- | --- |
+| D135 | Each member has at most 3 votes per board. Votes can be placed only while the board is in step 3 (โหวต) and in progress. Default: one vote per card per member (pressing the button again takes the vote back), so 3 votes means up to 3 different cards. A member can vote for any card they can see, including their own. Votes can be changed freely during step 3 and are frozen after it |
+| D136 | Default: the vote count of a card is shown to every member from step 3 on, also while voting is open. Who voted is not shown in the interface. Limit: the vote records are readable by board members (see D137), so a member who reads the database directly can see who voted for what; the Rules do not give a secret ballot |
+| D137 | Data: one document per voter, `boards/{boardId}/voters/{uid}`, with `cardIds` (a list of at most 3 distinct card ids, each a string of 1 to 64 characters) and `updatedAt`. Rules: a member writes only their own document, only while the board is in progress and in step 3; board members and the admin can read all voter documents. The Rules enforce the limit of 3 and distinct ids; they do not check that an id is a real card of the board |
+| D138 | Only board members vote. The admin votes only if they are also a member of the board |
+| D139 | In step 3 the step panel shows `โหวตเหลือ N/3` and each card has a vote button with its count; when a member has no votes left, the button on cards they have not voted for is disabled. From step 4 on, and on completed boards, counts are shown without a working button. Steps 1 and 2 show no vote UI |
+| D140 | Deleting a card leaves its id in voter documents; counts ignore ids of cards that no longer exist. A card moved to another board arrives without votes (it is a new card there). A stack (D102) shows the votes of each card separately |
+| D141 | Not in this step: a results list or summary (step 6), a secret ballot, a reset of votes by the admin, votes on more than one column rule, vote history |
+| D142 | Step 3 stops being a placeholder: its description reads "เลือกการ์ดที่สำคัญที่สุด โหวตได้สูงสุด 3 อัน". Steps 4 to 6 stay placeholders. Writing stays closed in step 3 (D131) |
 

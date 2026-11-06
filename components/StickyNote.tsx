@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { CardMenu } from "@/components/CardMenu";
-import { IconEyeOff } from "@/components/CardMenuIcons";
+import { IconEyeOff, IconThumb } from "@/components/CardMenuIcons";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { CARD_TEXT_MAX_LENGTH, type BoardCard, type ColumnId } from "@/lib/firebase/types";
 
@@ -20,9 +20,23 @@ type StickyNoteProps = {
   onUnstack: () => void;
   /** Admin drag and drop (F21, D104): called with the id of the card dropped onto this one. */
   onStackDrop: (draggedCardId: string) => void;
+  vote: CardVoteInfo;
   onAdminDelete: () => void;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
+};
+
+/** Voting state of one card (F26, D139). */
+export type CardVoteInfo = {
+  count: number;
+  /** Counts are shown from step 3 on. */
+  showCount: boolean;
+  /** Voting is open (step 3, in progress). */
+  isOpen: boolean;
+  hasVoted: boolean;
+  /** No votes left and this card is not one of the member's votes. */
+  isDisabled: boolean;
+  onToggle: () => void;
 };
 
 export function StickyNote({
@@ -38,6 +52,7 @@ export function StickyNote({
   onStackWith,
   onUnstack,
   onStackDrop,
+  vote,
   onAdminDelete,
   onEdit,
   onDelete,
@@ -132,6 +147,26 @@ export function StickyNote({
             <span className="board-card-author">{authorName}</span>
             {card.createdAt ? <span aria-hidden="true">·</span> : null}
             <time dateTime={card.createdAt?.toISOString()}>{formatRelativeTime(card.createdAt)}</time>
+            {vote.showCount ? (
+              vote.isOpen ? (
+                <button
+                  type="button"
+                  className={`board-vote ${vote.hasVoted ? "board-vote-on" : ""}`}
+                  aria-pressed={vote.hasVoted}
+                  aria-label={vote.hasVoted ? `เอาโหวตออก (ตอนนี้ ${vote.count} โหวต)` : `โหวตการ์ดนี้ (ตอนนี้ ${vote.count} โหวต)`}
+                  disabled={vote.isDisabled}
+                  onClick={vote.onToggle}
+                >
+                  <IconThumb />
+                  {vote.count}
+                </button>
+              ) : (
+                <span className={`board-vote board-vote-static ${vote.hasVoted ? "board-vote-on" : ""}`} aria-label={`${vote.count} โหวต`}>
+                  <IconThumb />
+                  {vote.count}
+                </span>
+              )
+            ) : null}
           </p>
           {canEdit || canDelete ? (
             <div className="board-card-actions">

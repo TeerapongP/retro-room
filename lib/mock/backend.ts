@@ -1,5 +1,6 @@
 import { ADMIN_EMAIL } from "../firebase/admin";
 import { clampPhase } from "../phases";
+import { VOTES_PER_MEMBER, type Voter } from "../votes";
 import {
   isValidPlayerName,
   normalizePlayerName,
@@ -62,6 +63,8 @@ type MockState = {
   boards: Record<string, StoredBoard>;
   members: Record<string, Record<string, StoredMember>>;
   cards: Record<string, Record<string, StoredCard>>;
+  /** Voter documents per board (F26); absent in states saved before voting existed. */
+  votes?: Record<string, Record<string, string[]>>;
   counter: number;
 };
 
@@ -287,6 +290,31 @@ export function createMockBackend(options: MockBackendOptions = {}) {
 
     async startSession(boardId: string): Promise<void> {
       boardOrThrow(boardId).status = "in-progress";
+      changed();
+    },
+
+    subscribeToVotes(boardId: string, onVoters: (voters: Voter[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(
+        () => Object.entries(state.votes?.[boardId] ?? {}).map(([uid, cardIds]) => ({ uid, cardIds: [...cardIds] })),
+        onVoters,
+        onError,
+      );
+    },
+
+    async saveMyVotes(boardId: string, uid: string, cardIds: string[]): Promise<void> {
+      // Same rules as firestore.rules: member, in-progress board, step 3, at most 3 distinct ids (D135, D137).
+      const board = boardOrThrow(boardId);
+      const isDistinct = new Set(cardIds).size === cardIds.length;
+      if (
+        !state.members[boardId]?.[uid] ||
+        board.status !== "in-progress" ||
+        clampPhase(board.phase) !== 3 ||
+        cardIds.length > VOTES_PER_MEMBER ||
+        !isDistinct
+      ) {
+        throw Object.assign(new Error("Voting is closed or not allowed"), { code: "permission-denied" });
+      }
+      ((state.votes ??= {})[boardId] ??= {})[uid] = [...cardIds];
       changed();
     },
 

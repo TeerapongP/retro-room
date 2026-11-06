@@ -52,6 +52,14 @@ export function IconLayers({ className }: IconProps) {
   );
 }
 
+export function IconThumb({ className }: IconProps) {
+  return (
+    <PixelIcon className={className}>
+      <path d="M9 1h2v4h4v2h1v6h-1v2H6V7h2V3h1zM1 7h3v8H1z" />
+    </PixelIcon>
+  );
+}
+
 export function IconTrash({ className }: IconProps) {
   return (
     <PixelIcon className={className}>

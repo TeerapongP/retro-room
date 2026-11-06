@@ -14,8 +14,8 @@ describe("PHASES", () => {
     ]);
   });
 
-  it("should mark only the first two steps as built", () => {
-    expect(PHASES.filter((phase) => phase.isBuilt).map((phase) => phase.id)).toEqual([1, 2]);
+  it("should mark only steps 1 to 3 as built", () => {
+    expect(PHASES.filter((phase) => phase.isBuilt).map((phase) => phase.id)).toEqual([1, 2, 3]);
   });
 });
 

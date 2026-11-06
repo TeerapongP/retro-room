@@ -253,3 +253,9 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - Chrome DevTools MCP check (mock mode, 1280x720): in step 1 each column had a `+` button (3); step 2 showed the new description and 0 buttons; step 6 had 0; going back to step 1 showed 3 again; an open add form closed when the step moved to 2; no console errors. NOT RUN: a member's view (mock mode is always the admin; the rules and integration tests cover it), the permission error message when a form is open at the moment the step moves, two browsers.
 - Edit and delete of own cards are NOT locked in review (D132, default). Say if members should lose them in the review step too.
 
+## F26 Voting (branch `feature/voting`, not committed)
+
+- IMPLEMENTED: `voters` subcollection and its Rules (`votingOpen`, `validVotes`), `lib/votes.ts`, `lib/firebase/votes.ts`, the mock voting backend, vote button, counts and votes-left chip, step 3 made real. Not deployed; deploy with the other Rules.
+- Tests added: 9 helper, 11 rules, 1 integration, 3 mock. Chrome DevTools MCP check (mock mode, 1280x720): steps 1 and 2 showed no vote UI; step 3 showed 4 buttons, `โหวตเหลือ 3/3`, three votes turned the buttons gold with `0/3` left and the fourth card's button disabled, a click on it did nothing, taking one vote back gave `1/3`; step 4 showed 4 static counts and no buttons; back to step 3 kept the votes; no console errors; after a layout fix the vote button no longer overlaps the admin menu. NOT RUN: two real members voting at once (mock mode has one user), a member's view with votes of others, phone width, the emulator through the UI.
+- Known limit (D136): vote records are readable by members, so the ballot is not secret. Votes survive card deletion as ids that counts ignore (D140).
+

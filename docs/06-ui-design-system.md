@@ -182,3 +182,7 @@ The step 1 description reads "ทุกคนเขียนการ์ดข�
 
 The `+` button of every column and the add-card form show only while the board is in step 1 and not completed (`canAdd` in `BoardColumn`); from step 2 on they are hidden, and an open form closes. The step 2 description now says "ขั้นนี้เขียนการ์ดเพิ่มไม่ได้". Editing and deleting one's own cards and the admin tools are unchanged.
 
+## Voting (F26, D135 to D142)
+
+From step 3 each card shows a thumbs-up count in its meta row, after the time: in step 3 it is a button (`board-vote`; gold when the member voted; disabled when they have no votes left and have not voted for that card), from step 4 on and on completed boards a static count. In step 3 the actions of the panel start with the gold chip `โหวตเหลือ N/3`. Steps 1 and 2 show no vote UI. `lib/votes.ts` holds the limit and counting; the thumb is `IconThumb` in `CardMenuIcons.tsx`.
+
