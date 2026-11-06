@@ -104,6 +104,36 @@ describe("mock boards", () => {
   });
 });
 
+describe("mock private writing step", () => {
+  it("should show members only their own cards in step 1, everyone's from step 2, and everything once completed", async () => {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Private", "Aomsin");
+    await backend.joinBoard(boardId, "guest", "Guest");
+    await backend.startSession(boardId);
+    await backend.addCard(boardId, admin.uid, "ideas", "Owner card");
+    await backend.addCard(boardId, "guest", "ideas", "Guest card");
+    const guestView = { cards: [] as BoardCard[] };
+    const adminView = { cards: [] as BoardCard[] };
+    const stopGuest = backend.subscribeToCards(boardId, { uid: "guest", isAdmin: false }, (next) => (guestView.cards = next), fail);
+    const stopAdmin = backend.subscribeToCards(boardId, { uid: admin.uid, isAdmin: true }, (next) => (adminView.cards = next), fail);
+    await flush();
+    expect(guestView.cards.map((card) => card.text)).toEqual(["Guest card"]);
+    expect(adminView.cards).toHaveLength(2);
+
+    await backend.setPhase(boardId, 2);
+    expect(guestView.cards).toHaveLength(2);
+
+    await backend.setPhase(boardId, 1);
+    expect(guestView.cards.map((card) => card.text)).toEqual(["Guest card"]);
+
+    await backend.completeSession(boardId);
+    stopGuest();
+    stopAdmin();
+    expect(guestView.cards).toHaveLength(2);
+  });
+});
+
 describe("mock session step", () => {
   it("should start at step 1, follow setPhase for board listeners and survive a reload", async () => {
     const storage = memoryStorage();
@@ -176,6 +206,7 @@ describe("mock cards", () => {
     const boardId = await backend.createBoard(admin.uid, "Cards", "Aomsin");
     await backend.joinBoard(boardId, "guest", "Guest");
     await backend.startSession(boardId);
+    await backend.setPhase(boardId, 2); // other members' cards show from step 2 (D126)
     return { backend, admin, boardId };
   }
 

@@ -44,6 +44,7 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F21 | Stack cards (owner request): the admin can stack cards about the same topic by dragging one onto another, or from the card menu. A stack shows as a pile with a count and opens to show all its cards. See D102 to D108 |
 | F22 | Board timer (owner request, first item of the earlier "Retrospective Timer" non-goal): the admin starts a countdown on an in-progress board and everyone sees the same time. See D109 to D115 |
 | F23 | Session stepper (owner request): the top navbar of the Board is replaced by a six-step bar (เขียน, ทบทวน, โหวต, ให้คะแนนตัวเอง, โฮสต์คนถัดไป, สรุป) that the admin moves and everyone sees. See D116 to D123 |
+| F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees only their own cards; other members' cards appear from step 2 on. Amends D76 and D119. See D126 to D130 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -305,4 +306,14 @@ The owner approved the three policies below and the ledger approach after an emu
 | ID | Decision |
 | --- | --- |
 | D125 | The pixel font (`--font-pixel`, class `font-pixel`) changes from Press Start 2P to TA GBA monothai MAX (TA Font, Taweechai Assawarangsitsang, SIL Open Font License 1.1, free for commercial use and embedding). Scope: headings and labels only (dialog titles, timer clock, time-up box, Title screen, loading, emulator and mock banners, Login and Setup pixel text). IBM Plex Sans Thai stays the font for body text, cards and descriptions. This supersedes the "no new font" part of D35. The owner downloaded the font; the TTF of the MAX variant is stored in `app/fonts/` with `OFL.txt` and `FONTLOG.txt` (the license must travel with the font). The Mini variant is not used. The font is a single regular weight with Thai and Latin; it is drawn on 16 pixels per em, so pixel text uses multiples of 16 px (16, 32, 48) |
+
+## Private writing step (F24), owner request; the details marked "default" are my recommended choices
+
+| ID | Decision |
+| --- | --- |
+| D126 | In step 1 (เขียน) a member can read only the cards they wrote. Other members' cards are not readable, so they are not shown and not counted. From step 2 (ทบทวน) on, every member reads all cards that are not hidden by the admin (D76). This amends D119: the step now controls who can read cards. It still blocks nothing else: writing, editing, deleting and the timer work in every step |
+| D127 | Default: the admin still reads every card in every step (D76), because the admin runs the session. The board owner has no extra rights: an owner who is not the admin sees only their own cards in step 1 |
+| D128 | Default: moving the step back to step 1 hides other members' cards again; moving forward shows them. Cards written by a member in step 2 or later are visible to others at once |
+| D129 | A completed board shows every non-hidden card to its members whatever step it ended on, so a session ended in step 1 does not lose its cards. A board without a step counts as step 1 (D117) |
+| D130 | Enforced by Rules, not by the interface: the card read rule checks the board's `phase` and `status`. A member's subscription uses two queries (D76); in step 1 only the query for their own cards is allowed, so the client subscribes by step and renews the subscription when the step changes. The Rules cannot hide a card's existence from the count the member's own query returns, which is only their own cards |
 

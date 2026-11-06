@@ -94,6 +94,12 @@ service cloud.firestore {
         && data.phase <= 6;
     }
 
+    // Other members' cards are readable from step 2 on, or when the board is completed (F24, D126, D129).
+    function cardsRevealed(boardId) {
+      let board = get(boardPath(boardId)).data;
+      return board.get('status', 'in-progress') == 'completed' || board.get('phase', 1) >= 2;
+    }
+
     function validColumn(columnId) {
       return columnId in ['went-well', 'to-improve', 'ideas'];
     }
@@ -230,10 +236,12 @@ service cloud.firestore {
         // The plain `resource.data.hidden == false` form is required: the `get('hidden', false)` form
         // let an unfiltered member query return hidden cards in the emulator (spike, 2026-11-06).
         // A card without a hidden field is therefore readable by its author and the admin only.
+        // In step 1 (writing) a member reads only their own cards; from step 2 on, or once the board is
+        // completed, every card that is not hidden (F24, D126 to D130).
         allow read: if isAdmin()
           || (isMember(boardId)
-            && (resource.data.hidden == false
-              || resource.data.authorId == request.auth.uid));
+            && (resource.data.authorId == request.auth.uid
+              || (resource.data.hidden == false && cardsRevealed(boardId))));
         allow create: if (isMember(boardId)
             && sessionInProgress(boardId)
             && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])

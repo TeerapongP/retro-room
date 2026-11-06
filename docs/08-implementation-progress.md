@@ -240,3 +240,10 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - IMPLEMENTED: `PhaseStepper` takes `boardInfo` and `actions`; the page passes the title, meta, timer, share and end buttons into it; the separate `.board-bar` is gone.
 - Chrome DevTools MCP check (mock mode): at 1280x720 there was one `.phase-panel` with title and meta, step text and the actions (`⏱ 06:59 หยุด`, share, `ขั้นถัดไป ›`) in one row and no `.board-bar`; at 375x812 the three parts stacked with no horizontal scroll and the next-step button moved the step to 2 with one panel still showing. NOT RUN: a non-admin view, a completed board, the expired timer state, a very long board title, 768 px.
 
+## F24 Private writing step (branch `feature/private-writing-step`, not committed)
+
+- IMPLEMENTED: `cardsRevealed` and the new card read rule in `firestore.rules`; `CardViewer.seesOthers` and step-based subscriptions in `lib/firebase/cards.ts` and the page; the same rule in the mock backend; step 1 description changed in `lib/phases.ts`. Existing rules, integration and mock tests were updated: their boards are now in step 2 (or an admin moves them to step 2), because a board without a step counts as step 1.
+- Checks: see the run recorded in the report. Tests added: 7 rules, 2 integration, 1 mock.
+- NOT RUN in the browser: what a non-admin sees (mock mode is always the admin, so the privacy cannot be seen there; the rules and integration tests are the evidence), the brief permission error a member's open subscription may get at the moment the admin moves the board back to step 1 (the page renews the subscription, but a short error box could flash; not observed because it needs two real users), two browsers.
+- Behavior to know: moving the step back to 1 hides others' cards again (D128); the admin sees everything (D127); ending a session in step 1 shows all non-hidden cards (D129).
+

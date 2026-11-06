@@ -65,6 +65,7 @@ beforeEach(async () => {
       title: "Sprint 1",
       ownerId: "alice",
       status: "in-progress",
+      phase: 2,
       startedAt: seededTimestamp,
       createdAt: seededTimestamp,
       updatedAt: seededTimestamp,
@@ -80,6 +81,7 @@ beforeEach(async () => {
         ownerId: "alice",
         createdAt: seededTimestamp,
         updatedAt: seededTimestamp,
+        phase: 2,
         ...statusFields,
       });
       await setDoc(doc(db, `boards/${otherBoardId}/members/alice`), {

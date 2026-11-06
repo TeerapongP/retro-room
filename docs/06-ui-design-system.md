@@ -174,3 +174,7 @@ The heading row had four boxes of different styles (wood sign, meta chip, timer 
 
 The board bar (title, meta line, timer, share, end) and the step panel are now one cream panel under the step bar (`.phase-panel`, built by `PhaseStepper` with the `boardInfo` and `actions` slots): at the left the sprout icon, board title and `Member · N คน · IN PROGRESS`, a divider, the current step title and description in the middle, and at the right the timer, `คัดลอกลิงก์แชร์`, `จบเซสชัน` (owner) and, for the admin, `ขั้นถัดไป ›`. The text for non-admins ("ผู้ดำเนินรายการจะพาทีมไปขั้นถัดไป") sits under the step description. On phones the three parts stack. The `.board-bar*` rules from the previous redesign were removed.
 
+## Private writing step (F24, D126 to D130)
+
+The step 1 description reads "ทุกคนเขียนการ์ดของตัวเอง คนอื่นจะยังไม่เห็นการ์ดของคุณจนกว่าจะถึงขั้นทบทวน". The Board screen subscribes to cards by step (`seesOthers` is true from step 2 or on a completed board). The admin view is unchanged. Column counts in step 1 count only the cards the member can read.
+

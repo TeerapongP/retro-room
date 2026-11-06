@@ -4,6 +4,7 @@ import {
   getOwnMembership,
   joinBoard,
   completeSession,
+  setPhase,
   startSession,
   subscribeToBoard,
   subscribeToMembers,
@@ -11,17 +12,20 @@ import {
 } from "@/lib/firebase/boards";
 import { addCard, deleteCard, editCard, subscribeToCards } from "@/lib/firebase/cards";
 import type { Board, BoardCard, BoardMember, DashboardBoard } from "@/lib/firebase/types";
+import { ADMIN_EMAIL } from "@/lib/firebase/admin";
 import { createTestUser, pause, resetEmulators, waitUntil, type TestUser } from "./helpers";
 
 let userA: TestUser;
 let userB: TestUser;
 let userC: TestUser;
+let admin: TestUser;
 
 beforeEach(async () => {
   await resetEmulators();
   userA = await createTestUser("user-a", "User A");
   userB = await createTestUser("user-b", "User B");
   userC = await createTestUser("user-c", "User C");
+  admin = await createTestUser("admin", "Admin", { email: ADMIN_EMAIL });
 });
 
 afterEach(async () => {
@@ -205,7 +209,7 @@ describe("session lifecycle", () => {
     const watcherB = { cards: undefined as BoardCard[] | undefined };
     const unsubscribe = subscribeToCards(
       boardId,
-      { uid: userB.uid, isAdmin: false },
+      { uid: userB.uid, isAdmin: false, seesOthers: true },
       (next) => (watcherB.cards = next),
       fail,
       userB.db,
@@ -221,6 +225,7 @@ describe("real-time cards", () => {
     const boardId = await createBoardAsA();
     await joinBoard(boardId, userB.user, userB.name, userB.db);
     await startSession(boardId, userA.db);
+    await setPhase(boardId, 2, admin.db); // other members' cards show from step 2 (D126)
     return boardId;
   }
 
@@ -228,7 +233,7 @@ describe("real-time cards", () => {
     const state = { cards: undefined as BoardCard[] | undefined, calls: 0 };
     const unsubscribe = subscribeToCards(
       boardId,
-      { uid: user.uid, isAdmin: false },
+      { uid: user.uid, isAdmin: false, seesOthers: true },
       (next) => {
         state.cards = next;
         state.calls += 1;
@@ -301,7 +306,7 @@ describe("real-time cards", () => {
     let errorCode: string | undefined;
     const unsubscribe = subscribeToCards(
       boardId,
-      { uid: userC.uid, isAdmin: false },
+      { uid: userC.uid, isAdmin: false, seesOthers: true },
       () => {},
       (error) => (errorCode = (error as { code: string }).code),
       userC.db,

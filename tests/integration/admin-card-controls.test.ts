@@ -22,7 +22,7 @@ import {
   unstackCard,
 } from "@/lib/firebase/cards";
 import type { Board, BoardCard } from "@/lib/firebase/types";
-import { createTestUser, resetEmulators, waitUntil, type TestUser } from "./helpers";
+import { createTestUser, pause, resetEmulators, waitUntil, type TestUser } from "./helpers";
 
 let owner: TestUser;
 let member: TestUser;
@@ -47,6 +47,7 @@ async function liveBoard(title: string): Promise<string> {
   const boardId = await createBoard(owner.user, title, owner.name, owner.db);
   await joinBoard(boardId, member.user, member.name, member.db);
   await startSession(boardId, owner.db);
+  await setPhase(boardId, 2, admin.db); // other members' cards show from step 2 (D126)
   return boardId;
 }
 
@@ -54,7 +55,7 @@ function watch(boardId: string, user: TestUser, isAdmin = false) {
   const state = { cards: undefined as BoardCard[] | undefined };
   const stop = subscribeToCards(
     boardId,
-    { uid: user.uid, isAdmin },
+    { uid: user.uid, isAdmin, seesOthers: true },
     (next) => (state.cards = next),
     fail,
     user.db,
@@ -214,15 +215,67 @@ describe("move to another board", () => {
   });
 });
 
+describe("private writing step (D126 to D130)", () => {
+  async function stepOneBoard(title: string): Promise<string> {
+    const boardId = await createBoard(owner.user, title, owner.name, owner.db);
+    await joinBoard(boardId, member.user, member.name, member.db);
+    await startSession(boardId, owner.db);
+    return boardId;
+  }
+
+  it(`should show each member only their own cards in step 1 and everyone's from step 2`, async () => {
+    const boardId = await stepOneBoard("Private board");
+    await addCard(boardId, owner.user, "ideas", "Owner idea", owner.db);
+    await addCard(boardId, member.user, "ideas", "Member idea", member.db);
+    const ownerSeen = { cards: undefined as BoardCard[] | undefined };
+    const ownerView = subscribeToCards(boardId, { uid: owner.uid, isAdmin: false, seesOthers: false }, (next) => (ownerSeen.cards = next), fail, owner.db);
+    const adminView = watch(boardId, admin, true);
+    await waitUntil(() => ownerSeen.cards !== undefined && adminView.state.cards?.length === 2);
+    expect(ownerSeen.cards!.map((card) => card.text)).toEqual(["Owner idea"]);
+    ownerView();
+
+    await setPhase(boardId, 2, admin.db);
+    const revealed = { cards: undefined as BoardCard[] | undefined };
+    const stop = subscribeToCards(boardId, { uid: owner.uid, isAdmin: false, seesOthers: true }, (next) => (revealed.cards = next), fail, owner.db);
+    await waitUntil(() => revealed.cards?.length === 2);
+    expect(revealed.cards!.map((card) => card.text).sort()).toEqual(["Member idea", "Owner idea"]);
+
+    await setPhase(boardId, 1, admin.db);
+    const errors: unknown[] = [];
+    const stepOneAgain = subscribeToCards(boardId, { uid: owner.uid, isAdmin: false, seesOthers: false }, () => {}, (error) => errors.push(error), owner.db);
+    await pause(300);
+    expect(errors).toEqual([]);
+    stop();
+    stepOneAgain();
+    adminView.stop();
+  });
+
+  it(`should deny a member the query for other members' cards while the board is in step 1`, async () => {
+    const boardId = await stepOneBoard("Denied board");
+    await addCard(boardId, owner.user, "ideas", "Owner idea", owner.db);
+    let code: string | undefined;
+    const stop = subscribeToCards(
+      boardId,
+      { uid: member.uid, isAdmin: false, seesOthers: true },
+      () => {},
+      (error) => (code = (error as { code: string }).code),
+      member.db,
+    );
+    await waitUntil(() => code !== undefined);
+    stop();
+    expect(code).toBe("permission-denied");
+  });
+});
+
 describe("session step (D116 to D123)", () => {
   it(`should let the admin move the shared step that members see and deny the owner`, async () => {
     const boardId = await liveBoard("Step board");
     const state = { board: undefined as Board | null | undefined };
     const stop = subscribeToBoard(boardId, (next) => (state.board = next), fail, member.db);
     await waitUntil(() => state.board !== undefined);
-    expect(state.board?.phase).toBe(1);
+    expect(state.board?.phase).toBe(2);
 
-    await expect(setPhase(boardId, 2, owner.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(setPhase(boardId, 4, owner.db)).rejects.toMatchObject({ code: "permission-denied" });
     await setPhase(boardId, 3, admin.db);
     await waitUntil(() => state.board?.phase === 3);
     await expect(setPhase(boardId, 7, admin.db)).rejects.toMatchObject({ code: "permission-denied" });

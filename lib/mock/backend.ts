@@ -67,7 +67,7 @@ type MockState = {
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
 type Unsubscribe = () => void;
-type CardViewer = { uid: string; isAdmin: boolean };
+type CardViewer = { uid: string; isAdmin: boolean; seesOthers?: boolean };
 
 export type MockBackendOptions = {
   storage?: StorageLike;
@@ -226,6 +226,12 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     return board;
   }
 
+  /** Same rule as firestore.rules: other members' cards show from step 2 on, or when the board is completed (D126, D129). */
+  function othersAreRevealed(boardId: string): boolean {
+    const board = state.boards[boardId];
+    return board?.status === "completed" || clampPhase(board?.phase) >= 2;
+  }
+
   function cardsOf(boardId: string): Record<string, StoredCard> {
     return (state.cards[boardId] ??= {});
   }
@@ -360,7 +366,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       return subscribe(
         () =>
           Object.values(cardsOf(boardId))
-            .filter((card) => viewer.isAdmin || !card.hidden || card.authorId === viewer.uid)
+            .filter((card) => viewer.isAdmin || card.authorId === viewer.uid || (!card.hidden && othersAreRevealed(boardId)))
             .map(toCard)
             .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0) || a.id.localeCompare(b.id)),
         onCards,

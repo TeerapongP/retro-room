@@ -214,14 +214,14 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
     if (isWaiting) return;
     return subscribeToCards(
       board.id,
-      { uid, isAdmin },
+      { uid, isAdmin, seesOthers: board.phase >= 2 || board.status === "completed" },
       (nextCards) => {
         setLiveError(null);
         setCards(nextCards);
       },
       (error) => setLiveError(describeFirebaseError(error)),
     );
-  }, [board.id, isWaiting, uid, isAdmin]);
+  }, [board.id, board.phase, board.status, isWaiting, uid, isAdmin]);
 
   const authorNames = new Map(members.map((member) => [member.uid, member.displayName]));
   const isOwner = role === "owner";
