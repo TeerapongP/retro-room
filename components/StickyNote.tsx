@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { CardMenu } from "@/components/CardMenu";
 import { IconEyeOff } from "@/components/CardMenuIcons";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { CARD_TEXT_MAX_LENGTH, type BoardCard } from "@/lib/firebase/types";
+import { CARD_TEXT_MAX_LENGTH, type BoardCard, type ColumnId } from "@/lib/firebase/types";
 
 type StickyNoteProps = {
   card: BoardCard;
@@ -14,6 +14,13 @@ type StickyNoteProps = {
   showAdminMenu: boolean;
   onToggleHidden: () => void;
   onMove: () => void;
+  onMoveToColumn: (columnId: ColumnId) => void;
+  isStacked: boolean;
+  onStackWith: () => void;
+  onUnstack: () => void;
+  /** Admin drag and drop (F21, D104): called with the id of the card dropped onto this one. */
+  onStackDrop: (draggedCardId: string) => void;
+  onAdminDelete: () => void;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
 };
@@ -26,11 +33,18 @@ export function StickyNote({
   showAdminMenu,
   onToggleHidden,
   onMove,
+  onMoveToColumn,
+  isStacked,
+  onStackWith,
+  onUnstack,
+  onStackDrop,
+  onAdminDelete,
   onEdit,
   onDelete,
 }: StickyNoteProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(card.text);
+  const [isDropTarget, setIsDropTarget] = useState(false);
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -40,13 +54,41 @@ export function StickyNote({
   }
 
   return (
-    <li className={`board-card board-card-${card.columnId} ${card.hidden ? "board-card-hidden" : ""}`}>
+    <li
+      className={`board-card board-card-${card.columnId} ${card.hidden ? "board-card-hidden" : ""} ${showAdminMenu && !isEditing ? "board-card-draggable" : ""} ${isDropTarget ? "board-card-drop" : ""}`}
+      draggable={showAdminMenu && !isEditing}
+      onDragStart={(event) => {
+        if (!showAdminMenu || isEditing) return;
+        event.dataTransfer.setData("text/plain", card.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(event) => {
+        if (!showAdminMenu) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setIsDropTarget(true);
+      }}
+      onDragLeave={() => setIsDropTarget(false)}
+      onDrop={(event) => {
+        if (!showAdminMenu) return;
+        event.preventDefault();
+        setIsDropTarget(false);
+        const draggedId = event.dataTransfer.getData("text/plain");
+        if (draggedId && draggedId !== card.id) onStackDrop(draggedId);
+      }}
+    >
       {showAdminMenu && !isEditing ? (
         <CardMenu
           cardId={card.id}
           hidden={card.hidden}
+          columnId={card.columnId}
+          onMoveToColumn={onMoveToColumn}
+          isStacked={isStacked}
+          onStackWith={onStackWith}
+          onUnstack={onUnstack}
           onToggleHidden={onToggleHidden}
           onMove={onMove}
+          onDelete={onAdminDelete}
         />
       ) : null}
       {isEditing ? (

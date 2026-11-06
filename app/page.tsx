@@ -10,7 +10,7 @@ export default function Home() {
   const { firebaseAuthState } = useAuth();
 
   useEffect(() => {
-    if (firebaseAuthState.status === "signedIn") router.replace("/dashboard");
+    if (firebaseAuthState.status === "signedIn") router.replace("/boards");
     if (firebaseAuthState.status === "signedOut") router.replace("/login");
   }, [firebaseAuthState.status, router]);
 

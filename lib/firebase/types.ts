@@ -44,6 +44,8 @@ export type BoardCard = {
   text: string;
   authorId: string;
   hidden: boolean;
+  /** Cards of one column that share a groupId form a stack (F21, D102). */
+  groupId: string | null;
   createdAt: Date | null;
 };
 

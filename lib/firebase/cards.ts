@@ -31,6 +31,7 @@ function toBoardCard(cardDoc: QueryDocumentSnapshot): BoardCard {
     text: data.text,
     authorId: data.authorId,
     hidden: data.hidden === true,
+    groupId: typeof data.groupId === "string" ? data.groupId : null,
     createdAt: (data.createdAt as Timestamp | undefined)?.toDate() ?? null,
   };
 }
@@ -144,6 +145,59 @@ export async function setCardHidden(
   if (isMockMode()) return getMockBackend().setCardHidden(boardId, cardId, hidden);
   await updateDoc(doc(db, "boards", boardId, "cards", cardId), {
     hidden,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Admin only (D101): moves a card to another column of the same board. Rules reject anyone else. */
+export async function setCardColumn(
+  boardId: string,
+  cardId: string,
+  columnId: ColumnId,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().setCardColumn(boardId, cardId, columnId);
+  await updateDoc(doc(db, "boards", boardId, "cards", cardId), {
+    columnId,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Admin only (D102 to D104): puts `dragged` on the stack of `target`, in the target's column. The stack label is the
+ * target's groupId, or the target's id when it had none (then the target is updated too). One batch.
+ */
+export async function stackCards(
+  boardId: string,
+  dragged: BoardCard,
+  target: BoardCard,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (dragged.id === target.id) return;
+  const groupId = target.groupId ?? target.id;
+  if (dragged.groupId === groupId && dragged.columnId === target.columnId) return;
+  if (isMockMode()) return getMockBackend().stackCards(boardId, dragged.id, target.id);
+  const batch = writeBatch(db);
+  if (!target.groupId) {
+    batch.update(doc(db, "boards", boardId, "cards", target.id), { groupId, updatedAt: serverTimestamp() });
+  }
+  batch.update(doc(db, "boards", boardId, "cards", dragged.id), {
+    groupId,
+    columnId: target.columnId,
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/** Admin only (D105): takes a card out of its stack. */
+export async function unstackCard(
+  boardId: string,
+  cardId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().unstackCard(boardId, cardId);
+  await updateDoc(doc(db, "boards", boardId, "cards", cardId), {
+    groupId: null,
     updatedAt: serverTimestamp(),
   });
 }

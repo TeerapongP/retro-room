@@ -175,3 +175,25 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - Browser check (in-app browser, mock mode, dev server from an isolated copy): login page showed the MOCK MODE banner; "Login with Google" went to the Dashboard with both demo boards and no `failed-precondition`; creating "Mock Retro 1" opened the waiting screen; PRESS START, adding a card and opening the admin menu all worked; the browser's resource list had 4 entries whose names match "firebase"; I could not list them afterwards (the server was already stopped), so they are most likely the Firebase JavaScript chunks but that is NOT confirmed, and no emulator was running so a real Firebase call would have failed visibly. NOT RUN: hide and move clicks in mock mode, Setup (player name) screen, sign-out, two-user realtime, phone width.
 - A production build ignores the flag (`isMockMode()` is false when `NODE_ENV` is production), but the mock backend code is still bundled, unused. Mock mode also throws off localhost.
 
+## F20 Skip the Dashboard (branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: `/boards` launcher (`app/boards/page.tsx`, `lib/pick-board.ts`, `lib/last-board.ts`), `/dashboard` redirect, `components/BoardSwitcher.tsx`, navbar and post-login routes now go to `/boards`, opaque hidden cards. The Board now remembers the last opened board on the device.
+- Checks: see the run recorded below.
+- Chrome DevTools MCP check (mock mode, dev server from an isolated copy, 1672x941 and 375x812): login went straight to `/boards/sprint12` with no Dashboard text; the switcher listed both boards, switching opened `/boards/sprint13` and stored it as the last board; `+ บอร์ดใหม่` created and opened a new board; `/dashboard` redirected to the last board; with no boards at all the launcher created exactly one `My Retro` and opened it; no console errors or warnings; no horizontal scroll at 375 px. NOT RUN: the same flow against the emulator or real Firebase, two-user realtime, keyboard use of the switcher, tablet width. Against the real project the launcher still needs the `members.uid` index (D99).
+
+## Admin delete (D100, branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: admin delete rule in `firestore.rules`, `ลบการ์ด` item and "Delete card?" dialog (`CardMenu.tsx`, `CardMenuIcons.tsx`, `page.tsx`), rules and integration tests. Not deployed; the Rules change must be deployed with the earlier F17 Rules.
+- Rules tests PASSED (176) after updating the tests that assumed the admin could not delete; integration 43 PASSED.
+- Chrome DevTools MCP check (mock mode, 1672x941): the menu shows hide, move and a dark red delete item; the dialog shows the card text; cancel kept all 4 cards; confirm removed the card and showed `ลบการ์ดแล้ว`; no console errors. NOT RUN: delete against the emulator through the UI, phone width, keyboard use, a completed board in the browser (covered by rules and integration tests).
+
+## Admin column move (D101, branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: admin column change in `firestore.rules`, `setCardColumn` in `lib/firebase/cards.ts` and the mock backend, two column items in the admin menu (`CardMenu.tsx`, `StickyNote.tsx`, `BoardColumn.tsx`, `page.tsx`), wider menu (15rem) so items stay on one line. Not deployed; deploy it with the other F17 Rules changes.
+- Checks: see the final run below. Chrome DevTools MCP check (mock mode, 1672x941): the menu listed hide, the two other columns, move to another board and delete; Went Well to To Improve, then back to Went Well, worked with the notice shown; no console errors; menu items 44 px high on one line, no horizontal scroll. NOT RUN: phone width (the menu is 240 px wide inside a 351 px card), keyboard use, the UI against the emulator.
+
+## F21 Stack cards (D102 to D108, branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: `groupId` on cards, admin stack rule in `firestore.rules`, `stackCards` and `unstackCard` (real and mock), `lib/card-groups.ts`, `CardStack`, `StackCardDialog`, drag and drop on cards, menu items, styles. Not deployed; it must be deployed with the other F17 Rules.
+- Chrome DevTools MCP check (mock mode, 1672x941 and 375x812): a synthetic drag (dragstart, dragover, drop events with a DataTransfer) of "Deploy was smooth" onto a card in another column moved it there and made a stack with the `กองการ์ด ×2` button and layered edges; opening, folding, `แยกออกจากกอง` and the `ซ้อนกับการ์ดอื่น...` dialog (confirm stacked across columns) all worked; no console errors; no horizontal scroll at 375 px. NOT RUN: a real mouse drag in a browser (only synthetic events were used), the drag against the emulator, touch, keyboard use, stacks with hidden cards in the browser (rules only).
+

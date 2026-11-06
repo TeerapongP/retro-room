@@ -71,6 +71,13 @@ service cloud.firestore {
       return columnId in ['went-well', 'to-improve', 'ideas'];
     }
 
+    // A card's stack label (F21, D102): a short string, or null when it is not in a stack.
+    function validGroupId(data) {
+      return !('groupId' in data)
+        || data.groupId == null
+        || (data.groupId is string && data.groupId.size() >= 1 && data.groupId.size() <= 64);
+    }
+
     function validCardText(text) {
       return text is string && text.size() >= 1 && text.size() <= 500;
     }
@@ -219,10 +226,26 @@ service cloud.firestore {
             && sessionInProgress(boardId)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hidden', 'updatedAt'])
             && request.resource.data.hidden is bool
+            && request.resource.data.updatedAt == request.time)
+          // admin stacks or unstacks a card, optionally moving it to the column of its stack (D102 to D106)
+          || (isAdmin()
+            && sessionInProgress(boardId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupId', 'columnId', 'updatedAt'])
+            && validGroupId(request.resource.data)
+            && validColumn(request.resource.data.columnId)
+            && request.resource.data.updatedAt == request.time)
+          // admin moves a card to another column of the same board (D101)
+          || (isAdmin()
+            && sessionInProgress(boardId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['columnId', 'updatedAt'])
+            && validColumn(request.resource.data.columnId)
             && request.resource.data.updatedAt == request.time);
         allow delete: if (isMember(boardId)
             && sessionInProgress(boardId)
             && (resource.data.authorId == request.auth.uid || isOwner(boardId)))
+          // The admin may delete any card of an in-progress board (D100). The move still needs its ledger to create
+          // the copy, so a copy cannot be made without deleting the source.
+          || (isAdmin() && sessionInProgress(boardId))
           || validMovedSourceDelete(boardId, cardId);
       }
 

@@ -179,6 +179,62 @@ describe("mock cards", () => {
     destinationView.stop();
   });
 
+  it("should move a card to another column and keep its text, author and hidden state", async () => {
+    const { backend, admin, boardId } = await liveBoard();
+    await backend.addCard(boardId, "guest", "went-well", "Wrong column");
+    const view = watch(backend, boardId, admin.uid, true);
+    await flush();
+    const card = view.state.cards[0];
+
+    await backend.setCardColumn(boardId, card.id, "to-improve");
+    await backend.setCardColumn(boardId, card.id, "ideas");
+
+    view.stop();
+    expect(view.state.cards).toHaveLength(1);
+    expect(view.state.cards[0]).toMatchObject({
+      id: card.id,
+      columnId: "ideas",
+      text: "Wrong column",
+      authorId: "guest",
+      hidden: false,
+    });
+  });
+
+  it("should stack a card onto another, moving it into the target's column, and unstack it again", async () => {
+    const { backend, admin, boardId } = await liveBoard();
+    await backend.addCard(boardId, "guest", "went-well", "Target");
+    await backend.addCard(boardId, "guest", "ideas", "Dragged");
+    const view = watch(backend, boardId, admin.uid, true);
+    await flush();
+    const target = view.state.cards.find((card) => card.text === "Target")!;
+    const dragged = view.state.cards.find((card) => card.text === "Dragged")!;
+
+    await backend.stackCards(boardId, dragged.id, target.id);
+
+    const stacked = view.state.cards;
+    expect(stacked.find((card) => card.id === target.id)).toMatchObject({ groupId: target.id, columnId: "went-well" });
+    expect(stacked.find((card) => card.id === dragged.id)).toMatchObject({ groupId: target.id, columnId: "went-well" });
+
+    await backend.unstackCard(boardId, dragged.id);
+    view.stop();
+    expect(view.state.cards.find((card) => card.id === dragged.id)?.groupId).toBeNull();
+    expect(view.state.cards.find((card) => card.id === target.id)?.groupId).toBe(target.id);
+  });
+
+  it("should join an existing stack instead of starting a new one", async () => {
+    const { backend, admin, boardId } = await liveBoard();
+    for (const text of ["One", "Two", "Three"]) await backend.addCard(boardId, "guest", "ideas", text);
+    const view = watch(backend, boardId, admin.uid, true);
+    await flush();
+    const [one, two, three] = view.state.cards;
+
+    await backend.stackCards(boardId, two.id, one.id);
+    await backend.stackCards(boardId, three.id, two.id);
+
+    view.stop();
+    expect(new Set(view.state.cards.map((card) => card.groupId))).toEqual(new Set([one.id]));
+  });
+
   it("should list only other in-progress boards as move targets", async () => {
     const { backend, admin, boardId } = await liveBoard();
     const second = await backend.createBoard(admin.uid, "Second", "Aomsin");

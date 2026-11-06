@@ -151,6 +151,9 @@ Implemented in `firestore.rules`; 174 emulator rules tests (66 new, in `tests/ru
 
 - `isAdmin()`: `request.auth.token.email == 'thirapong.pin@ascendcorp.com'` and `email_verified == true`.
 - Cards: read by the admin, or by a member when `resource.data.hidden == false` or the member is the author. Do not rewrite this as `get('hidden', false) == false`: the spike showed an unfiltered member query then returns hidden cards on the emulator. Member create requires `hidden: false` and no ledger for that id; author update may only change `text` and `updatedAt`; admin update may only change `hidden` and `updatedAt` on an `in-progress` board.
+- Stack (D102 to D106): the admin may update only `groupId` (a string of 1 to 64 characters, `null` or absent), `columnId` (valid) and `updatedAt` of a card on an `in-progress` board. The Rules do not check that a group exists. Members cannot create a card with a `groupId`.
+- Column move (D101): the admin may update only `columnId` (a valid column) and `updatedAt` of a card on an `in-progress` board. Nobody else can change a card's column.
+- Delete (D100): the admin may delete any card of an `in-progress` board, member or not. Authors and owners keep their rights.
 - Move: ledger `cardMoves/{cardId}`, destination card and source delete in one batch, tied together with `getAfter()`/`existsAfter()` (details in D77). Both boards must be `in-progress`. At most 4 cards per batch (20 access calls); the UI moves one card.
 - `boards`: `list` allowed for the admin only.
 - Known limits: the Admin SDK bypasses Rules; access call counts were measured on the emulator and may differ in production; cards created before F17 have no `hidden` field.

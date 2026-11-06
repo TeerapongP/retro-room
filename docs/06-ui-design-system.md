@@ -134,3 +134,15 @@ Board screen only, shown only when `isAdminUser(user)` is true and the board is 
 
 `/boards/[boardId]` uses the Dashboard scene (`dashboard-scene board-scene`, countryside backdrop, `DashboardHeader current="board"` with Home highlighted like the reference). Its `--u` is one pixel of the 1672 px wide Board reference, not the 1852 px Dashboard one and the `board-*` styles at the end of `app/globals.css`. Components: `BoardColumn.tsx` (framed header with icon, label, count and `+`, inline composer), `StickyNote.tsx` (colored card with author, relative time from `lib/relative-time.ts`, edit and delete, F17 admin menu), `BoardIcons.tsx` (pixel flower, arrow and bulb). Card colors: Went Well green, To Improve red, Ideas purple. Navbar 1307 px wide and 64 tall, content column 1548 px wide (the sign sits at the column's left edge), 16 px column gap, 70 px column heads, 5 px between cards; three columns from 64rem up, one column below. Dialogue boxes inside the scene are reskinned by `.board-scene .pixel-panel`. The waiting (Title) screen keeps its own layout inside the scene.
 
+## Board switcher and launcher (F20, D94 to D99)
+
+There is no Dashboard page. `/boards` is an invisible launcher (`app/boards/page.tsx`); `/dashboard` redirects to it. On the Board screen, `components/BoardSwitcher.tsx` sits in the heading row between the status chip and the share button: a select of the user's boards and a `+ บอร์ดใหม่` button that opens an inline title field. Hidden cards use an opaque dashed-border card with a light diagonal stripe, not transparency, so text stays readable over the scenery. The navbar Home and Retro items both open the launcher. The Dashboard-only CSS (`.dashboard-content`, `-create`, `-form`, `-field`, `-input`, `-retro`, `-empty`, `-board`) and the `SleepingCat` and `IconDocument` icons are now unused and can be removed later.
+
+The admin card menu has a third item, `ลบการ์ด` (pixel trash icon, dark red), which opens a "Delete card?" dialogue box showing the card text and a permanent-deletion warning (D100).
+
+The admin card menu also lists `ย้ายไป Went Well`, `ย้ายไป To Improve` or `ย้ายไป Ideas` for the two columns the card is not in (D101).
+
+## Stacked cards (F21, D102 to D108)
+
+`components/CardStack.tsx` shows a stack as the top card with two layered edges (`::before`, `::after` in the column color) and a `กองการ์ด ×N` button; opened, it lists every card inside a dashed frame with a `พับกอง` button. `lib/card-groups.ts` builds the stacks. For the admin each card is `draggable`; dropping one card on another shows a dashed gold outline and stacks them (moving the card into the target's column). The menu fallback is `ซ้อนกับการ์ดอื่น...` (`components/StackCardDialog.tsx`) and `แยกออกจากกอง`. HTML5 drag and drop does not work on touch screens, so the menu is the touch path.
+

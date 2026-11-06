@@ -231,7 +231,7 @@ export function consumePostLoginPath(): string {
       return stored;
     }
   } catch { }
-  return "/dashboard";
+  return "/boards";
 }
 
 export function usePlayerName(): string | null {

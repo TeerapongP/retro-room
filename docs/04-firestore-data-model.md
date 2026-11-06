@@ -55,6 +55,7 @@ Columns are fixed in the client (D1): `went-well`, `to-improve`, `ideas`. They a
 | `text` | string | 1 to 500 characters (D3) |
 | `authorId` | string | Creator uid. Immutable |
 | `hidden` | boolean | F17 (D75, D76). `false` on create; only the admin changes it. A card without this field is readable only by its author and the admin |
+| `groupId` | string or `null` | F21 (D102). Cards of one column with the same value form a stack; absent or `null` means not stacked. Only the admin sets it |
 | `createdAt` | timestamp | Server timestamp. A moved card gets a new one (D78) |
 | `updatedAt` | timestamp | Server timestamp |
 | `movedFromBoardId`, `movedFromCardId` | string | Only on a card created by an admin move (D77) |

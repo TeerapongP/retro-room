@@ -40,6 +40,8 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F17 | Admin card controls (owner-approved scope extension): one fixed admin (`thirapong.pin@ascendcorp.com`, verified Google email) can hide and unhide cards, move cards to another `in-progress` board, and list boards to pick a destination. Enforced by Firestore Security Rules; see D74 to D82 |
 | F18 | Board screen redesign (owner-approved scope extension): restyle `/boards/[boardId]` to match `docs/references/retro-room-board-reference.png` (countryside backdrop, `RETRO ROOM` navbar, board sign, framed column headers with count and add button, colored cards with author and relative time). Visual only; see D83 to D88 |
 | F19 | Local mock mode (owner-approved scope extension): `pnpm dev:mock` runs the app without Firebase Auth or Firestore, with a fake signed-in admin and in-memory demo data, so UI work is not blocked by login or deployment. Development only; see D89 to D92 |
+| F20 | Skip the Dashboard (owner request): after sign-in the app opens a board directly; there is no board list page. A board switcher with a new-board form lives on the Board screen. See D94 to D99 |
+| F21 | Stack cards (owner request): the admin can stack cards about the same topic by dragging one onto another, or from the card menu. A stack shows as a pile with a count and opens to show all its cards. See D102 to D108 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -228,4 +230,40 @@ The owner approved the three policies below and the ledger approach after an emu
 | D90 | Mock mode is development only: `isMockMode()` is false in production builds and off `localhost`/`127.0.0.1`, and a banner states that data is fake. It wins over emulator mode when both are set |
 | D91 | The mock user is the admin identity (`thirapong.pin@ascendcorp.com`, verified) with a player name, so every admin control can be tried. Demo data: two in-progress boards and two other players. State is kept in `localStorage` (`retro-room:mock-state`); clear that key to reset |
 | D92 | The mock backend does NOT run Firestore Security Rules. It is for looking at and clicking through the UI only. Rules and real access are still verified with `pnpm test:rules`, `pnpm test:integration` and the emulator. Real Google sign-in is not part of mock mode |
+| D93 | While login and Firebase deployment are blocked, `pnpm dev` starts in mock mode by default (owner request). `pnpm dev:firebase` is the old behavior against the real project, `pnpm dev:emulator` is unchanged. Switch `dev` back when Firebase is ready |
+
+## Skip the Dashboard (F20), owner confirmed removing the page; the details below are the recommended defaults
+
+| ID | Decision |
+| --- | --- |
+| D94 | The Dashboard page is removed. `/boards` (new) is an invisible launcher: it picks a board and replaces the URL with `/boards/{id}`. `/dashboard` only redirects to `/boards` so old links keep working. F16 (D66 to D73) page content for the Dashboard is superseded; the scene, navbar and icons are still used by the Board |
+| D95 | Which board opens: the board the user opened last on this device (`localStorage` key `retro-room:last-board`) if they are still a member of it, otherwise the board they joined most recently. If the user has no board yet, one named `My Retro` is created and opened |
+| D96 | Creating and switching boards moves to the Board screen: a board switcher (select of the user's boards) and a `+ บอร์ดใหม่` form with the existing title rules (1 to 80 characters). Board creation logic itself (`createBoard`) is unchanged |
+| D97 | Joining another person's board still works through the shared link and the existing join prompt |
+| D98 | Navbar: Home and Retro both open the launcher (so they return to the user's current board). Post-login, the home route and Setup also go through `/boards` |
+| D99 | The launcher reads the user's memberships with the same collection-group query as the old Dashboard, so it still needs the `members.uid` index on the real project. Mock mode (F19) and the emulator are not affected. Page-specific Dashboard CSS is left in place for now (dead rules, to clean up later) |
+
+## Admin delete (F17 amendment), owner request
+
+| ID | Decision |
+| --- | --- |
+| D100 | The admin card menu gets a third item, delete (`ลบการ์ด`), with a confirmation dialog. Rules: the admin may delete any card of an in-progress board without being a member; completed and waiting boards stay untouched. This amends D77, which said the admin had no other way to delete a card: a ledger is still the only way to create a moved copy, and creating a copy still needs the source delete in the same batch. The existing delete rights of authors and board owners are unchanged. Deleting is permanent |
+
+## Admin column move (F17 amendment), owner request
+
+| ID | Decision |
+| --- | --- |
+| D101 | The admin card menu lists `ย้ายไป <column>` for each of the other two columns, so a card can move between Went Well, To Improve and Ideas on the same board. Rules: the admin may change only `columnId` (to one of the three valid columns) and `updatedAt` of a card on an in-progress board, without being a member; text, author and hidden state cannot change in the same update. Authors, owners and members still cannot change a card's column (D-column immutability stands for them). No drag and drop |
+
+## Stack cards (F21), owner confirmed the three display and interaction choices
+
+| ID | Decision |
+| --- | --- |
+| D102 | Only the admin stacks and unstacks cards, on an `in-progress` board, without being a member. A card has an optional `groupId` (string of 1 to 64 characters, or `null`). Cards with the same `groupId` in the same column form a stack. A `groupId` that only one card has is shown as a normal card. By convention the `groupId` is the id of the first card put in the stack |
+| D103 | Display: a collapsed stack shows its first card on top with a count badge and layered edges behind it. Clicking the stack opens it to show every card of the group (each with its own menu); clicking again folds it |
+| D104 | Stacking by dragging: the admin drags a card onto another card or stack. If the target is in another column, the dragged card moves to that column and joins the stack there. The drop updates the dragged card and, when the target had no group yet, the target too, in one batch |
+| D105 | Fallback for touch and keyboard: the admin card menu has `ซ้อนกับการ์ดอื่น...` (a dialog with a list of the other cards) and, for a card in a stack, `แยกออกจากกอง`. Drag and drop is not available on touch screens |
+| D106 | Rules: the admin may change only `groupId`, `columnId` (valid column) and `updatedAt` of a card on an in-progress board, without being a member. Nobody else can change them. The Rules do not check that a group exists or that the group is in one column; the admin is trusted for that (D74) |
+| D107 | A card hidden from others (D76) stays hidden inside a stack; other members see the stack without it. A card moved to another board (D77) arrives without a group. Deleting a card (D100) leaves the rest of its stack as is |
+| D108 | No change for authors, owners and members: they cannot stack, unstack or change columns. No new package; HTML5 drag and drop is used |
 

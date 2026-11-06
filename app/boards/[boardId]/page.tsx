@@ -4,13 +4,16 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { BoardColumn } from "@/components/BoardColumn";
+import { BoardSwitcher } from "@/components/BoardSwitcher";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { DashboardSprout } from "@/components/DashboardSprout";
 import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
+import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
+import { rememberLastBoard } from "@/lib/last-board";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
 import {
   completeSession,
@@ -24,8 +27,11 @@ import {
   addCard,
   deleteCard,
   editCard,
+  setCardColumn,
   setCardHidden,
+  stackCards,
   subscribeToCards,
+  unstackCard,
 } from "@/lib/firebase/cards";
 import { describeFirebaseError } from "@/lib/firebase/client";
 import {
@@ -34,6 +40,7 @@ import {
   type BoardCard,
   type BoardMember,
   type BoardRole,
+  type ColumnId,
 } from "@/lib/firebase/types";
 
 type MembershipState =
@@ -90,6 +97,10 @@ function BoardPageContent() {
       isCurrent = false;
     };
   }, [boardId, uid]);
+
+  useEffect(() => {
+    if (membership.status === "member") rememberLastBoard(boardId);
+  }, [boardId, membership.status]);
 
   async function handleJoin() {
     if (!user || !playerName) return;
@@ -150,7 +161,7 @@ function BoardPageContent() {
       <div aria-hidden="true" className="dashboard-backdrop">
         <div className="dashboard-backdrop-art" />
       </div>
-      <DashboardHeader current="board" />
+      <DashboardHeader />
       <main className="board-content">{content}</main>
     </div>
   );
@@ -158,7 +169,7 @@ function BoardPageContent() {
 
 function BackToDashboard() {
   return (
-    <Link href="/dashboard" className="pixel-button pixel-button-gold">
+    <Link href="/boards" className="pixel-button pixel-button-gold">
       กลับหน้าหลัก
     </Link>
   );
@@ -178,6 +189,8 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [movingCard, setMovingCard] = useState<BoardCard | null>(null);
+  const [deletingCard, setDeletingCard] = useState<BoardCard | null>(null);
+  const [stackingCard, setStackingCard] = useState<BoardCard | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
@@ -226,6 +239,21 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
     }
   }
 
+  async function handleChangeColumn(card: BoardCard, columnId: ColumnId) {
+    if (await runAction(() => setCardColumn(board.id, card.id, columnId))) {
+      const label = BOARD_COLUMNS.find((column) => column.id === columnId)?.label ?? columnId;
+      setNotice(`ย้ายการ์ดไปที่ ${label} แล้ว`);
+    }
+  }
+
+  async function handleStack(dragged: BoardCard, target: BoardCard) {
+    if (await runAction(() => stackCards(board.id, dragged, target))) setNotice("ซ้อนการ์ดแล้ว");
+  }
+
+  async function handleUnstack(card: BoardCard) {
+    if (await runAction(() => unstackCard(board.id, card.id))) setNotice("แยกการ์ดออกจากกองแล้ว");
+  }
+
   async function handleCopyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -268,6 +296,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         <p className="board-meta">
           {isOwner ? "Owner" : "Member"} · {members.length} คน · {isCompleted ? "COMPLETED" : "IN PROGRESS"}
         </p>
+        <BoardSwitcher currentBoardId={board.id} />
         <div className="board-tools">
           <button type="button" className="board-button" onClick={handleCopyLink}>
             {copyState === "copied"
@@ -348,6 +377,48 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         />
       ) : null}
 
+      {stackingCard ? (
+        <StackCardDialog
+          card={stackingCard}
+          candidates={(cards ?? []).filter((candidate) => candidate.id !== stackingCard.id)}
+          onClose={() => setStackingCard(null)}
+          onConfirm={(target) => {
+            const dragged = stackingCard;
+            setStackingCard(null);
+            void handleStack(dragged, target);
+          }}
+        />
+      ) : null}
+
+      {deletingCard ? (
+        <DialogueBox
+          title="Delete card?"
+          actions={
+            <>
+              <button
+                type="button"
+                className="pixel-button pixel-button-danger"
+                onClick={async () => {
+                  const card = deletingCard;
+                  if (await runAction(() => deleteCard(board.id, card.id))) {
+                    setDeletingCard(null);
+                    setNotice("ลบการ์ดแล้ว");
+                  }
+                }}
+              >
+                ลบการ์ด
+              </button>
+              <button type="button" className="pixel-button pixel-button-gold" onClick={() => setDeletingCard(null)}>
+                ยกเลิก
+              </button>
+            </>
+          }
+        >
+          <p className="board-card-preview">{deletingCard.text}</p>
+          <p>การ์ดนี้จะถูกลบถาวรและกู้คืนไม่ได้</p>
+        </DialogueBox>
+      ) : null}
+
       {cards === null && !liveError ? (
         <LoadingNotice />
       ) : (
@@ -364,6 +435,22 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
               isAdmin={isAdmin}
               readOnly={isCompleted}
               onToggleHidden={handleToggleHidden}
+              onChangeColumn={handleChangeColumn}
+              onStackWith={(card) => {
+                setNotice(null);
+                setActionError(null);
+                setStackingCard(card);
+              }}
+              onUnstack={handleUnstack}
+              onStackDrop={(draggedCardId, target) => {
+                const dragged = (cards ?? []).find((candidate) => candidate.id === draggedCardId);
+                if (dragged) void handleStack(dragged, target);
+              }}
+              onAdminDelete={(card) => {
+                setNotice(null);
+                setActionError(null);
+                setDeletingCard(card);
+              }}
               onMove={(card) => {
                 setNotice(null);
                 setActionError(null);

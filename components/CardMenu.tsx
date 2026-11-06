@@ -1,17 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconEye, IconEyeOff, IconMore, IconMove } from "@/components/CardMenuIcons";
+import { IconEye, IconEyeOff, IconLayers, IconMore, IconMove, IconTrash } from "@/components/CardMenuIcons";
+import { BOARD_COLUMNS, type ColumnId } from "@/lib/firebase/types";
 
 type CardMenuProps = {
   cardId: string;
   hidden: boolean;
+  columnId: ColumnId;
+  onMoveToColumn: (columnId: ColumnId) => void;
+  isStacked: boolean;
+  onStackWith: () => void;
+  onUnstack: () => void;
   onToggleHidden: () => void;
   onMove: () => void;
+  onDelete: () => void;
 };
 
 /** Admin-only action menu of one card (F17). Rules enforce the permissions; this only hosts the buttons. */
-export function CardMenu({ cardId, hidden, onToggleHidden, onMove }: CardMenuProps) {
+export function CardMenu({
+  cardId,
+  hidden,
+  columnId,
+  onMoveToColumn,
+  isStacked,
+  onStackWith,
+  onUnstack,
+  onToggleHidden,
+  onMove,
+  onDelete,
+}: CardMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const menuId = `card-menu-${cardId}`;
@@ -58,10 +76,38 @@ export function CardMenu({ cardId, hidden, onToggleHidden, onMove }: CardMenuPro
               {hidden ? "แสดงการ์ด" : "ซ่อนการ์ด"}
             </button>
           </li>
+          {BOARD_COLUMNS.filter((column) => column.id !== columnId).map((column) => (
+            <li key={column.id} role="none">
+              <button type="button" role="menuitem" onClick={() => choose(() => onMoveToColumn(column.id))}>
+                <IconMove />
+                ย้ายไป {column.label}
+              </button>
+            </li>
+          ))}
+          <li role="none">
+            <button type="button" role="menuitem" onClick={() => choose(onStackWith)}>
+              <IconLayers />
+              ซ้อนกับการ์ดอื่น...
+            </button>
+          </li>
+          {isStacked ? (
+            <li role="none">
+              <button type="button" role="menuitem" onClick={() => choose(onUnstack)}>
+                <IconLayers />
+                แยกออกจากกอง
+              </button>
+            </li>
+          ) : null}
           <li role="none">
             <button type="button" role="menuitem" onClick={() => choose(onMove)}>
               <IconMove />
               ย้ายไปบอร์ดอื่น
+            </button>
+          </li>
+          <li role="none">
+            <button type="button" role="menuitem" className="card-menu-danger" onClick={() => choose(onDelete)}>
+              <IconTrash />
+              ลบการ์ด
             </button>
           </li>
         </ul>

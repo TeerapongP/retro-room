@@ -42,6 +42,7 @@ type StoredCard = {
   text: string;
   authorId: string;
   hidden: boolean;
+  groupId?: string | null;
   createdAt: string;
 };
 type MockState = {
@@ -195,6 +196,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       text: stored.text,
       authorId: stored.authorId,
       hidden: stored.hidden,
+      groupId: stored.groupId ?? null,
       createdAt: new Date(stored.createdAt),
     };
   }
@@ -348,6 +350,30 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     async setCardHidden(boardId: string, cardId: string, hidden: boolean): Promise<void> {
       const card = cardsOf(boardId)[cardId];
       if (card) card.hidden = hidden;
+      changed();
+    },
+
+    async setCardColumn(boardId: string, cardId: string, columnId: ColumnId): Promise<void> {
+      const card = cardsOf(boardId)[cardId];
+      if (card) card.columnId = columnId;
+      changed();
+    },
+
+    async stackCards(boardId: string, draggedId: string, targetId: string): Promise<void> {
+      const cards = cardsOf(boardId);
+      const dragged = cards[draggedId];
+      const target = cards[targetId];
+      if (!dragged || !target || dragged.id === target.id) return;
+      const groupId = target.groupId ?? target.id;
+      target.groupId = groupId;
+      dragged.groupId = groupId;
+      dragged.columnId = target.columnId;
+      changed();
+    },
+
+    async unstackCard(boardId: string, cardId: string): Promise<void> {
+      const card = cardsOf(boardId)[cardId];
+      if (card) card.groupId = null;
       changed();
     },
 

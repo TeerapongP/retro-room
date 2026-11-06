@@ -3,10 +3,14 @@ import { ADMIN_EMAIL, isAdminUser } from "@/lib/firebase/admin";
 import { completeSession, createBoard, joinBoard, startSession } from "@/lib/firebase/boards";
 import {
   addCard,
+  deleteCard,
   listMoveTargetBoards,
   moveCard,
+  setCardColumn,
   setCardHidden,
+  stackCards,
   subscribeToCards,
+  unstackCard,
 } from "@/lib/firebase/cards";
 import type { BoardCard } from "@/lib/firebase/types";
 import { createTestUser, resetEmulators, waitUntil, type TestUser } from "./helpers";
@@ -198,6 +202,85 @@ describe("move to another board", () => {
     expect(sourceView.state.cards?.map((card) => card.text)).toEqual(["Stay"]);
     sourceView.stop();
     destinationView.stop();
+  });
+});
+
+describe("admin stacking (D102 to D106)", () => {
+  it(`should let the admin stack a card onto one in another column and unstack it, and deny the author`, async () => {
+    const boardId = await liveBoard("Stack board");
+    await addCard(boardId, member.user, "went-well", "Target", member.db);
+    await addCard(boardId, member.user, "ideas", "Dragged", member.db);
+    const adminView = watch(boardId, admin, true);
+    const memberView = watch(boardId, member);
+    await waitUntil(() => adminView.state.cards?.length === 2);
+    const target = adminView.state.cards!.find((card) => card.text === "Target")!;
+    const dragged = adminView.state.cards!.find((card) => card.text === "Dragged")!;
+
+    await expect(stackCards(boardId, dragged, target, member.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await stackCards(boardId, dragged, target, admin.db);
+    await waitUntil(() => memberView.state.cards?.every((card) => card.groupId === target.id) === true);
+
+    expect(memberView.state.cards!.map((card) => card.columnId)).toEqual(["went-well", "went-well"]);
+    await unstackCard(boardId, dragged.id, admin.db);
+    await waitUntil(() => memberView.state.cards?.find((card) => card.id === dragged.id)?.groupId === null);
+    adminView.stop();
+    memberView.stop();
+  });
+});
+
+describe("admin column move (D101)", () => {
+  it(`should let the admin move a card between columns of the same board and deny the author doing it`, async () => {
+    const boardId = await liveBoard("Columns board");
+    await addCard(boardId, member.user, "went-well", "Wrong column", member.db);
+    const adminView = watch(boardId, admin, true);
+    const memberView = watch(boardId, member);
+    await waitUntil(() => adminView.state.cards?.length === 1);
+    const cardId = adminView.state.cards![0].id;
+
+    await expect(setCardColumn(boardId, cardId, "to-improve", member.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+    await setCardColumn(boardId, cardId, "to-improve", admin.db);
+    await waitUntil(() => memberView.state.cards?.[0]?.columnId === "to-improve");
+
+    expect(memberView.state.cards).toHaveLength(1);
+    expect(memberView.state.cards![0]).toMatchObject({ text: "Wrong column", authorId: member.uid });
+    adminView.stop();
+    memberView.stop();
+  });
+});
+
+describe("admin delete (D100)", () => {
+  it(`should let the admin delete a member's card, including a hidden one, but not on a completed board`, async () => {
+    const boardId = await liveBoard("Delete board");
+    await addCard(boardId, member.user, "ideas", "Delete me", member.db);
+    await addCard(boardId, member.user, "ideas", "Hidden delete me", member.db);
+    const adminView = watch(boardId, admin, true);
+    await waitUntil(() => adminView.state.cards?.length === 2);
+    const [first, second] = adminView.state.cards!;
+    await setCardHidden(boardId, second.id, true, admin.db);
+
+    await deleteCard(boardId, first.id, admin.db);
+    await deleteCard(boardId, second.id, admin.db);
+    await waitUntil(() => adminView.state.cards?.length === 0);
+
+    await addCard(boardId, member.user, "ideas", "Last", member.db);
+    await waitUntil(() => adminView.state.cards?.length === 1);
+    const last = adminView.state.cards![0];
+    await completeSession(boardId, owner.db);
+    await expect(deleteCard(boardId, last.id, admin.db)).rejects.toMatchObject({ code: "permission-denied" });
+    adminView.stop();
+  });
+
+  it(`should still deny a member deleting the owner's card`, async () => {
+    const boardId = await liveBoard("Deny delete");
+    await addCard(boardId, owner.user, "ideas", "Owner card", owner.db);
+    const ownerView = watch(boardId, owner);
+    await waitUntil(() => ownerView.state.cards?.length === 1);
+    const cardId = ownerView.state.cards![0].id;
+    ownerView.stop();
+
+    await expect(deleteCard(boardId, cardId, member.db)).rejects.toMatchObject({ code: "permission-denied" });
   });
 });
 

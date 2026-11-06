@@ -274,8 +274,136 @@ describe("normal card writes with the hidden field", () => {
     await assertFails(setDoc(doc(admin(), `boards/${SRC}/cards/fresh`), cardData({ authorId: "admin" })));
   });
 
-  it("should reject an admin deleting a card on its own", async () => {
-    await assertFails(deleteDoc(doc(admin(), `boards/${SRC}/cards/visible`)));
+});
+
+describe("admin column move (D101)", () => {
+  const columnUpdate = (client: ReturnType<typeof admin>, boardId: string, cardId: string, columnId: string) =>
+    updateDoc(doc(client, `boards/${boardId}/cards/${cardId}`), { columnId, updatedAt: serverTimestamp() });
+
+  it("should let a verified admin move a card to any other column without being a member", async () => {
+    await assertSucceeds(columnUpdate(admin(), SRC, "visible", "to-improve"));
+    await assertSucceeds(columnUpdate(admin(), SRC, "visible", "ideas"));
+    await assertSucceeds(columnUpdate(admin(), SRC, "visible", "went-well"));
+    await assertSucceeds(columnUpdate(admin(), SRC, "secret", "to-improve"));
+  });
+
+  it("should reject a column that does not exist", async () => {
+    await assertFails(columnUpdate(admin(), SRC, "visible", "somewhere-else"));
+    await assertFails(
+      updateDoc(doc(admin(), `boards/${SRC}/cards/visible`), { columnId: 5, updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("should reject a column move on a completed or a waiting board", async () => {
+    await assertFails(columnUpdate(admin(), COMPLETED, "done", "ideas"));
+    await assertFails(columnUpdate(admin(), WAITING, "early", "ideas"));
+  });
+
+  it("should reject a column move by the owner, the author, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(columnUpdate(client, SRC, "visible", "ideas"));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject a column move by a ${label}`, async () => {
+      await assertFails(columnUpdate(makeClient(), SRC, "visible", "ideas"));
+    });
+  }
+
+  it("should reject changing anything besides the column in the same update", async () => {
+    const ref = doc(admin(), `boards/${SRC}/cards/visible`);
+    await assertFails(updateDoc(ref, { columnId: "ideas", text: "changed", updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, { columnId: "ideas", authorId: "admin", updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, { columnId: "ideas", hidden: true, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, { columnId: "ideas", updatedAt: seeded }));
+  });
+});
+
+describe("admin stacking (D102 to D106)", () => {
+  const groupUpdate = (client: ReturnType<typeof admin>, cardId: string, data: Record<string, unknown>, boardId = SRC) =>
+    updateDoc(doc(client, `boards/${boardId}/cards/${cardId}`), { ...data, updatedAt: serverTimestamp() });
+
+  it("should let a verified admin set and clear a groupId without being a member", async () => {
+    await assertSucceeds(groupUpdate(admin(), "visible", { groupId: "visible" }));
+    await assertSucceeds(groupUpdate(admin(), "secret", { groupId: "visible" }));
+    await assertSucceeds(groupUpdate(admin(), "secret", { groupId: null }));
+  });
+
+  it("should let the admin join a stack in another column in one update", async () => {
+    await assertSucceeds(groupUpdate(admin(), "visible", { groupId: "g1", columnId: "to-improve" }));
+  });
+
+  it("should let the admin stack two cards in one batch", async () => {
+    const db = admin();
+    const batch = writeBatch(db);
+    batch.update(doc(db, `boards/${SRC}/cards/visible`), { groupId: "visible", updatedAt: serverTimestamp() });
+    batch.update(doc(db, `boards/${SRC}/cards/secret`), { groupId: "visible", columnId: "went-well", updatedAt: serverTimestamp() });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("should reject a groupId that is not a short non-empty string or null", async () => {
+    await assertFails(groupUpdate(admin(), "visible", { groupId: 5 }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "" }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "x".repeat(65) }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: true }));
+  });
+
+  it("should reject an invalid column together with a groupId", async () => {
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", columnId: "nowhere" }));
+  });
+
+  it("should reject changing text, author or hidden state together with a groupId", async () => {
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", text: "changed" }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", authorId: "admin" }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", hidden: true }));
+  });
+
+  it("should reject stacking on a completed or a waiting board", async () => {
+    await assertFails(groupUpdate(admin(), "done", { groupId: "g" }, COMPLETED));
+    await assertFails(groupUpdate(admin(), "early", { groupId: "g" }, WAITING));
+  });
+
+  it("should reject stacking by the owner, the author, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(groupUpdate(client, "visible", { groupId: "g" }));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject stacking by a ${label}`, async () => {
+      await assertFails(groupUpdate(makeClient(), "visible", { groupId: "g" }));
+    });
+  }
+
+  it("should reject a member creating a card that already carries a groupId", async () => {
+    await assertFails(
+      setDoc(doc(bob(), `boards/${SRC}/cards/fresh`), {
+        columnId: "ideas", text: "x", authorId: "bob", hidden: false, groupId: "g",
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+});
+
+describe("admin delete (D100)", () => {
+  it("should let a verified admin delete any card on an in-progress board without being a member", async () => {
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/visible`)));
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/secret`)));
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/legacy`)));
+  });
+
+  it("should reject an admin delete on a completed or a waiting board", async () => {
+    await assertFails(deleteDoc(doc(admin(), `boards/${COMPLETED}/cards/done`)));
+    await assertFails(deleteDoc(doc(admin(), `boards/${WAITING}/cards/early`)));
+  });
+
+  it("should still reject deleting another user's card by a member, a stranger and look-alike accounts", async () => {
+    await assertFails(deleteDoc(doc(bob(), `boards/${SRC}/cards/aliceHidden`)));
+    await assertFails(deleteDoc(doc(stranger(), `boards/${SRC}/cards/visible`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(deleteDoc(doc(makeClient(), `boards/${SRC}/cards/visible`)));
+    }
   });
 });
 
@@ -413,8 +541,7 @@ describe("move a card to another board", () => {
     await denied({ omit: ["ledger", "delete"] });
   });
 
-  it("should reject deleting the source without the destination", async () => {
-    await denied({ omit: ["ledger", "dest"] });
+  it("should reject a ledger and a source delete without the destination", async () => {
     await denied({ omit: ["dest"] });
   });
 
@@ -426,8 +553,8 @@ describe("move a card to another board", () => {
     await denied({ omit: ["ledger"] });
   });
 
-  it("should reject deleting a second card with the ledger of the first", async () => {
-    await denied({ extraDelete: [SRC, "secret"] });
+  it("should allow deleting a second card in the same batch because the admin may delete any card (D100)", async () => {
+    await allowed({ extraDelete: [SRC, "secret"] });
   });
 
   it("should reject changed text, column, author or hidden state", async () => {
@@ -529,8 +656,8 @@ describe("move ledger", () => {
     }
   });
 
-  it("should reject deleting the moved card without a ledger", async () => {
-    await assertFails(deleteDoc(doc(admin(), `boards/${DEST}/cards/moved`)));
+  it("should let the admin delete a moved card like any other card (D100)", async () => {
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${DEST}/cards/moved`)));
   });
 
   it("should reject the admin creating a ledger on its own", async () => {

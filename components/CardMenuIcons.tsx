@@ -44,6 +44,22 @@ export function IconEyeOff({ className }: IconProps) {
   );
 }
 
+export function IconLayers({ className }: IconProps) {
+  return (
+    <PixelIcon className={className}>
+      <path fillRule="evenodd" d="M4 1h11v11h-3V4H4zM1 4h11v11H1zM3 6v7h7V6z" />
+    </PixelIcon>
+  );
+}
+
+export function IconTrash({ className }: IconProps) {
+  return (
+    <PixelIcon className={className}>
+      <path fillRule="evenodd" d="M6 1h4v2h4v2H2V3h4zM3 6h10v9H3zM5 8v5h2V8zm4 0v5h2V8z" />
+    </PixelIcon>
+  );
+}
+
 export function IconMove({ className }: IconProps) {
   return (
     <PixelIcon className={className}>

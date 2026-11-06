@@ -3,7 +3,9 @@
 import { useState, type FormEvent } from "react";
 import { ColumnIcon } from "@/components/BoardIcons";
 import { IconPlus } from "@/components/DashboardIcons";
+import { CardStack } from "@/components/CardStack";
 import { StickyNote } from "@/components/StickyNote";
+import { groupCards } from "@/lib/card-groups";
 import {
   CARD_TEXT_MAX_LENGTH,
   FALLBACK_DISPLAY_NAME,
@@ -22,6 +24,11 @@ type BoardColumnProps = {
   readOnly: boolean;
   onToggleHidden: (card: BoardCard) => void;
   onMove: (card: BoardCard) => void;
+  onAdminDelete: (card: BoardCard) => void;
+  onChangeColumn: (card: BoardCard, columnId: ColumnId) => void;
+  onStackWith: (card: BoardCard) => void;
+  onUnstack: (card: BoardCard) => void;
+  onStackDrop: (draggedCardId: string, target: BoardCard) => void;
   onAdd: (text: string) => Promise<boolean>;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
@@ -38,6 +45,11 @@ export function BoardColumn({
   readOnly,
   onToggleHidden,
   onMove,
+  onAdminDelete,
+  onChangeColumn,
+  onStackWith,
+  onUnstack,
+  onStackDrop,
   onAdd,
   onEdit,
   onDelete,
@@ -106,20 +118,33 @@ export function BoardColumn({
         </form>
       ) : null}
       <ul className="board-cards">
-        {cards.map((card) => (
-          <StickyNote
-            key={card.id}
-            card={card}
-            authorName={authorNames.get(card.authorId) ?? FALLBACK_DISPLAY_NAME}
-            canEdit={!readOnly && card.authorId === uid}
-            canDelete={!readOnly && (card.authorId === uid || isOwner)}
-            showAdminMenu={isAdmin && !readOnly}
-            onToggleHidden={() => onToggleHidden(card)}
-            onMove={() => onMove(card)}
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
-        ))}
+        {groupCards(cards).map((item) => {
+          const renderCard = (card: BoardCard) => (
+            <StickyNote
+              key={card.id}
+              card={card}
+              authorName={authorNames.get(card.authorId) ?? FALLBACK_DISPLAY_NAME}
+              canEdit={!readOnly && card.authorId === uid}
+              canDelete={!readOnly && (card.authorId === uid || isOwner)}
+              showAdminMenu={isAdmin && !readOnly}
+              onToggleHidden={() => onToggleHidden(card)}
+              onMove={() => onMove(card)}
+              onAdminDelete={() => onAdminDelete(card)}
+              onMoveToColumn={(targetColumnId) => onChangeColumn(card, targetColumnId)}
+              isStacked={item.isStack}
+              onStackWith={() => onStackWith(card)}
+              onUnstack={() => onUnstack(card)}
+              onStackDrop={(draggedCardId) => onStackDrop(draggedCardId, card)}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          );
+          return item.isStack ? (
+            <CardStack key={item.key} cards={item.cards} renderCard={renderCard} />
+          ) : (
+            renderCard(item.cards[0])
+          );
+        })}
       </ul>
     </section>
   );
