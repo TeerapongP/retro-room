@@ -11,7 +11,10 @@ type HostWheelProps = {
   candidates: WheelCandidate[];
   winnerUid: string | null;
   spunAt: Date | null;
-  isAdmin: boolean;
+  /** Shows the spin button. The caller decides, so a stored result can hide it. */
+  canSpin: boolean;
+  /** Text under the wheel when nobody here can spin; null shows nothing. */
+  hint: string | null;
   onSpin: () => void;
 };
 
@@ -71,7 +74,7 @@ function SpinningWheel({ candidates, winnerUid, spunAt }: SpinningWheelProps) {
 }
 
 /** Step 5 (F29): the admin spins a wheel of the board's members and everyone sees the same result. */
-export function HostWheel({ candidates, winnerUid, spunAt, isAdmin, onSpin }: HostWheelProps) {
+export function HostWheel({ candidates, winnerUid, spunAt, canSpin, hint, onSpin }: HostWheelProps) {
   const sorted = sortCandidates(candidates);
   const [isSpinLocked, setIsSpinLocked] = useState(false);
 
@@ -84,13 +87,13 @@ export function HostWheel({ candidates, winnerUid, spunAt, isAdmin, onSpin }: Ho
   return (
     <section className="host-wheel-panel pixel-panel" aria-label="สุ่มโฮสต์คนถัดไป">
       <SpinningWheel key={spunAt?.getTime() ?? "none"} candidates={sorted} winnerUid={winnerUid} spunAt={spunAt} />
-      {isAdmin ? (
+      {canSpin ? (
         <button type="button" className="pixel-button pixel-button-gold" disabled={isSpinLocked || sorted.length === 0} onClick={handleSpin}>
           {winnerUid ? "หมุนอีกครั้ง" : "หมุนวงล้อ"}
         </button>
-      ) : (
-        <p className="host-wheel-hint">รอผู้ดำเนินรายการหมุนวงล้อ</p>
-      )}
+      ) : hint ? (
+        <p className="host-wheel-hint">{hint}</p>
+      ) : null}
     </section>
   );
 }

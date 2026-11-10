@@ -12,13 +12,12 @@ import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
 import { ModalDialog } from "@/components/ModalDialog";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
-import { HostWheel } from "@/components/HostWheel";
+import { CrowdedFarm } from "@/components/CrowdedFarm";
 import { RatingPanel } from "@/components/RatingPanel";
 import { PhaseStepper } from "@/components/PhaseStepper";
 import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
-import { pickWinnerUid } from "@/lib/wheel";
 import { saveMyRating, subscribeToRatings } from "@/lib/firebase/ratings";
 import { saveMyVotes, subscribeToVotes } from "@/lib/firebase/votes";
 import type { Rating } from "@/lib/ratings";
@@ -30,7 +29,6 @@ import {
   getOwnMembership,
   joinBoard,
   setPhase,
-  spinNextHost,
   startSession,
   startTimer,
   stopTimer,
@@ -473,16 +471,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       ) : null}
 
       {board.phase === 5 && !isCompleted ? (
-        <HostWheel
-          candidates={members.map((member) => ({ uid: member.uid, name: member.displayName }))}
-          winnerUid={board.nextHostUid}
-          spunAt={board.nextHostSpunAt}
-          isAdmin={isAdmin}
-          onSpin={() => {
-            const winnerUid = pickWinnerUid(members.map((member) => ({ uid: member.uid, name: member.displayName })));
-            if (winnerUid) void runAction(() => spinNextHost(board.id, winnerUid));
-          }}
-        />
+        <CrowdedFarm board={board} members={members} uid={uid} isAdmin={isAdmin} runAction={runAction} />
       ) : isRatingStep ? (
         <RatingPanel ratings={ratings} members={members} uid={uid} onRate={(score) => void handleRate(score)} />
       ) : cards === null && !liveError ? (

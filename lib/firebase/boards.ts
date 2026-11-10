@@ -29,7 +29,7 @@ function toDate(value: unknown): Date | null {
 }
 
 function toMember(data: DocumentData): BoardMember {
-  return { uid: data.uid, role: data.role, displayName: data.displayName };
+  return { uid: data.uid, role: data.role, displayName: data.displayName, joinedAt: toDate(data.joinedAt) };
 }
 
 export async function createBoard(
@@ -179,6 +179,8 @@ export function subscribeToBoard(
               phase: clampPhase(data.phase),
               nextHostUid: typeof data.nextHostUid === "string" ? data.nextHostUid : null,
               nextHostSpunAt: toDate(data.nextHostSpunAt),
+              farmActiveGameId: typeof data.farmActiveGameId === "string" ? data.farmActiveGameId : null,
+              nextHostGameId: typeof data.nextHostGameId === "string" ? data.nextHostGameId : null,
             }
           : null,
       );
@@ -199,7 +201,7 @@ export function subscribeToMembers(
       collection(db, "boards", boardId, "members"),
       orderBy("joinedAt"),
     ),
-    (snapshot) => onMembers(snapshot.docs.map((memberDoc) => toMember(memberDoc.data()))),
+    (snapshot) => onMembers(snapshot.docs.map((memberDoc) => toMember(memberDoc.data({ serverTimestamps: "estimate" })))),
     onError,
   );
 }

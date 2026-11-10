@@ -203,6 +203,109 @@ describe("mock next host wheel", () => {
   });
 });
 
+describe("mock Crowded Farm", () => {
+  async function farmBoard() {
+    let clock = Date.parse("2026-11-06T10:00:00Z");
+    const backend = createMockBackend({ now: () => new Date(clock) });
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Farm", "Aomsin");
+    await backend.joinBoard(boardId, "bob", "Bob");
+    await backend.startSession(boardId);
+    await backend.setPhase(boardId, 5);
+    clock += 1000;
+    return { backend, admin, boardId, advance: (seconds: number) => (clock += seconds * 1000) };
+  }
+
+  it("should start a round, keep choices private until 15 seconds pass and then reveal them", async () => {
+    const { backend, admin, boardId, advance } = await farmBoard();
+    const gameId = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, gameId);
+    await backend.chooseFarmField(boardId, gameId, "bob", "corn");
+    await backend.chooseFarmField(boardId, gameId, admin.uid, "carrot");
+
+    let myChoice: string | null = null;
+    const stopMine = backend.subscribeToMyFarmChoice(boardId, gameId, "bob", (field) => (myChoice = field), fail);
+    let choices: Array<{ uid: string; field: string }> = [];
+    let errorCode: string | undefined;
+    const stopAll = backend.subscribeToFarmChoices(boardId, gameId, (next) => (choices = next), (error) => (errorCode = (error as { code?: string }).code));
+    await flush();
+    expect(myChoice).toBe("corn");
+    expect(errorCode).toBe("permission-denied");
+
+    advance(15);
+    await backend.chooseFarmField(boardId, gameId, "bob", "carrot").then(
+      () => expect.unreachable("a choice after the deadline must be refused"),
+      (error) => expect(error).toMatchObject({ code: "permission-denied" }),
+    );
+    const stopLate = backend.subscribeToFarmChoices(boardId, gameId, (next) => (choices = next), fail);
+    await flush();
+    stopMine();
+    stopAll();
+    stopLate();
+    expect(choices.map((choice) => choice.uid).sort()).toEqual([admin.uid, "bob"].sort());
+  });
+
+  it("should leave out a member who joined after the round started", async () => {
+    const { backend, boardId, advance } = await farmBoard();
+    const gameId = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, gameId);
+    advance(2);
+    await backend.joinBoard(boardId, "late", "Late");
+    await expect(backend.chooseFarmField(boardId, gameId, "late", "corn")).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it("should finish a direct winner without a wheel spin and refuse a second finish", async () => {
+    const { backend, admin, boardId, advance } = await farmBoard();
+    const gameId = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, gameId);
+    await expect(backend.finishFarmGame(boardId, gameId, admin.uid, "direct")).rejects.toMatchObject({ code: "permission-denied" });
+    advance(16);
+    await backend.finishFarmGame(boardId, gameId, admin.uid, "direct");
+    await expect(backend.finishFarmGame(boardId, gameId, "bob", "direct")).rejects.toMatchObject({ code: "already-resolved" });
+    let board: { nextHostUid: string | null; nextHostGameId: string | null; nextHostSpunAt: Date | null } | null = null;
+    const stop = backend.subscribeToBoard(boardId, (next) => (board = next), fail);
+    await flush();
+    stop();
+    expect(board).toMatchObject({ nextHostUid: admin.uid, nextHostGameId: gameId, nextHostSpunAt: null });
+  });
+
+  it("should set the spin time for a wheel result", async () => {
+    const { backend, admin, boardId, advance } = await farmBoard();
+    const gameId = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, gameId);
+    advance(16);
+    await backend.finishFarmGame(boardId, gameId, admin.uid, "tie-wheel");
+    let spunAt: Date | null = null;
+    const stop = backend.subscribeToBoard(boardId, (next) => (spunAt = next?.nextHostSpunAt ?? null), fail);
+    await flush();
+    stop();
+    expect(spunAt).toBeInstanceOf(Date);
+  });
+
+  it("should block a new round while one is selecting and while a cancelled round has no fallback result", async () => {
+    const { backend, boardId } = await farmBoard();
+    const first = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, first);
+    await expect(backend.startFarmGame(boardId, backend.newFarmGameId(boardId))).rejects.toMatchObject({ code: "round-in-progress" });
+
+    await backend.cancelFarmGame(boardId, first);
+    await expect(backend.cancelFarmGame(boardId, first)).rejects.toMatchObject({ code: "already-resolved" });
+    await expect(backend.startFarmGame(boardId, backend.newFarmGameId(boardId))).rejects.toMatchObject({ code: "fallback-pending" });
+
+    await backend.storeCancelledFarmFallback(boardId, first, "bob");
+    await expect(backend.storeCancelledFarmFallback(boardId, first, "bob")).rejects.toMatchObject({ code: "already-resolved" });
+    await backend.startFarmGame(boardId, backend.newFarmGameId(boardId));
+  });
+
+  it("should refuse the old wheel spin once a farm round exists and farm actions outside step 5", async () => {
+    const { backend, boardId } = await farmBoard();
+    await backend.startFarmGame(boardId, backend.newFarmGameId(boardId));
+    await expect(backend.spinNextHost(boardId, "bob")).rejects.toMatchObject({ code: "permission-denied" });
+    await backend.setPhase(boardId, 4);
+    await expect(backend.startFarmGame(boardId, backend.newFarmGameId(boardId))).rejects.toMatchObject({ code: "not-active" });
+  });
+});
+
 describe("mock voting", () => {
   async function votingBoard() {
     const backend = setup();

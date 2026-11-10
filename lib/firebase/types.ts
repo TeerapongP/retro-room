@@ -38,12 +38,17 @@ export type Board = {
   /** Result of the next-host wheel (F29, D149): the winner's uid and when the wheel was spun, or null before any spin. */
   nextHostUid: string | null;
   nextHostSpunAt: Date | null;
+  /** Crowded Farm (F30): the round in play, and the round the stored next host came from (D153, D157). */
+  farmActiveGameId: string | null;
+  nextHostGameId: string | null;
 };
 
 export type BoardMember = {
   uid: string;
   role: BoardRole;
   displayName: string;
+  /** Server time of joining; decides who plays a Crowded Farm round (D154). Null while the write is pending. */
+  joinedAt: Date | null;
 };
 
 export type BoardCard = {

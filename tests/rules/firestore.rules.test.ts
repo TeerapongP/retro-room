@@ -727,6 +727,33 @@ describe("members", () => {
     );
   });
 
+  it(`should deny joining with a joinedAt the client chose, in the past or in the future (D154)`, async () => {
+    for (const clientTime of [seededTimestamp, Timestamp.fromMillis(Date.now() + 3_600_000), Timestamp.now()]) {
+      await assertFails(
+        setDoc(doc(carol(), `boards/${BOARD_ID}/members/carol`), {
+          uid: "carol",
+          role: "member",
+          displayName: "Carol",
+          joinedAt: clientTime,
+        }),
+      );
+    }
+    await assertSucceeds(
+      setDoc(doc(carol(), `boards/${BOARD_ID}/members/carol`), {
+        uid: "carol",
+        role: "member",
+        displayName: "Carol",
+        joinedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  it(`should deny changing joinedAt of an existing membership, also back to the past`, async () => {
+    await assertFails(updateDoc(doc(bob(), `boards/${BOARD_ID}/members/bob`), { joinedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(bob(), `boards/${BOARD_ID}/members/bob`), { joinedAt: seededTimestamp }));
+    await assertFails(updateDoc(doc(alice(), `boards/${BOARD_ID}/members/bob`), { joinedAt: seededTimestamp }));
+  });
+
   it(`should deny joining as owner on an existing board`, async () => {
     await assertFails(
       setDoc(doc(carol(), `boards/${BOARD_ID}/members/carol`), {

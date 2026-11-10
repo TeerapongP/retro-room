@@ -1,5 +1,15 @@
 import { ADMIN_EMAIL } from "../firebase/admin";
 import { clampPhase } from "../phases";
+import {
+  FARM_SELECTION_SECONDS,
+  FarmError,
+  isFarmFieldId,
+  type FarmChoice,
+  type FarmFieldId,
+  type FarmGame,
+  type FarmGameStatus,
+  type FarmResolution,
+} from "../crowded-farm";
 import { isValidRating, type Rating } from "../ratings";
 import { VOTES_PER_MEMBER, type Voter } from "../votes";
 import {
@@ -48,9 +58,18 @@ type StoredBoard = {
   phase?: number;
   nextHostUid?: string | null;
   nextHostSpunAt?: string | null;
+  farmActiveGameId?: string | null;
+  nextHostGameId?: string | null;
   createdAt: string;
 };
-type StoredMember = BoardMember & { joinedAt: string };
+type StoredMember = Omit<BoardMember, "joinedAt"> & { joinedAt: string };
+type StoredFarmGame = {
+  id: string;
+  startedAt: string;
+  status: FarmGameStatus;
+  resolution?: FarmResolution;
+  winnerUid?: string;
+};
 type StoredCard = {
   id: string;
   columnId: ColumnId;
@@ -70,6 +89,9 @@ type MockState = {
   votes?: Record<string, Record<string, string[]>>;
   /** Self ratings per board (F28); absent in states saved before ratings existed. */
   ratings?: Record<string, Record<string, number>>;
+  /** Crowded Farm rounds and choices per board (F30); absent in states saved before the game existed. */
+  farmGames?: Record<string, Record<string, StoredFarmGame>>;
+  farmChoices?: Record<string, Record<string, Record<string, FarmFieldId>>>;
   counter: number;
 };
 
@@ -215,7 +237,53 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       phase: clampPhase(stored.phase),
       nextHostUid: stored.nextHostUid ?? null,
       nextHostSpunAt: stored.nextHostSpunAt ? new Date(stored.nextHostSpunAt) : null,
+      farmActiveGameId: stored.farmActiveGameId ?? null,
+      nextHostGameId: stored.nextHostGameId ?? null,
     };
+  }
+
+  function toMember(stored: StoredMember): BoardMember {
+    return { uid: stored.uid, role: stored.role, displayName: stored.displayName, joinedAt: new Date(stored.joinedAt) };
+  }
+
+  function toFarmGame(stored: StoredFarmGame): FarmGame {
+    return {
+      id: stored.id,
+      startedAt: new Date(stored.startedAt),
+      status: stored.status,
+      resolution: stored.resolution ?? null,
+      winnerUid: stored.winnerUid ?? null,
+    };
+  }
+
+  function denied(message: string): Error {
+    return Object.assign(new Error(message), { code: "permission-denied" });
+  }
+
+  function farmGamesOf(boardId: string): Record<string, StoredFarmGame> {
+    return ((state.farmGames ??= {})[boardId] ??= {});
+  }
+
+  function farmChoicesOf(boardId: string, gameId: string): Record<string, FarmFieldId> {
+    return (((state.farmChoices ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function farmDeadline(game: StoredFarmGame): number {
+    return Date.parse(game.startedAt) + FARM_SELECTION_SECONDS * 1000;
+  }
+
+  function isFarmPlayerOf(boardId: string, uid: string, game: StoredFarmGame): boolean {
+    const member = state.members[boardId]?.[uid];
+    return member !== undefined && Date.parse(member.joinedAt) < Date.parse(game.startedAt);
+  }
+
+  /** The board in step 5 and in progress, as the Rules require for every farm write. */
+  function farmBoardOrThrow(boardId: string): StoredBoard {
+    const board = boardOrThrow(boardId);
+    if (board.status !== "in-progress" || clampPhase(board.phase) !== 5) {
+      throw new FarmError("not-active", "The board is not in step 5");
+    }
+    return board;
   }
 
   function toCard(stored: StoredCard): BoardCard {
@@ -356,10 +424,120 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     async spinNextHost(boardId: string, winnerUid: string): Promise<void> {
       // Same rules as firestore.rules: in-progress board, step 5, winner is a member (D149).
       const board = boardOrThrow(boardId);
-      if (board.status !== "in-progress" || clampPhase(board.phase) !== 5 || !state.members[boardId]?.[winnerUid]) {
+      if (
+        board.status !== "in-progress" ||
+        clampPhase(board.phase) !== 5 ||
+        board.farmActiveGameId ||
+        !state.members[boardId]?.[winnerUid]
+      ) {
         throw Object.assign(new Error("The wheel is closed or the winner is not a member"), { code: "permission-denied" });
       }
       board.nextHostUid = winnerUid;
+      board.nextHostSpunAt = now().toISOString();
+      changed();
+    },
+
+    newFarmGameId(boardId: string): string {
+      boardOrThrow(boardId);
+      return nextId("game");
+    },
+
+    subscribeToFarmGame(boardId: string, gameId: string, onGame: (game: FarmGame | null) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => {
+        const stored = state.farmGames?.[boardId]?.[gameId];
+        return stored ? toFarmGame(stored) : null;
+      }, onGame, onError);
+    },
+
+    subscribeToMyFarmChoice(boardId: string, gameId: string, uid: string, onChoice: (field: FarmFieldId | null) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => state.farmChoices?.[boardId]?.[gameId]?.[uid] ?? null, onChoice, onError);
+    },
+
+    /** Like the Rules, the listing is refused until the deadline has passed. */
+    subscribeToFarmChoices(boardId: string, gameId: string, onChoices: (choices: FarmChoice[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => {
+        const game = state.farmGames?.[boardId]?.[gameId];
+        if (!game || now().getTime() < farmDeadline(game)) throw denied("Choices are private until the deadline");
+        return Object.entries(state.farmChoices?.[boardId]?.[gameId] ?? {}).map(([uid, field]) => ({ uid, field }));
+      }, onChoices, onError);
+    },
+
+    async chooseFarmField(boardId: string, gameId: string, uid: string, field: FarmFieldId): Promise<void> {
+      const board = boardOrThrow(boardId);
+      const game = state.farmGames?.[boardId]?.[gameId];
+      if (
+        board.status !== "in-progress" ||
+        clampPhase(board.phase) !== 5 ||
+        board.farmActiveGameId !== gameId ||
+        !game ||
+        game.status !== "selecting" ||
+        now().getTime() >= farmDeadline(game) ||
+        !isFarmPlayerOf(boardId, uid, game) ||
+        !isFarmFieldId(field)
+      ) {
+        throw denied("Choosing is closed or not allowed");
+      }
+      farmChoicesOf(boardId, gameId)[uid] = field;
+      changed();
+    },
+
+    async startFarmGame(boardId: string, gameId: string): Promise<void> {
+      const board = farmBoardOrThrow(boardId);
+      const previous = board.farmActiveGameId ? farmGamesOf(boardId)[board.farmActiveGameId] : undefined;
+      if (board.farmActiveGameId) {
+        const mayStart =
+          previous?.status === "finished" ||
+          (previous?.status === "cancelled" && board.nextHostGameId === board.farmActiveGameId);
+        if (!mayStart) {
+          throw new FarmError(
+            previous?.status === "cancelled" ? "fallback-pending" : "round-in-progress",
+            "The previous round is not resolved",
+          );
+        }
+      }
+      farmGamesOf(boardId)[gameId] = { id: gameId, startedAt: now().toISOString(), status: "selecting" };
+      board.farmActiveGameId = gameId;
+      changed();
+    },
+
+    async finishFarmGame(boardId: string, gameId: string, winnerUid: string, resolution: FarmResolution): Promise<void> {
+      const board = farmBoardOrThrow(boardId);
+      const game = farmGamesOf(boardId)[gameId];
+      if (board.farmActiveGameId !== gameId || !game) throw new FarmError("not-active", "This round is not the active round");
+      if (board.nextHostGameId === gameId || game.status === "finished") {
+        throw new FarmError("already-resolved", "This round already has a result");
+      }
+      if (game.status !== "selecting") throw new FarmError("not-active", "This round was cancelled");
+      if (!isFarmPlayerOf(boardId, winnerUid, game)) throw new FarmError("not-eligible", "The winner did not play this round");
+      if (now().getTime() < farmDeadline(game)) throw denied("The selection time has not ended");
+      game.status = "finished";
+      game.resolution = resolution;
+      game.winnerUid = winnerUid;
+      board.nextHostUid = winnerUid;
+      board.nextHostGameId = gameId;
+      if (resolution !== "direct") board.nextHostSpunAt = now().toISOString();
+      changed();
+    },
+
+    async cancelFarmGame(boardId: string, gameId: string): Promise<void> {
+      const board = farmBoardOrThrow(boardId);
+      const game = farmGamesOf(boardId)[gameId];
+      if (board.farmActiveGameId !== gameId || !game) throw new FarmError("not-active", "This round is not the active round");
+      if (game.status !== "selecting") throw new FarmError("already-resolved", "This round already ended");
+      game.status = "cancelled";
+      changed();
+    },
+
+    async storeCancelledFarmFallback(boardId: string, gameId: string, winnerUid: string): Promise<void> {
+      const board = farmBoardOrThrow(boardId);
+      const game = farmGamesOf(boardId)[gameId];
+      if (board.farmActiveGameId !== gameId || game?.status !== "cancelled") {
+        throw new FarmError("not-active", "This round is not the active cancelled round");
+      }
+      if (board.nextHostGameId === gameId) throw new FarmError("already-resolved", "The fallback result is already stored");
+      if (!isFarmPlayerOf(boardId, winnerUid, game)) throw new FarmError("not-eligible", "The winner did not play this round");
+      board.nextHostUid = winnerUid;
+      board.nextHostGameId = gameId;
       board.nextHostSpunAt = now().toISOString();
       changed();
     },
@@ -396,7 +574,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
 
     async getOwnMembership(boardId: string, uid: string): Promise<BoardMember | null> {
       const member = state.members[boardId]?.[uid];
-      return member ? { uid: member.uid, role: member.role, displayName: member.displayName } : null;
+      return member ? toMember(member) : null;
     },
 
     subscribeToBoard(boardId: string, onBoard: (board: Board | null) => void, onError: (error: unknown) => void): Unsubscribe {
@@ -408,7 +586,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
         () =>
           Object.values(state.members[boardId] ?? {})
             .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt))
-            .map((member) => ({ uid: member.uid, role: member.role, displayName: member.displayName })),
+            .map(toMember),
         onMembers,
         onError,
       );
