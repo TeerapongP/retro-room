@@ -39,6 +39,17 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F16 | Dashboard pixel-art redesign (owner-approved scope extension): countryside backdrop, cream pixel-framed navbar and panels, pixel icons, Retro section spacing and empty state, matching `docs/references/retro-room-dashboard-reference.png`. Visual only: board creation, the realtime board list, loading, error and logout behavior are unchanged |
 | F17 | Admin card controls (owner-approved scope extension): one fixed admin (`thirapong.pin@ascendcorp.com`, verified Google email) can hide and unhide cards, move cards to another `in-progress` board, and list boards to pick a destination. Enforced by Firestore Security Rules; see D74 to D82 |
 | F18 | Board screen redesign (owner-approved scope extension): restyle `/boards/[boardId]` to match `docs/references/retro-room-board-reference.png` (countryside backdrop, `RETRO ROOM` navbar, board sign, framed column headers with count and add button, colored cards with author and relative time). Visual only; see D83 to D88 |
+| F19 | Local mock mode (owner-approved scope extension): `pnpm dev:mock` runs the app without Firebase Auth or Firestore, with a fake signed-in admin and in-memory demo data, so UI work is not blocked by login or deployment. Development only; see D89 to D92 |
+| F20 | Skip the Dashboard (owner request): after sign-in the app opens a board directly; there is no board list page. A board switcher with a new-board form lives on the Board screen. See D94 to D99 |
+| F21 | Stack cards (owner request): the admin can stack cards about the same topic by dragging one onto another, or from the card menu. A stack shows as a pile with a count and opens to show all its cards. See D102 to D108 |
+| F22 | Board timer (owner request, first item of the earlier "Retrospective Timer" non-goal): the admin starts a countdown on an in-progress board and everyone sees the same time. See D109 to D115 |
+| F23 | Session stepper (owner request): the top navbar of the Board is replaced by a six-step bar (เขียน, ทบทวน, โหวต, ให้คะแนนตัวเอง, โฮสต์คนถัดไป, สรุป) that the admin moves and everyone sees. See D116 to D123 |
+| F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees only their own cards; other members' cards appear from step 2 on. Amends D76 and D119. See D126 to D130 |
+| F25 | Writing only in step 1 (owner request): new cards can be written only while the board is in step 1 (เขียน); from step 2 on nobody can add a card. Amends D119. See D131 to D134 |
+| F26 | Voting (owner request; the first real use of step 3, โหวต): each member has up to 3 votes on a board and puts them on cards. This approves the earlier non-goal "Voting" for this form only. See D135 to D142 |
+| F27 | No editing or deleting after step 1 (owner request): from step 2 on, members can no longer edit or delete cards; the `แก้ไข` and `ลบ` buttons are removed. Settles the open point of D132. See D143 and D144 |
+| F28 | Self rating (owner request): in step 4 (ให้คะแนนตัวเอง) the cards are hidden and each member gives one score from 1 to 5 in steps of 0.5. Everyone sees every member's score and the average | Planned scope: D145 to D148 |
+| F29 | Next-host wheel (owner request): in step 5 (โฮสต์คนถัดไป) the admin spins a wheel of the board's members and everyone sees the same winner as the next host | Planned scope: D149 to D152 |
 | F13 | Player Name Setup redesign (owner-approved scope extension): `/setup` becomes a pixel-art farm scene with "Your name?" dialogue, a Name field and an on-screen character keyboard (A-Z, a-z, 0-9, Mark, Space, OK). Requested as "F11", numbered F13 because F11 and F12 already exist |
 
 ## Phase 2: NOT approved
@@ -218,4 +229,133 @@ The owner approved the three policies below and the ledger approach after an emu
 | D86 | Each column has a framed header with a pixel icon, its English label, a card count and a `+` button. The `+` button opens the existing add-card form inline for that column; the form closes after a successful add. Card colors: Went Well green, To Improve red, Ideas purple |
 | D87 | Layout: the three columns sit in the same 82% wide column as the navbar from 64rem up, and stack in one column below it. Completed boards stay read-only (no `+` button), and the join, loading, error and not-found states use the same scene. The waiting (Title) screen keeps its own existing layout in this step |
 | D88 | Verification targets: 375x812, 768x1024, 1280x720, 1852x849 (the reference size) and 1920x1080, no horizontal scroll, no overlap, readable contrast. Nothing is committed or deployed without owner approval |
+
+## Local mock mode (F19), owner approved
+
+| ID | Decision |
+| --- | --- |
+| D89 | Mock mode is chosen at start-up with `NEXT_PUBLIC_MOCK_MODE=true` (`pnpm dev:mock`). It replaces Firebase Auth and Firestore with an in-memory backend (`lib/mock/backend.ts`); no network call to Firebase is made. No production code path is commented out or removed |
+| D90 | Mock mode is development only: `isMockMode()` is false in production builds and off `localhost`/`127.0.0.1`, and a banner states that data is fake. It wins over emulator mode when both are set |
+| D91 | The mock user is the admin identity (`thirapong.pin@ascendcorp.com`, verified) with a player name, so every admin control can be tried. Demo data: two in-progress boards and two other players. State is kept in `localStorage` (`retro-room:mock-state`); clear that key to reset |
+| D92 | The mock backend does NOT run Firestore Security Rules. It is for looking at and clicking through the UI only. Rules and real access are still verified with `pnpm test:rules`, `pnpm test:integration` and the emulator. Real Google sign-in is not part of mock mode |
+| D93 | While login and Firebase deployment are blocked, `pnpm dev` starts in mock mode by default (owner request). `pnpm dev:firebase` is the old behavior against the real project, `pnpm dev:emulator` is unchanged. Switch `dev` back when Firebase is ready |
+
+## Skip the Dashboard (F20), owner confirmed removing the page; the details below are the recommended defaults
+
+| ID | Decision |
+| --- | --- |
+| D94 | The Dashboard page is removed. `/boards` (new) is an invisible launcher: it picks a board and replaces the URL with `/boards/{id}`. `/dashboard` only redirects to `/boards` so old links keep working. F16 (D66 to D73) page content for the Dashboard is superseded; the scene, navbar and icons are still used by the Board |
+| D95 | Which board opens: the board the user opened last on this device (`localStorage` key `retro-room:last-board`) if they are still a member of it, otherwise the board they joined most recently. If the user has no board yet, one named `My Retro` is created and opened |
+| D96 | Creating and switching boards moves to the Board screen: a board switcher (select of the user's boards) and a `+ บอร์ดใหม่` form with the existing title rules (1 to 80 characters). Board creation logic itself (`createBoard`) is unchanged |
+| D97 | Joining another person's board still works through the shared link and the existing join prompt |
+| D98 | Navbar: Home and Retro both open the launcher (so they return to the user's current board). Post-login, the home route and Setup also go through `/boards` |
+| D99 | The launcher reads the user's memberships with the same collection-group query as the old Dashboard, so it still needs the `members.uid` index on the real project. Mock mode (F19) and the emulator are not affected. Page-specific Dashboard CSS is left in place for now (dead rules, to clean up later) |
+
+## Admin delete (F17 amendment), owner request
+
+| ID | Decision |
+| --- | --- |
+| D100 | The admin card menu gets a third item, delete (`ลบการ์ด`), with a confirmation dialog. Rules: the admin may delete any card of an in-progress board without being a member; completed and waiting boards stay untouched. This amends D77, which said the admin had no other way to delete a card: a ledger is still the only way to create a moved copy, and creating a copy still needs the source delete in the same batch. The existing delete rights of authors and board owners are unchanged. Deleting is permanent |
+
+## Admin column move (F17 amendment), owner request
+
+| ID | Decision |
+| --- | --- |
+| D101 | The admin card menu lists `ย้ายไป <column>` for each of the other two columns, so a card can move between Went Well, To Improve and Ideas on the same board. Rules: the admin may change only `columnId` (to one of the three valid columns) and `updatedAt` of a card on an in-progress board, without being a member; text, author and hidden state cannot change in the same update. Authors, owners and members still cannot change a card's column (D-column immutability stands for them). No drag and drop |
+
+## Stack cards (F21), owner confirmed the three display and interaction choices
+
+| ID | Decision |
+| --- | --- |
+| D102 | Only the admin stacks and unstacks cards, on an `in-progress` board, without being a member. A card has an optional `groupId` (string of 1 to 64 characters, or `null`). Cards with the same `groupId` in the same column form a stack. A `groupId` that only one card has is shown as a normal card. By convention the `groupId` is the id of the first card put in the stack |
+| D103 | Display: a collapsed stack shows its first card on top with a count badge and layered edges behind it. Clicking the stack opens it to show every card of the group (each with its own menu); clicking again folds it |
+| D104 | Stacking by dragging: the admin drags a card onto another card or stack. If the target is in another column, the dragged card moves to that column and joins the stack there. The drop updates the dragged card and, when the target had no group yet, the target too, in one batch |
+| D105 | Fallback for touch and keyboard: the admin card menu has `ซ้อนกับการ์ดอื่น...` (a dialog with a list of the other cards) and, for a card in a stack, `แยกออกจากกอง`. Drag and drop is not available on touch screens |
+| D106 | Rules: the admin may change only `groupId`, `columnId` (valid column) and `updatedAt` of a card on an in-progress board, without being a member. Nobody else can change them. The Rules do not check that a group exists or that the group is in one column; the admin is trusted for that (D74) |
+| D107 | A card hidden from others (D76) stays hidden inside a stack; other members see the stack without it. A card moved to another board (D77) arrives without a group. Deleting a card (D100) leaves the rest of its stack as is |
+| D108 | No change for authors, owners and members: they cannot stack, unstack or change columns. No new package; HTML5 drag and drop is used |
+
+## Board timer (F22), owner confirmed the three choices; the board switcher is removed (F20 amendment)
+
+| ID | Decision |
+| --- | --- |
+| D109 | The board switcher and the `+ บอร์ดใหม่` form are removed from the Board screen (owner request); this supersedes D96. The heading row keeps only the chip `Member · N คน · IN PROGRESS`, the timer and the share and end buttons. Consequence: the app no longer has a place to create or switch boards. The launcher (D94, D95) still opens the last board or creates `My Retro` when the user has none |
+| D110 | Timer: a countdown. The admin picks a length (3, 5, 10 or 15 minutes, or 1 to 120 custom minutes) and starts it; the admin can stop it. Only one timer per board |
+| D111 | Shared: the board document has `timerEndsAt` (timestamp) and `timerDurationSec` (integer), both `null` or absent when no timer runs. Every browser shows the remaining time from `timerEndsAt`, so all members see the same countdown. The end time is computed from the admin's clock (Rules only check it is in the future and at most 2 hours ahead), so browsers with a wrong clock show a time that is off by the clock difference |
+| D112 | Rules: the admin may change only `timerEndsAt`, `timerDurationSec` and `updatedAt` of an in-progress board, without being a member: `timerEndsAt` null, or a timestamp later than the request time and at most 2 hours later; `timerDurationSec` null, or an integer from 1 to 7200. The owner's own rights on the board (rename, start, complete) are unchanged. Nobody else can change the timer |
+| D113 | When time runs out, a small alert appears in the middle of the screen (not a blocking modal) and a short soft beep plays if the browser allows sound. Writing cards is never blocked by the timer |
+| D114 | The timer is shown while the board is in progress. A completed board shows no timer. Nothing stops a card being written after time is up |
+| D115 | Not in this step: pause and resume, extending a running timer (stop and start again instead), per-phase timers, timer history |
+
+## Session stepper (F23), owner confirmed the four choices
+
+| ID | Decision |
+| --- | --- |
+| D116 | The `RETRO ROOM` navbar (brand, Home, Retro, player name, logout) is removed from the Board screen and replaced by a step bar of six steps: 1 เขียน, 2 ทบทวน, 3 โหวต, 4 ให้คะแนนตัวเอง, 5 โฮสต์คนถัดไป, 6 สรุป. Done steps show a check, the current step is highlighted, later steps show their number. Below it a panel names the current step, explains it and, for the admin, has a next-step button. This supersedes D85 (Dashboard navbar on the Board) |
+| D117 | The step is shared: the board document has `phase`, an integer from 1 to 6 (absent means 1). Only the admin changes it, on an in-progress board, without being a member; the admin can click any step to jump to it or use the next-step button. Everyone else sees the same step and cannot change it |
+| D118 | Only steps 1 and 2 have real content (writing cards; reviewing together, where the admin can already stack, hide and move cards). Steps 3 to 6 are placeholders that show `เร็ว ๆ นี้`: voting, self-score, next host and summary are NOT built, and voting is still not approved in the requirements |
+| D119 | The step is only an indicator. It never blocks writing, editing, deleting, stacking or the timer. The description texts must not claim restrictions that do not exist |
+| D120 | The player name and a logout button move to a small chip in the top right of the Board screen, shown in every Board state (loading, join, error, live). The brand logo, Home and Retro are gone from the Board; the launcher at `/boards` is still the route after sign-in |
+| D121 | Rules: the admin may change only `phase` (integer 1 to 6) and `updatedAt` of an in-progress board. The owner's rename, start and complete rights and the admin's timer rights (D112) are unchanged. A board without `phase` counts as step 1 |
+| D122 | A completed board shows the step bar read-only at the step it ended on. A waiting board (Title screen) shows no step bar |
+| D123 | Not in this step: a step timer per phase, automatic moves between steps, step history. The Dashboard-style navbar code and CSS are left in the repository, unused by the Board, for later clean-up |
+
+## Google profile photo in the account chip (F23 amendment), owner request
+
+| ID | Decision |
+| --- | --- |
+| D124 | The account chip shows the signed-in user's Google profile photo (`user.photoURL`) as a 30 px round avatar before the player name; if there is no photo or it fails to load, the first letter of the player name is shown. The player name is still the name the player chose (D24 is unchanged: the Google name is not used). The Google email and full name are not shown. The photo is shown only to its own user in this chip; showing other players' photos (for example on cards) needs the `photoURL` stored on the profile to be readable by other members and is not part of this step |
+
+## Pixel font TA GBA monothai MAX (owner request), amends D35
+
+| ID | Decision |
+| --- | --- |
+| D125 | The pixel font (`--font-pixel`, class `font-pixel`) changes from Press Start 2P to TA GBA monothai MAX (TA Font, Taweechai Assawarangsitsang, SIL Open Font License 1.1, free for commercial use and embedding). Scope: headings and labels only (dialog titles, timer clock, time-up box, Title screen, loading, emulator and mock banners, Login and Setup pixel text). IBM Plex Sans Thai stays the font for body text, cards and descriptions. This supersedes the "no new font" part of D35. The owner downloaded the font; the TTF of the MAX variant is stored in `app/fonts/` with `OFL.txt` and `FONTLOG.txt` (the license must travel with the font). The Mini variant is not used. The font is a single regular weight with Thai and Latin; it is drawn on 16 pixels per em, so pixel text uses multiples of 16 px (16, 32, 48) |
+
+## Private writing step (F24), owner request; the details marked "default" are my recommended choices
+
+| ID | Decision |
+| --- | --- |
+| D126 | In step 1 (เขียน) a member can read only the cards they wrote. Other members' cards are not readable, so they are not shown and not counted. From step 2 (ทบทวน) on, every member reads all cards that are not hidden by the admin (D76). This amends D119: the step now controls who can read cards. It still blocks nothing else: writing, editing, deleting and the timer work in every step |
+| D127 | Default: the admin still reads every card in every step (D76), because the admin runs the session. The board owner has no extra rights: an owner who is not the admin sees only their own cards in step 1 |
+| D128 | Default: moving the step back to step 1 hides other members' cards again; moving forward shows them. Cards written by a member in step 2 or later are visible to others at once |
+| D129 | A completed board shows every non-hidden card to its members whatever step it ended on, so a session ended in step 1 does not lose its cards. A board without a step counts as step 1 (D117) |
+| D130 | Enforced by Rules, not by the interface: the card read rule checks the board's `phase` and `status`. A member's subscription uses two queries (D76); in step 1 only the query for their own cards is allowed, so the client subscribes by step and renews the subscription when the step changes. The Rules cannot hide a card's existence from the count the member's own query returns, which is only their own cards |
+
+## Writing only in step 1 (F25), owner request; the details marked "default" are my recommended choices
+
+| ID | Decision |
+| --- | --- |
+| D131 | A member can add a new card only while the board is in step 1 (เขียน; a board without a step counts as step 1, D117). From step 2 (ทบทวน) through step 6 nobody can add a card: the `+` buttons and the add form are hidden and the Rules reject the write. Amends D119 and D126 |
+| D132 | Default: this blocks only creating cards. Editing the text of one's own card, deleting a card (author or board owner, D100 for the admin), stacking, hiding, moving and the timer keep working in every step. Superseded by D143 and D144: from step 2 on members cannot edit or delete either |
+| D133 | Default: an admin move of a card into another board (D77) still creates the copy there whatever that board's step is, because it moves an existing card and is not new writing. Moving the step back to step 1 lets members write again |
+| D134 | The step 2 text says that adding cards is closed. A member who had the add form open when the admin moved the step sees the write rejected with the normal permission error message |
+
+## Voting (F26), owner request: a vote button with at most 3 votes; details marked "default" are my recommended choices
+
+| ID | Decision |
+| --- | --- |
+| D135 | Each member has at most 3 votes per board. Votes can be placed only while the board is in step 3 (โหวต) and in progress. Default: one vote per card per member (pressing the button again takes the vote back), so 3 votes means up to 3 different cards. A member can vote for any card they can see, including their own. Votes can be changed freely during step 3 and are frozen after it |
+| D136 | Default: the vote count of a card is shown to every member from step 3 on, also while voting is open. Who voted is not shown in the interface. Limit: the vote records are readable by board members (see D137), so a member who reads the database directly can see who voted for what; the Rules do not give a secret ballot |
+| D137 | Data: one document per voter, `boards/{boardId}/voters/{uid}`, with `cardIds` (a list of at most 3 distinct card ids, each a string of 1 to 64 characters) and `updatedAt`. Rules: a member writes only their own document, only while the board is in progress and in step 3; board members and the admin can read all voter documents. The Rules enforce the limit of 3 and distinct ids; they do not check that an id is a real card of the board |
+| D138 | Only board members vote. The admin votes only if they are also a member of the board |
+| D139 | In step 3 the step panel shows `โหวตเหลือ N/3` and each card has a vote button with its count; when a member has no votes left, the button on cards they have not voted for is disabled. From step 4 on, and on completed boards, counts are shown without a working button. Steps 1 and 2 show no vote UI |
+| D140 | Deleting a card leaves its id in voter documents; counts ignore ids of cards that no longer exist. A card moved to another board arrives without votes (it is a new card there). A stack (D102) shows the votes of each card separately |
+| D141 | Not in this step: a results list or summary (step 6), a secret ballot, a reset of votes by the admin, votes on more than one column rule, vote history |
+| D142 | Step 3 stops being a placeholder: its description reads "เลือกการ์ดที่สำคัญที่สุด โหวตได้สูงสุด 3 อัน". Steps 4 to 6 stay placeholders. Writing stays closed in step 3 (D131) |
+
+## No editing or deleting after step 1 (F27), owner request
+
+| ID | Decision |
+| --- | --- |
+| D143 | From step 2 (ทบทวน) through step 6, and on a board that is not in step 1, a member cannot edit the text of a card or delete a card: the `แก้ไข` and `ลบ` buttons are not shown, an edit form that was open closes, and the Rules reject the write. This covers authors and the board owner (the owner's delete right on others' cards, D15 era, also stops after step 1). In step 1 both work as before. Replaces the default of D132 |
+| D144 | The admin tools are not affected: the admin can still delete any card of an in-progress board (D100), hide, stack and move cards and change columns in every step. Moving the step back to step 1 gives members edit and delete again. The step 2 text reads "ขั้นนี้เขียน แก้ไข หรือลบการ์ดไม่ได้" |
+| D145 | Step 4 shows no columns and no cards (cards stay hidden for everyone, the admin included, in the UI). The page shows a row of score buttons, the average and each member's score. Each member has one score per board; pressing another button changes it. The score can be written only by that member, on an in-progress board in step 4 | Owner request, options approved in chat: one score per member, whole board hidden |
+| D146 | Scale: 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5. The Rules reject any other number, type or extra field. No delete: a score can be changed in step 4 but not removed | Owner example `1 1.5 2, 2.5 to 5` |
+| D147 | Visibility: every board member and the admin read all scores (like votes, D136); the page shows the average (rounded to 2 decimals) and how many members chose each score. Scores are shown only in step 4; later steps do not show them yet | Approved option |
+| D148 | Moving the step away from 4 freezes the scores (no writes); moving back to 4 lets members change them again. The admin does not rate unless a board member. Cards are only hidden by the page, not by Rules: the Rules for reading cards are unchanged (D126) | Default |
+| D149 | Step 5 shows a wheel with one segment per board member (sorted by uid so every device draws the same wheel) instead of the columns. Only the admin sees the spin button. The admin's client picks the winner at random and stores `nextHostUid` and `nextHostSpunAt` on the board document; every client animates the same spin from that result | Owner request; options approved in chat: random-name wheel, the winner is the next host. The wheel lives inside step 5, not in a new step (default) |
+| D150 | Rules: the admin may update only `nextHostUid`, `nextHostSpunAt` and `updatedAt` of an in-progress board that is in step 5; `nextHostSpunAt` and `updatedAt` equal the request time; `nextHostUid` must be the uid of a member of the board. Nobody else can spin | |
+| D151 | Replay: a result younger than 10 seconds is spun on screen (5 seconds); an older result is shown as it ended, so a member who opens the board later sees the winner without a spin. The admin can spin again; the last result wins | Default |
+| D152 | The winner is only displayed; the app does not change owner or permissions. The result stays stored when the step moves away and shows again when the step returns to 5. The admin picks the random winner on their own device, so the draw is not verifiable by others | Default; known limit |
 

@@ -38,6 +38,16 @@ Email is not stored (D8). Readable and writable only by the user with that `uid`
 
 Columns are fixed in the client (D1): `went-well`, `to-improve`, `ideas`. They are not stored on the Board.
 
+### Timer fields on `boards/{boardId}` (F22, D111)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `timerEndsAt` | timestamp or `null` | End of the shared countdown; absent or `null` when no timer runs. Set from the admin's clock, at most 2 hours ahead |
+| `nextHostUid` | string | Winner of the next-host wheel (F29, D149): uid of a board member. Written by the admin in step 5 |
+| `nextHostSpunAt` | timestamp | When the wheel was spun (server time); clients replay a spin younger than 10 seconds |
+| `timerDurationSec` | integer or `null` | The length it was started with (1 to 7200) |
+| `phase` | integer 1 to 6 | F23 (D117). The shared session step; absent means 1. Only the admin changes it |
+
 ## boards/{boardId}/members/{uid}
 
 | Field | Type | Notes |
@@ -55,6 +65,7 @@ Columns are fixed in the client (D1): `went-well`, `to-improve`, `ideas`. They a
 | `text` | string | 1 to 500 characters (D3) |
 | `authorId` | string | Creator uid. Immutable |
 | `hidden` | boolean | F17 (D75, D76). `false` on create; only the admin changes it. A card without this field is readable only by its author and the admin |
+| `groupId` | string or `null` | F21 (D102). Cards of one column with the same value form a stack; absent or `null` means not stacked. Only the admin sets it |
 | `createdAt` | timestamp | Server timestamp. A moved card gets a new one (D78) |
 | `updatedAt` | timestamp | Server timestamp |
 | `movedFromBoardId`, `movedFromCardId` | string | Only on a card created by an admin move (D77) |
@@ -65,6 +76,24 @@ Anonymous posting is not supported, so author is stored and may be displayed.
 
 Ledger of a card moved out of this board. Document ID is the moved card's id. Fields: `destBoardId`, `destCardId`, `movedAt` (server timestamp). Written once by the admin together with the destination card and the source delete; never updated or deleted; readable only by the admin.
 
+## boards/{boardId}/voters/{uid} (F26, D137)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `cardIds` | list of strings | At most 3 distinct card ids (each 1 to 64 characters) the member voted for |
+| `updatedAt` | timestamp | Server timestamp |
+
+The document ID is the voter's uid. Counts per card are computed on the client from all voter documents (`lib/votes.ts`).
+
+## boards/{boardId}/ratings/{uid} (F28, D145 to D147)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `score` | number | 1 to 5 in steps of 0.5 |
+| `updatedAt` | timestamp | Server timestamp |
+
+The document ID is the member's uid. The average is computed on the client (`lib/ratings.ts`).
+
 ## Queries and indexes
 
 | Query | Index |
@@ -72,6 +101,8 @@ Ledger of a card moved out of this board. Document ID is the moved card's id. Fi
 | Dashboard: `collectionGroup('members').where('uid','==',uid)` | Collection-group field override on `members.uid` (ascending) |
 | Board cards, admin: `cards.orderBy('createdAt')` | Single-field, automatic |
 | Board cards, member (D76): `cards.where('hidden','==',false)` and `cards.where('authorId','==',uid)`, merged and sorted on the client | Single-field equality, automatic. No `orderBy`, so no composite index |
+| Votes: `boards/{id}/voters` (whole subcollection read) | none |
+| Ratings: `boards/{id}/ratings` (whole subcollection read) | none |
 | Admin move targets: `boards.where('status','==','in-progress')` | Single-field, automatic |
 | Board members: `members` subcollection read | none |
 

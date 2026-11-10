@@ -3,7 +3,9 @@
 import { useState, type FormEvent } from "react";
 import { ColumnIcon } from "@/components/BoardIcons";
 import { IconPlus } from "@/components/DashboardIcons";
-import { StickyNote } from "@/components/StickyNote";
+import { CardStack } from "@/components/CardStack";
+import { StickyNote, type CardVoteInfo } from "@/components/StickyNote";
+import { groupCards } from "@/lib/card-groups";
 import {
   CARD_TEXT_MAX_LENGTH,
   FALLBACK_DISPLAY_NAME,
@@ -20,8 +22,16 @@ type BoardColumnProps = {
   isOwner: boolean;
   isAdmin: boolean;
   readOnly: boolean;
+  /** Members write, edit and delete cards only in step 1 of an in-progress board (F25, F27, D131, D143). */
+  canAdd: boolean;
   onToggleHidden: (card: BoardCard) => void;
   onMove: (card: BoardCard) => void;
+  onAdminDelete: (card: BoardCard) => void;
+  onChangeColumn: (card: BoardCard, columnId: ColumnId) => void;
+  onStackWith: (card: BoardCard) => void;
+  onUnstack: (card: BoardCard) => void;
+  onStackDrop: (draggedCardId: string, target: BoardCard) => void;
+  voteInfoFor: (card: BoardCard) => CardVoteInfo;
   onAdd: (text: string) => Promise<boolean>;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
@@ -36,8 +46,15 @@ export function BoardColumn({
   isOwner,
   isAdmin,
   readOnly,
+  canAdd,
   onToggleHidden,
   onMove,
+  onAdminDelete,
+  onChangeColumn,
+  onStackWith,
+  onUnstack,
+  onStackDrop,
+  voteInfoFor,
   onAdd,
   onEdit,
   onDelete,
@@ -68,7 +85,7 @@ export function BoardColumn({
         <span className="board-count" aria-label={`${cards.length} การ์ด`}>
           {cards.length}
         </span>
-        {readOnly ? null : (
+        {canAdd ? (
           <button
             type="button"
             className="board-add"
@@ -79,9 +96,9 @@ export function BoardColumn({
           >
             <IconPlus />
           </button>
-        )}
+        ) : null}
       </header>
-      {!readOnly && isComposerOpen ? (
+      {canAdd && isComposerOpen ? (
         <form id={composerId} onSubmit={handleAdd} className="board-composer">
           <label htmlFor={inputId} className="sr-only">
             เพิ่มโน้ตใน {label}
@@ -106,20 +123,34 @@ export function BoardColumn({
         </form>
       ) : null}
       <ul className="board-cards">
-        {cards.map((card) => (
-          <StickyNote
-            key={card.id}
-            card={card}
-            authorName={authorNames.get(card.authorId) ?? FALLBACK_DISPLAY_NAME}
-            canEdit={!readOnly && card.authorId === uid}
-            canDelete={!readOnly && (card.authorId === uid || isOwner)}
-            showAdminMenu={isAdmin && !readOnly}
-            onToggleHidden={() => onToggleHidden(card)}
-            onMove={() => onMove(card)}
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
-        ))}
+        {groupCards(cards).map((item) => {
+          const renderCard = (card: BoardCard) => (
+            <StickyNote
+              key={card.id}
+              card={card}
+              authorName={authorNames.get(card.authorId) ?? FALLBACK_DISPLAY_NAME}
+              canEdit={canAdd && card.authorId === uid}
+              canDelete={canAdd && (card.authorId === uid || isOwner)}
+              showAdminMenu={isAdmin && !readOnly}
+              onToggleHidden={() => onToggleHidden(card)}
+              onMove={() => onMove(card)}
+              onAdminDelete={() => onAdminDelete(card)}
+              onMoveToColumn={(targetColumnId) => onChangeColumn(card, targetColumnId)}
+              isStacked={item.isStack}
+              onStackWith={() => onStackWith(card)}
+              onUnstack={() => onUnstack(card)}
+              onStackDrop={(draggedCardId) => onStackDrop(draggedCardId, card)}
+              vote={voteInfoFor(card)}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          );
+          return item.isStack ? (
+            <CardStack key={item.key} cards={item.cards} renderCard={renderCard} />
+          ) : (
+            renderCard(item.cards[0])
+          );
+        })}
       </ul>
     </section>
   );

@@ -30,12 +30,25 @@ export type Board = {
   title: string;
   ownerId: string;
   status: BoardStatus;
+  /** Shared countdown (F22, D111): end time and the length it was started with, or null when no timer runs. */
+  timerEndsAt: Date | null;
+  timerDurationSec: number | null;
+  /** Shared session step, 1 to 6 (F23, D117). */
+  phase: number;
+  /** Result of the next-host wheel (F29, D149): the winner's uid and when the wheel was spun, or null before any spin. */
+  nextHostUid: string | null;
+  nextHostSpunAt: Date | null;
+  /** Crowded Farm (F30): the round in play, and the round the stored next host came from (D153, D157). */
+  farmActiveGameId: string | null;
+  nextHostGameId: string | null;
 };
 
 export type BoardMember = {
   uid: string;
   role: BoardRole;
   displayName: string;
+  /** Server time of joining; decides who plays a Crowded Farm round (D154). Null while the write is pending. */
+  joinedAt: Date | null;
 };
 
 export type BoardCard = {
@@ -44,6 +57,8 @@ export type BoardCard = {
   text: string;
   authorId: string;
   hidden: boolean;
+  /** Cards of one column that share a groupId form a stack (F21, D102). */
+  groupId: string | null;
   createdAt: Date | null;
 };
 

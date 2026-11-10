@@ -167,3 +167,118 @@ Owner runs `firebase login` (or pastes the deployed rules from the console); com
 - NOT fixed, needs the owner: the reference background is a different picture from `countryside.png` (a normalized correlation of 0.27 at the best scale and offset). At 1672x941 our plate leaves about 175 px of flat sky at the top where the reference shows foliage and clouds, and its landmarks differ (reference chicken x 357 vs ours 330; fence line y 700 vs 655). A taller plate made for this aspect ratio is needed.
 - Also different by decision or limitation: Thai plus English column labels, avatars, likes, 5 columns, pencil icons on the sign, the brand font (reference uses a bold sans, ours Press Start 2P), rounded plank corners.
 
+## F19 Local mock mode (branch `feature/mock-dev-mode`, not committed)
+
+- IMPLEMENTED: `pnpm dev:mock` (`NEXT_PUBLIC_MOCK_MODE=true next dev`) runs the app with an in-memory backend instead of Firebase Auth and Firestore (`lib/mock/backend.ts`, `lib/mock/index.ts`). The Firebase libs (`auth.tsx`, `boards.ts`, `cards.ts`, `profile.ts`, `client.ts`) branch to it when `isMockMode()` is true; nothing was commented out or removed, so real behavior is unchanged when the flag is off. `components/EmulatorBanner.tsx` shows a MOCK MODE banner.
+- Mock user: the verified admin with the player name "Aomsin"; demo data: boards Sprint 23 and Sprint 13 and two other players (renamed from Sprint 12 on owner request). State persists in `localStorage` key `retro-room:mock-state` (clear it to reset). It does NOT run Security Rules (D92).
+- Checks PASSED: `tsc`, `lint`, `build`, vitest components, assets and mock (78 tests, 13 new in `tests/mock/backend.test.ts`), `test:rules` (174), `test:integration` (41).
+- Browser check (in-app browser, mock mode, dev server from an isolated copy): login page showed the MOCK MODE banner; "Login with Google" went to the Dashboard with both demo boards and no `failed-precondition`; creating "Mock Retro 1" opened the waiting screen; PRESS START, adding a card and opening the admin menu all worked; the browser's resource list had 4 entries whose names match "firebase"; I could not list them afterwards (the server was already stopped), so they are most likely the Firebase JavaScript chunks but that is NOT confirmed, and no emulator was running so a real Firebase call would have failed visibly. NOT RUN: hide and move clicks in mock mode, Setup (player name) screen, sign-out, two-user realtime, phone width.
+- A production build ignores the flag (`isMockMode()` is false when `NODE_ENV` is production), but the mock backend code is still bundled, unused. Mock mode also throws off localhost.
+
+## F20 Skip the Dashboard (branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: `/boards` launcher (`app/boards/page.tsx`, `lib/pick-board.ts`, `lib/last-board.ts`), `/dashboard` redirect, `components/BoardSwitcher.tsx`, navbar and post-login routes now go to `/boards`, opaque hidden cards. The Board now remembers the last opened board on the device.
+- Checks: see the run recorded below.
+- Chrome DevTools MCP check (mock mode, dev server from an isolated copy, 1672x941 and 375x812): login went straight to `/boards/sprint12` with no Dashboard text; the switcher listed both boards, switching opened `/boards/sprint13` and stored it as the last board; `+ บอร์ดใหม่` created and opened a new board; `/dashboard` redirected to the last board; with no boards at all the launcher created exactly one `My Retro` and opened it; no console errors or warnings; no horizontal scroll at 375 px. NOT RUN: the same flow against the emulator or real Firebase, two-user realtime, keyboard use of the switcher, tablet width. Against the real project the launcher still needs the `members.uid` index (D99).
+
+## Admin delete (D100, branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: admin delete rule in `firestore.rules`, `ลบการ์ด` item and "Delete card?" dialog (`CardMenu.tsx`, `CardMenuIcons.tsx`, `page.tsx`), rules and integration tests. Not deployed; the Rules change must be deployed with the earlier F17 Rules.
+- Rules tests PASSED (176) after updating the tests that assumed the admin could not delete; integration 43 PASSED.
+- Chrome DevTools MCP check (mock mode, 1672x941): the menu shows hide, move and a dark red delete item; the dialog shows the card text; cancel kept all 4 cards; confirm removed the card and showed `ลบการ์ดแล้ว`; no console errors. NOT RUN: delete against the emulator through the UI, phone width, keyboard use, a completed board in the browser (covered by rules and integration tests).
+
+## Admin column move (D101, branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: admin column change in `firestore.rules`, `setCardColumn` in `lib/firebase/cards.ts` and the mock backend, two column items in the admin menu (`CardMenu.tsx`, `StickyNote.tsx`, `BoardColumn.tsx`, `page.tsx`), wider menu (15rem) so items stay on one line. Not deployed; deploy it with the other F17 Rules changes.
+- Checks: see the final run below. Chrome DevTools MCP check (mock mode, 1672x941): the menu listed hide, the two other columns, move to another board and delete; Went Well to To Improve, then back to Went Well, worked with the notice shown; no console errors; menu items 44 px high on one line, no horizontal scroll. NOT RUN: phone width (the menu is 240 px wide inside a 351 px card), keyboard use, the UI against the emulator.
+
+## F21 Stack cards (D102 to D108, branch `feature/skip-dashboard`, not committed)
+
+- IMPLEMENTED: `groupId` on cards, admin stack rule in `firestore.rules`, `stackCards` and `unstackCard` (real and mock), `lib/card-groups.ts`, `CardStack`, `StackCardDialog`, drag and drop on cards, menu items, styles. Not deployed; it must be deployed with the other F17 Rules.
+- Chrome DevTools MCP check (mock mode, 1672x941 and 375x812): a synthetic drag (dragstart, dragover, drop events with a DataTransfer) of "Deploy was smooth" onto a card in another column moved it there and made a stack with the `กองการ์ด ×2` button and layered edges; opening, folding, `แยกออกจากกอง` and the `ซ้อนกับการ์ดอื่น...` dialog (confirm stacked across columns) all worked; no console errors; no horizontal scroll at 375 px. NOT RUN: a real mouse drag in a browser (only synthetic events were used), the drag against the emulator, touch, keyboard use, stacks with hidden cards in the browser (rules only).
+
+## Pop-up dialogs (branch `feature/modal-dialogs`, not committed)
+
+- IMPLEMENTED: `components/ModalDialog.tsx` and the end-session, delete, move and stack dialogs use it; centered with `margin: auto; inset: 0` because the Tailwind reset removes the browser's default dialog centering.
+- Chrome DevTools MCP check (mock mode, 1672x941): the delete dialog opens as a modal (`:modal`) centered on screen with a dimmed backdrop and focus inside; a real Escape key closed it; a click on the backdrop closed it; confirm deleted the card and showed the notice; the move and stack dialogs also open as modals and close with `ยกเลิก`; no console errors. NOT RUN: the end-session dialog in the browser (same component), phone width, screen reader behavior, the real project.
+
+## Center alerts and Sprint 23 (branch `feature/modal-dialogs`, not committed)
+
+- IMPLEMENTED: `components/CenterAlert.tsx` used for the Board's notices and errors and the switcher's errors; the mock demo board and the new-board placeholder renamed from Sprint 12 to Sprint 23 (`lib/mock/backend.ts`, `BoardSwitcher.tsx`, `tests/mock/backend.test.ts`). Old mock data in `localStorage` (`retro-room:mock-state`) keeps the old `sprint12` board until that key is cleared.
+- Chrome DevTools MCP check (mock mode, 1672x941): hiding a card showed a centered modal "Done" alert that closed itself; the board opened as Sprint 23, the switcher listed Sprint 23 and Sprint 13, the placeholder read Sprint 23. NOT RUN: the error tone in the browser (no error can be forced in mock mode), phone width.
+
+## F22 Board timer and switcher removal (branch `feature/modal-dialogs`, not committed)
+
+- IMPLEMENTED: board switcher and `+ บอร์ดใหม่` removed (D109); shared admin-controlled countdown: `timerEndsAt` and `timerDurationSec` on the board, `validTimerUpdate` in `firestore.rules`, `startTimer` and `stopTimer` (real and mock), `lib/timer.ts`, `lib/beep.ts`, `BoardTimer.tsx`, `TimerDialog.tsx`. Not deployed; deploy it with the other Rules.
+- Chrome DevTools MCP check (mock mode, 1672x941 and 375x812): the heading row had no switcher; the admin button opened the `Set timer` modal with four presets; 3 minutes counted down (02:59, 02:57), `หยุด` removed the timer and brought the button back; a 3-second timer showed `00:00 หมดเวลา`, a centered `⏱ หมดเวลาแล้ว!` box with `pointer-events: none` and no dialog open, the add-card form still opened, and the box vanished after 6 seconds; `ล้าง` offered; no console errors; no horizontal scroll at 375 px. NOT RUN: the beep (sound cannot be heard here), what a non-admin sees (mock mode is always the admin; covered by `BoardTimer` logic and rules tests), two browsers watching one timer, a clock that is wrong, the emulator through the UI.
+- Known limit (D111): the end time comes from the admin's clock, so a browser with a wrong clock shows a time off by the difference.
+
+## F23 Session stepper (branch `feature/modal-dialogs`, not committed)
+
+- IMPLEMENTED: the navbar is replaced by `PhaseStepper` and `AccountChip`; board `phase` (1 to 6) with `validPhaseUpdate` in `firestore.rules`, `setPhase` (real and mock), `lib/phases.ts`; `DashboardHeader.tsx` deleted. Steps 3 to 6 are placeholders (D118). Not deployed; deploy with the other F17 Rules.
+- Chrome DevTools MCP check (mock mode): at 1672x941 the bar showed six steps with step 1 current, the panel and the chip top right, no old navbar; `ขั้นถัดไป` moved to step 2 with a check on step 1, a click on step 4 marked 1 to 3 done, a click on step 6 removed the next button, and step 1 again still opened the add-card form (nothing is blocked); 375x812 uses two columns with no broken Thai words and no horizontal scroll (after fixing three columns that split words); 1280x720 six columns; a missing board still showed the chip; no console errors. NOT RUN: what a non-admin sees in the browser (mock mode is always the admin; rules and `PhaseStepper` logic cover it), a completed board in the browser, two browsers following one step, 768 px, the UI against the emulator.
+- The Board reference comparison (F18 fidelity) is outdated for the top area.
+
+## Google photo in the account chip (D124, branch `feature/modal-dialogs`, not committed)
+
+- IMPLEMENTED: `AccountChip.tsx` shows `user.photoURL` as a 30 px round avatar, falling back to the first letter of the player name; the mock admin has a drawn avatar so the image path runs in mock mode.
+- Chrome DevTools MCP check (mock mode): the chip showed a 30x30 image that loaded (`naturalWidth > 0`); a forced `error` event switched it to the letter `A`; no console errors. NOT RUN: a real Google photo (no real sign-in is possible here; Google serves it from `googleusercontent.com`, which is loaded with `referrerPolicy="no-referrer"`), a photo that is slow, the phone width of the chip.
+
+## One board bar (branch `feature/modal-dialogs`, not committed)
+
+- IMPLEMENTED: the heading row is a single `.board-bar` plank (`app/boards/[boardId]/page.tsx`, `app/globals.css`).
+- Chrome DevTools MCP check (mock mode): at 1280x720 the bar showed title, meta line, `⏱ ตั้งเวลา` and `คัดลอกลิงก์แชร์` in one plank; with a running timer the clock `06:59` and `หยุด` sat inside the bar behind a divider; at 375x812 the bar wrapped with no horizontal scroll (see the measurements run). NOT RUN: the expired state and the owner's `จบเซสชัน` button in the new bar in the browser, a completed board, a very long board title.
+
+## Pixel font TA GBA monothai MAX (D125, branch `feature/ta-gba-font`, not committed)
+
+- IMPLEMENTED: `app/layout.tsx` loads the MAX TTF with `next/font/local` in place of Press Start 2P; sizes of `.font-pixel` text set to multiples of 16 px (see doc 06). The owner downloaded the zip; I copied only the MAX TTF, `OFL.txt` and `FONTLOG.txt` into `app/fonts/` (the TTF is 21 KB).
+- Chrome DevTools MCP check (mock mode, 1280x720): the font loaded (`pixelFont: loaded`); a dialog title rendered at 32 px in the new font, the timer clock at 32 px, the time-up box at 48 px with Thai text in pixel form, the Title screen name at 64 px, the Login page banner and credit line in the new font; no horizontal scroll was introduced. NOT RUN: the Setup page (name input and keyboard use pixel text), the phone width of the Title screen at 64 px, a page-by-page comparison of Login credit sizes, the real project, Safari and Firefox, and the `♥` and `⏱` glyphs (whether the font has them was not checked; the browser falls back to another font when it does not).
+- Open items: the Mini variant is not used. The Login credit line size follows the stage width and is not a multiple of 16 px, so it is not perfectly sharp.
+
+## One panel for board info and step (branch `feature/ta-gba-font`, not committed)
+
+- IMPLEMENTED: `PhaseStepper` takes `boardInfo` and `actions`; the page passes the title, meta, timer, share and end buttons into it; the separate `.board-bar` is gone.
+- Chrome DevTools MCP check (mock mode): at 1280x720 there was one `.phase-panel` with title and meta, step text and the actions (`⏱ 06:59 หยุด`, share, `ขั้นถัดไป ›`) in one row and no `.board-bar`; at 375x812 the three parts stacked with no horizontal scroll and the next-step button moved the step to 2 with one panel still showing. NOT RUN: a non-admin view, a completed board, the expired timer state, a very long board title, 768 px.
+
+## F24 Private writing step (branch `feature/private-writing-step`, not committed)
+
+- IMPLEMENTED: `cardsRevealed` and the new card read rule in `firestore.rules`; `CardViewer.seesOthers` and step-based subscriptions in `lib/firebase/cards.ts` and the page; the same rule in the mock backend; step 1 description changed in `lib/phases.ts`. Existing rules, integration and mock tests were updated: their boards are now in step 2 (or an admin moves them to step 2), because a board without a step counts as step 1.
+- Checks: see the run recorded in the report. Tests added: 7 rules, 2 integration, 1 mock.
+- NOT RUN in the browser: what a non-admin sees (mock mode is always the admin, so the privacy cannot be seen there; the rules and integration tests are the evidence), the brief permission error a member's open subscription may get at the moment the admin moves the board back to step 1 (the page renews the subscription, but a short error box could flash; not observed because it needs two real users), two browsers.
+- Behavior to know: moving the step back to 1 hides others' cards again (D128); the admin sees everything (D127); ending a session in step 1 shows all non-hidden cards (D129).
+
+## F25 Writing only in step 1 (branch `feature/no-new-cards-after-writing`, not committed)
+
+- IMPLEMENTED: `writingOpen` and the stricter card create rule in `firestore.rules`; `canAdd` in `BoardColumn` and the page; the same rule in the mock `addCard` (error code `permission-denied`); step 2 text. Tests: 6 rules, 2 integration and 1 mock added; existing tests that created cards now use a step-1 board (rules) or add cards before the admin starts the review (integration, mock).
+- Chrome DevTools MCP check (mock mode, 1280x720): in step 1 each column had a `+` button (3); step 2 showed the new description and 0 buttons; step 6 had 0; going back to step 1 showed 3 again; an open add form closed when the step moved to 2; no console errors. NOT RUN: a member's view (mock mode is always the admin; the rules and integration tests cover it), the permission error message when a form is open at the moment the step moves, two browsers.
+- Edit and delete of own cards were not locked in review (D132, default); locked later by F27 (D143, D144).
+
+## F26 Voting (branch `feature/voting`, not committed)
+
+- IMPLEMENTED: `voters` subcollection and its Rules (`votingOpen`, `validVotes`), `lib/votes.ts`, `lib/firebase/votes.ts`, the mock voting backend, vote button, counts and votes-left chip, step 3 made real. Not deployed; deploy with the other Rules.
+- Tests added: 9 helper, 11 rules, 1 integration, 3 mock. Chrome DevTools MCP check (mock mode, 1280x720): steps 1 and 2 showed no vote UI; step 3 showed 4 buttons, `โหวตเหลือ 3/3`, three votes turned the buttons gold with `0/3` left and the fourth card's button disabled, a click on it did nothing, taking one vote back gave `1/3`; step 4 showed 4 static counts and no buttons; back to step 3 kept the votes; no console errors; after a layout fix the vote button no longer overlaps the admin menu. NOT RUN: two real members voting at once (mock mode has one user), a member's view with votes of others, phone width, the emulator through the UI.
+- Known limit (D136): vote records are readable by members, so the ballot is not secret. Votes survive card deletion as ids that counts ignore (D140).
+
+
+## F27 No edit or delete after step 1 (branch `feature/lock-edit-after-writing`, not committed)
+
+- IMPLEMENTED: `firestore.rules` card update (author edit) and delete (author or owner) require `writingOpen`; `BoardColumn` passes `canEdit`/`canDelete` only when `canAdd`; `StickyNote` closes an open edit form when edit is no longer allowed; step 2 text in `lib/phases.ts`. Admin tools unchanged (D144). Resolves the open default of D132.
+- Tests: rules and integration tests updated (author edit and delete work in step 1 and are denied with `permission-denied` from step 2 for the author and for the owner; admin delete still works). Mock `editCard`/`deleteCard` are not gated by the step; only the UI hides the buttons in mock mode.
+- NOT DEPLOYED. Deploy with the other Rules.
+
+## F28 Self rating, step 4 (not committed; made on branch `feature/lock-edit-after-writing` with the F27 changes)
+
+- IMPLEMENTED: `ratings` subcollection and Rules (`ratingOpen`, `validRating`), `lib/ratings.ts`, `lib/firebase/ratings.ts`, mock `subscribeToRatings`/`saveMyRating`, `components/RatingPanel.tsx`, step 4 made real in `lib/phases.ts`, page hides the columns in step 4. Docs: D145 to D148 in docs/01, 04, 05, 06.
+- Tests added: 8 rules tests, 1 integration, 2 mock, ratings unit tests. NOT DEPLOYED: Rules need deploy with the others.
+- NOT RUN: a member's view in the browser and two browsers at once (mock mode is always the admin).
+
+## Timer only in step 1 (owner request, not committed)
+
+- The `ตั้งเวลา` button and the countdown show only in step 1 (`app/boards/[boardId]/page.tsx`); from step 2 on and on a completed board they are hidden. The timer Rules (D112) are unchanged, so a timer started in step 1 stays stored but is not shown later. NOT RUN: browser check of a running timer when the step moves on.
+
+## F29 Next-host wheel, step 5 (not committed; branch `feature/lock-edit-after-writing`)
+
+- IMPLEMENTED: board fields `nextHostUid` and `nextHostSpunAt` (`lib/firebase/types.ts`, `boards.ts` `spinNextHost`), Rules `validHostSpin`, mock `spinNextHost`, `lib/wheel.ts`, `components/HostWheel.tsx`, step 5 made real in `lib/phases.ts`. Docs: D149 to D152 in docs/01, 05, 06.
+- Tests added: wheel unit tests, 2 mock, 7 rules, 1 integration.
+- Chrome DevTools MCP check (mock mode): step 5 showed the wheel with 3 names; the spin ran 5 seconds, ended on the winner under the pointer (rotation matched the winner's index) and showed `โฮสต์คนถัดไป: <name>`; the button became `หมุนอีกครั้ง`. The first screenshot showed a broken layout from stale CSS; after a clean restart it was correct.
+- NOT RUN / known: a member's view (mock mode is always the admin), two browsers at once, phone width, the final layout after the last size tweak (stale CSS in the preview, the page scrolls to the button at 742 px height), a spin that arrives while the page is open on another step.

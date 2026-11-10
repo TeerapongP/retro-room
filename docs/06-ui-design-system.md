@@ -134,3 +134,64 @@ Board screen only, shown only when `isAdminUser(user)` is true and the board is 
 
 `/boards/[boardId]` uses the Dashboard scene (`dashboard-scene board-scene`, countryside backdrop, `DashboardHeader current="board"` with Home highlighted like the reference). Its `--u` is one pixel of the 1672 px wide Board reference, not the 1852 px Dashboard one and the `board-*` styles at the end of `app/globals.css`. Components: `BoardColumn.tsx` (framed header with icon, label, count and `+`, inline composer), `StickyNote.tsx` (colored card with author, relative time from `lib/relative-time.ts`, edit and delete, F17 admin menu), `BoardIcons.tsx` (pixel flower, arrow and bulb). Card colors: Went Well green, To Improve red, Ideas purple. Navbar 1307 px wide and 64 tall, content column 1548 px wide (the sign sits at the column's left edge), 16 px column gap, 70 px column heads, 5 px between cards; three columns from 64rem up, one column below. Dialogue boxes inside the scene are reskinned by `.board-scene .pixel-panel`. The waiting (Title) screen keeps its own layout inside the scene.
 
+## Board switcher and launcher (F20, D94 to D99)
+
+There is no Dashboard page. `/boards` is an invisible launcher (`app/boards/page.tsx`); `/dashboard` redirects to it. On the Board screen, `components/BoardSwitcher.tsx` sits in the heading row between the status chip and the share button: a select of the user's boards and a `+ บอร์ดใหม่` button that opens an inline title field. Hidden cards use an opaque dashed-border card with a light diagonal stripe, not transparency, so text stays readable over the scenery. The navbar Home and Retro items both open the launcher. The Dashboard-only CSS (`.dashboard-content`, `-create`, `-form`, `-field`, `-input`, `-retro`, `-empty`, `-board`) and the `SleepingCat` and `IconDocument` icons are now unused and can be removed later.
+
+The admin card menu has a third item, `ลบการ์ด` (pixel trash icon, dark red), which opens a "Delete card?" dialogue box showing the card text and a permanent-deletion warning (D100).
+
+The admin card menu also lists `ย้ายไป Went Well`, `ย้ายไป To Improve` or `ย้ายไป Ideas` for the two columns the card is not in (D101).
+
+## Stacked cards (F21, D102 to D108)
+
+`components/CardStack.tsx` shows a stack as the top card with two layered edges (`::before`, `::after` in the column color) and a `กองการ์ด ×N` button; opened, it lists every card inside a dashed frame with a `พับกอง` button. `lib/card-groups.ts` builds the stacks. For the admin each card is `draggable`; dropping one card on another shows a dashed gold outline and stacks them (moving the card into the target's column). The menu fallback is `ซ้อนกับการ์ดอื่น...` (`components/StackCardDialog.tsx`) and `แยกออกจากกอง`. HTML5 drag and drop does not work on touch screens, so the menu is the touch path.
+
+## Pop-up dialogs (owner request)
+
+The confirm and choice dialogs of the Board (end session, delete card, move to another board, stack card) are real pop-ups: `components/ModalDialog.tsx` wraps the pixel `DialogueBox` in a native `<dialog>` opened with `showModal()`, so the page behind is dimmed (`.modal-dialog::backdrop`), focus stays inside, Escape and a click outside close it, and the box is centered. The move dialog does not close while a move is running. Page-level messages (error, board not found, join prompt) stay inline `DialogueBox`es.
+
+## Center alerts (owner request)
+
+Success notices and action errors of the Board (hide, move, stack, delete, copy and similar) and the board switcher no longer sit in a panel under the heading. `components/CenterAlert.tsx` shows them in the middle of the screen as a `ModalDialog`: a success notice titled `Done` closes itself after 2.5 seconds, an error titled `Error` stays until `ตกลง`. The standing "session completed, read-only" notice stays inline.
+
+## Board timer and a lighter heading (F22, D109 to D115)
+
+The board switcher is gone. The heading row is the sign, the chip `Member · N คน · IN PROGRESS`, the timer and the share and end buttons. `components/BoardTimer.tsx`: with no timer the admin sees `⏱ ตั้งเวลา` (nobody else sees anything); it opens the `Set timer` pop-up (`TimerDialog.tsx`: 3, 5, 10, 15 minutes or 1 to 120 custom). A running timer is a cream chip with the pixel-font clock (`02:56`, `H:MM:SS` from one hour) and, for the admin, `หยุด`. At 00:00 the chip turns pink with `หมดเวลา` and the admin gets `ล้าง`; if the page was open when time ran out, a non-blocking `⏱ หมดเวลาแล้ว!` box shows in the middle of the screen for 6 seconds and a soft beep plays (`lib/beep.ts`).
+
+## Session stepper and account chip (F23, D116 to D123)
+
+The Board has no navbar. Top right, `components/AccountChip.tsx` is a cream chip with the player name and a gold `ออกจากระบบ` button (shown in every Board state). Below it, `components/PhaseStepper.tsx` shows the six steps in a grid: six columns from 64rem, three from 30rem, two below. A done step has a green check circle, the current step is the wood-brown pill with a cream number circle, later steps show their number on cream. Under the bar a cream panel gives the step title and description; the admin gets `ขั้นถัดไป ›` there and can click any step; others read `ผู้ดำเนินรายการจะพาทีมไปขั้นถัดไป`. Steps 3 to 6 say `เร็ว ๆ นี้: ขั้นตอนนี้ยังไม่เปิดใช้`. `lib/phases.ts` holds the step list. The earlier navbar comparison with `retro-room-board-reference.png` no longer applies to the top of the Board. `DashboardHeader.tsx` was deleted; its CSS (`.dashboard-header`, `-nav`, `-brand`, `-account`) is unused.
+
+## One board bar (owner request, redesign of the heading row)
+
+The heading row had four boxes of different styles (wood sign, meta chip, timer chip, gold share button). It is now one cream plank, `.board-bar`: on the left the sprout icon, the board title and, under it in small text, `Member · N คน · IN PROGRESS`; on the right a divider, the timer (flat, no box of its own) and the actions (`คัดลอกลิงก์แชร์` as a quiet button, `จบเซสชัน` in red for the owner). The old `.board-sign`, `.board-meta`, `.board-heading` and `.board-tools` rules were removed.
+
+## Pixel font TA GBA monothai MAX (D125)
+
+`--font-pixel` is now TA GBA monothai MAX, loaded with `next/font/local` from `app/fonts/TA-GBA-monothai-MAX.ttf` (license `app/fonts/OFL.txt`, `FONTLOG.txt`). It covers Thai and Latin, so Thai text in `.font-pixel` elements (for example the time-up box) is pixel text too. It is drawn on 16 pixels per em: use 32 px (2 px cells) for headings and labels, 48 px for the time-up box and 64 or 96 px for the Title screen name; 16 px is too small to read (1 px cells). Sizes now: dialog titles, mock and emulator banners, the timer clock and the Title button 32 px; time-up box 48 px; Title screen 64 px, 96 px from the `sm` breakpoint; `.font-pixel` line height 1.4. Body text, cards and descriptions stay IBM Plex Sans Thai.
+
+## Board bar and step panel merged into one panel (owner request)
+
+The board bar (title, meta line, timer, share, end) and the step panel are now one cream panel under the step bar (`.phase-panel`, built by `PhaseStepper` with the `boardInfo` and `actions` slots): at the left the sprout icon, board title and `Member · N คน · IN PROGRESS`, a divider, the current step title and description in the middle, and at the right the timer, `คัดลอกลิงก์แชร์`, `จบเซสชัน` (owner) and, for the admin, `ขั้นถัดไป ›`. The text for non-admins ("ผู้ดำเนินรายการจะพาทีมไปขั้นถัดไป") sits under the step description. On phones the three parts stack. The `.board-bar*` rules from the previous redesign were removed.
+
+## Private writing step (F24, D126 to D130)
+
+The step 1 description reads "ทุกคนเขียนการ์ดของตัวเอง คนอื่นจะยังไม่เห็นการ์ดของคุณจนกว่าจะถึงขั้นทบทวน". The Board screen subscribes to cards by step (`seesOthers` is true from step 2 or on a completed board). The admin view is unchanged. Column counts in step 1 count only the cards the member can read.
+
+## Writing only in step 1 (F25, D131 to D134)
+
+The `+` button of every column and the add-card form show only while the board is in step 1 and not completed (`canAdd` in `BoardColumn`); from step 2 on they are hidden, and an open form closes. The step 2 description now says "ขั้นนี้เขียนการ์ดเพิ่มไม่ได้". Editing and deleting one's own cards and the admin tools are unchanged.
+
+## Voting (F26, D135 to D142)
+
+From step 3 each card shows a thumbs-up count in its meta row, after the time: in step 3 it is a button (`board-vote`; gold when the member voted; disabled when they have no votes left and have not voted for that card), from step 4 on and on completed boards a static count. In step 3 the actions of the panel start with the gold chip `โหวตเหลือ N/3`. Steps 1 and 2 show no vote UI. `lib/votes.ts` holds the limit and counting; the thumb is `IconThumb` in `CardMenuIcons.tsx`.
+
+Vote button position (owner request): the vote button is at the bottom right of the card, in a footer row (`.board-card-foot`) with the author's `แก้ไข` and `ลบ` buttons on the left. It replaces the earlier place next to the time. Chrome DevTools MCP check (mock mode): on 4 cards the button sat 17 px from the right and 12 px from the bottom edge with no overlap with the admin menu; on an own card it shared the row with the edit and delete buttons; at 375 px it stayed 17 px from the right with no horizontal scroll.
+
+Alignment (owner request): the admin menu button (`.card-menu`) now takes its right offset from the card padding (`max(0.85rem, 18 * --u)`), so its right edge equals the vote button's right edge. Chrome DevTools MCP check (mock mode): all 5 cards at 1280x720 had both right edges at the same pixel; at 375x812 all cards aligned with no horizontal scroll.
+
+No edit and delete after step 1 (owner request, D143): `แก้ไข` and `ลบ` show only while the board is in step 1 (`canAdd`). From step 2 on the footer row holds only the vote button, and an open edit form closes when the step moves. The admin menu keeps its delete item.
+
+Self rating step (F28, D145): in step 4 the three columns are replaced by `RatingPanel` (`.rating-panel`, a `pixel-panel`): a row of 9 score buttons (1 to 5 in steps of 0.5; the chosen one is gold, each shows how many members picked it), the average line, and a list of every member with their score. At 640 px and narrower the buttons wrap to 5 per row.
+
+Next-host wheel (F29, D149): in step 5 `HostWheel` (`.host-wheel-panel`, a `pixel-panel`) shows a conic-gradient wheel with one coloured segment and name per member, a pointer at the top, the result line and, for the admin only, a `หมุนวงล้อ` / `หมุนอีกครั้ง` button; other members see `รอผู้ดำเนินรายการหมุนวงล้อ`. The spin is a 5 second CSS rotation (5 turns) that ends with the winner's segment under the pointer. Names on the left half read upside down because labels run along the radius.

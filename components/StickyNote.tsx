@@ -2,9 +2,9 @@
 
 import { useState, type FormEvent } from "react";
 import { CardMenu } from "@/components/CardMenu";
-import { IconEyeOff } from "@/components/CardMenuIcons";
+import { IconEyeOff, IconThumb } from "@/components/CardMenuIcons";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { CARD_TEXT_MAX_LENGTH, type BoardCard } from "@/lib/firebase/types";
+import { CARD_TEXT_MAX_LENGTH, type BoardCard, type ColumnId } from "@/lib/firebase/types";
 
 type StickyNoteProps = {
   card: BoardCard;
@@ -14,8 +14,29 @@ type StickyNoteProps = {
   showAdminMenu: boolean;
   onToggleHidden: () => void;
   onMove: () => void;
+  onMoveToColumn: (columnId: ColumnId) => void;
+  isStacked: boolean;
+  onStackWith: () => void;
+  onUnstack: () => void;
+  /** Admin drag and drop (F21, D104): called with the id of the card dropped onto this one. */
+  onStackDrop: (draggedCardId: string) => void;
+  vote: CardVoteInfo;
+  onAdminDelete: () => void;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
+};
+
+/** Voting state of one card (F26, D139). */
+export type CardVoteInfo = {
+  count: number;
+  /** Counts are shown from step 3 on. */
+  showCount: boolean;
+  /** Voting is open (step 3, in progress). */
+  isOpen: boolean;
+  hasVoted: boolean;
+  /** No votes left and this card is not one of the member's votes. */
+  isDisabled: boolean;
+  onToggle: () => void;
 };
 
 export function StickyNote({
@@ -26,11 +47,21 @@ export function StickyNote({
   showAdminMenu,
   onToggleHidden,
   onMove,
+  onMoveToColumn,
+  isStacked,
+  onStackWith,
+  onUnstack,
+  onStackDrop,
+  vote,
+  onAdminDelete,
   onEdit,
   onDelete,
 }: StickyNoteProps) {
   const [isEditing, setIsEditing] = useState(false);
+  // Editing is locked outside step 1 (D143): a form that was open when the step moved closes and stays closed.
+  if (isEditing && !canEdit) setIsEditing(false);
   const [draft, setDraft] = useState(card.text);
+  const [isDropTarget, setIsDropTarget] = useState(false);
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -40,13 +71,41 @@ export function StickyNote({
   }
 
   return (
-    <li className={`board-card board-card-${card.columnId} ${card.hidden ? "board-card-hidden" : ""}`}>
+    <li
+      className={`board-card board-card-${card.columnId} ${card.hidden ? "board-card-hidden" : ""} ${showAdminMenu && !isEditing ? "board-card-draggable" : ""} ${isDropTarget ? "board-card-drop" : ""}`}
+      draggable={showAdminMenu && !isEditing}
+      onDragStart={(event) => {
+        if (!showAdminMenu || isEditing) return;
+        event.dataTransfer.setData("text/plain", card.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(event) => {
+        if (!showAdminMenu) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setIsDropTarget(true);
+      }}
+      onDragLeave={() => setIsDropTarget(false)}
+      onDrop={(event) => {
+        if (!showAdminMenu) return;
+        event.preventDefault();
+        setIsDropTarget(false);
+        const draggedId = event.dataTransfer.getData("text/plain");
+        if (draggedId && draggedId !== card.id) onStackDrop(draggedId);
+      }}
+    >
       {showAdminMenu && !isEditing ? (
         <CardMenu
           cardId={card.id}
           hidden={card.hidden}
+          columnId={card.columnId}
+          onMoveToColumn={onMoveToColumn}
+          isStacked={isStacked}
+          onStackWith={onStackWith}
+          onUnstack={onUnstack}
           onToggleHidden={onToggleHidden}
           onMove={onMove}
+          onDelete={onAdminDelete}
         />
       ) : null}
       {isEditing ? (
@@ -91,21 +150,45 @@ export function StickyNote({
             {card.createdAt ? <span aria-hidden="true">·</span> : null}
             <time dateTime={card.createdAt?.toISOString()}>{formatRelativeTime(card.createdAt)}</time>
           </p>
-          {canEdit || canDelete ? (
-            <div className="board-card-actions">
-              {canEdit ? (
-                <button type="button" className="board-button board-button-quiet" onClick={() => setIsEditing(true)}>
-                  แก้ไข
-                </button>
+          {canEdit || canDelete || vote.showCount ? (
+            <div className="board-card-foot">
+              {canEdit || canDelete ? (
+                <div className="board-card-actions">
+                  {canEdit ? (
+                    <button type="button" className="board-button board-button-quiet" onClick={() => setIsEditing(true)}>
+                      แก้ไข
+                    </button>
+                  ) : null}
+                  {canDelete ? (
+                    <button
+                      type="button"
+                      className="board-button board-button-danger"
+                      onClick={() => onDelete(card.id)}
+                    >
+                      ลบ
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
-              {canDelete ? (
-                <button
-                  type="button"
-                  className="board-button board-button-danger"
-                  onClick={() => onDelete(card.id)}
-                >
-                  ลบ
-                </button>
+              {vote.showCount ? (
+                vote.isOpen ? (
+                  <button
+                    type="button"
+                    className={`board-vote ${vote.hasVoted ? "board-vote-on" : ""}`}
+                    aria-pressed={vote.hasVoted}
+                    aria-label={vote.hasVoted ? `เอาโหวตออก (ตอนนี้ ${vote.count} โหวต)` : `โหวตการ์ดนี้ (ตอนนี้ ${vote.count} โหวต)`}
+                    disabled={vote.isDisabled}
+                    onClick={vote.onToggle}
+                  >
+                    <IconThumb />
+                    {vote.count}
+                  </button>
+                ) : (
+                  <span className={`board-vote board-vote-static ${vote.hasVoted ? "board-vote-on" : ""}`} aria-label={`${vote.count} โหวต`}>
+                    <IconThumb />
+                    {vote.count}
+                  </span>
+                )
               ) : null}
             </div>
           ) : null}

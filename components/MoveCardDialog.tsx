@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DialogueBox } from "@/components/DialogueBox";
+import { ModalDialog } from "@/components/ModalDialog";
 import { describeFirebaseError } from "@/lib/firebase/client";
 import { listMoveTargetBoards, moveCard } from "@/lib/firebase/cards";
 import type { BoardCard, MoveTargetBoard } from "@/lib/firebase/types";
@@ -53,8 +53,9 @@ export function MoveCardDialog({ sourceBoardId, card, onClose, onMoved }: MoveCa
   const hasTargets = targets !== null && targets.length > 0;
 
   return (
-    <DialogueBox
+    <ModalDialog
       title="Move card?"
+      onClose={() => !isMoving && onClose()}
       actions={
         <>
           <button
@@ -100,6 +101,6 @@ export function MoveCardDialog({ sourceBoardId, card, onClose, onMoved }: MoveCa
         </>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
-    </DialogueBox>
+    </ModalDialog>
   );
 }

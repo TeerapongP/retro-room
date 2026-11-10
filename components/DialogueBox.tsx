@@ -13,7 +13,7 @@ export function DialogueBox({ title, children, actions, tone = "normal" }: Dialo
       role={tone === "error" ? "alert" : undefined}
       className="pixel-panel mx-auto w-full max-w-lg p-6"
     >
-      <h2 className="font-pixel mb-4 text-sm">
+      <h2 className="font-pixel mb-4 text-[32px]">
         {title}
       </h2>
       <div className="space-y-3">{children}</div>

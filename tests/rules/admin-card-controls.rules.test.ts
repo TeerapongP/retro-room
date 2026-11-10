@@ -28,6 +28,8 @@ const DEST = "dest";
 const OTHER = "other";
 const COMPLETED = "completed";
 const WAITING = "waiting";
+const WRITING = "writing";
+const VOTING = "voting";
 const seeded = Timestamp.fromDate(new Date("2026-01-01T00:00:00Z"));
 
 let testEnv: RulesTestEnvironment;
@@ -60,6 +62,8 @@ beforeEach(async () => {
       [SRC]: "in-progress",
       [DEST]: "in-progress",
       [OTHER]: "in-progress",
+      [WRITING]: "in-progress",
+      [VOTING]: "in-progress",
       [COMPLETED]: "completed",
       [WAITING]: "waiting",
     };
@@ -68,6 +72,9 @@ beforeEach(async () => {
         title: boardId,
         ownerId: "alice",
         status,
+        // step 1 (no phase field) keeps other members' cards private (D126); the other boards are already in the review step
+        ...([SRC, DEST, OTHER].includes(boardId) ? { phase: 2 } : {}),
+        ...(boardId === VOTING ? { phase: 3 } : {}),
         createdAt: seeded,
         updatedAt: seeded,
       });
@@ -82,6 +89,9 @@ beforeEach(async () => {
     await setDoc(doc(db, `boards/${SRC}/cards/secret`), seedCard("secret", "bob", true));
     await setDoc(doc(db, `boards/${SRC}/cards/aliceHidden`), seedCard("alice hidden", "alice", true));
     await setDoc(doc(db, `boards/${SRC}/cards/legacy`), seedCard("legacy", "bob", undefined));
+    await setDoc(doc(db, `boards/${WRITING}/cards/bobWrote`), seedCard("bob wrote", "bob", false));
+    await setDoc(doc(db, `boards/${WRITING}/cards/aliceWrote`), seedCard("alice wrote", "alice", false));
+    await setDoc(doc(db, `boards/${WRITING}/cards/bobHidden`), seedCard("bob hidden", "bob", true));
     await setDoc(doc(db, `boards/${DEST}/cards/existing`), seedCard("existing", "bob", false));
     await setDoc(doc(db, `boards/${COMPLETED}/cards/done`), seedCard("done", "bob", false));
     await setDoc(doc(db, `boards/${WAITING}/cards/early`), seedCard("early", "bob", false));
@@ -245,7 +255,7 @@ describe("normal card writes with the hidden field", () => {
   });
 
   it("should let a member create a card with hidden false", async () => {
-    await assertSucceeds(setDoc(doc(bob(), `boards/${SRC}/cards/fresh`), cardData()));
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WRITING}/cards/fresh`), cardData()));
   });
 
   it("should reject a member creating a card that is already hidden", async () => {
@@ -266,7 +276,7 @@ describe("normal card writes with the hidden field", () => {
 
   it("should let the author edit the text of their own hidden card and keep it hidden", async () => {
     await assertSucceeds(
-      updateDoc(doc(bob(), `boards/${SRC}/cards/secret`), { text: "edited", updatedAt: serverTimestamp() }),
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobHidden`), { text: "edited", updatedAt: serverTimestamp() }),
     );
   });
 
@@ -274,22 +284,640 @@ describe("normal card writes with the hidden field", () => {
     await assertFails(setDoc(doc(admin(), `boards/${SRC}/cards/fresh`), cardData({ authorId: "admin" })));
   });
 
-  it("should reject an admin deleting a card on its own", async () => {
-    await assertFails(deleteDoc(doc(admin(), `boards/${SRC}/cards/visible`)));
+});
+
+describe("admin column move (D101)", () => {
+  const columnUpdate = (client: ReturnType<typeof admin>, boardId: string, cardId: string, columnId: string) =>
+    updateDoc(doc(client, `boards/${boardId}/cards/${cardId}`), { columnId, updatedAt: serverTimestamp() });
+
+  it("should let a verified admin move a card to any other column without being a member", async () => {
+    await assertSucceeds(columnUpdate(admin(), SRC, "visible", "to-improve"));
+    await assertSucceeds(columnUpdate(admin(), SRC, "visible", "ideas"));
+    await assertSucceeds(columnUpdate(admin(), SRC, "visible", "went-well"));
+    await assertSucceeds(columnUpdate(admin(), SRC, "secret", "to-improve"));
+  });
+
+  it("should reject a column that does not exist", async () => {
+    await assertFails(columnUpdate(admin(), SRC, "visible", "somewhere-else"));
+    await assertFails(
+      updateDoc(doc(admin(), `boards/${SRC}/cards/visible`), { columnId: 5, updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("should reject a column move on a completed or a waiting board", async () => {
+    await assertFails(columnUpdate(admin(), COMPLETED, "done", "ideas"));
+    await assertFails(columnUpdate(admin(), WAITING, "early", "ideas"));
+  });
+
+  it("should reject a column move by the owner, the author, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(columnUpdate(client, SRC, "visible", "ideas"));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject a column move by a ${label}`, async () => {
+      await assertFails(columnUpdate(makeClient(), SRC, "visible", "ideas"));
+    });
+  }
+
+  it("should reject changing anything besides the column in the same update", async () => {
+    const ref = doc(admin(), `boards/${SRC}/cards/visible`);
+    await assertFails(updateDoc(ref, { columnId: "ideas", text: "changed", updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, { columnId: "ideas", authorId: "admin", updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, { columnId: "ideas", hidden: true, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, { columnId: "ideas", updatedAt: seeded }));
+  });
+});
+
+describe("voting (D135 to D142)", () => {
+  const voterPath = (uid: string, boardId = VOTING) => `boards/${boardId}/voters/${uid}`;
+  const vote = (client: ReturnType<typeof admin>, uid: string, cardIds: unknown, boardId = VOTING, extra: Record<string, unknown> = {}) =>
+    setDoc(doc(client, voterPath(uid, boardId)), { cardIds, updatedAt: serverTimestamp(), ...extra });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  it("should let a member save and change up to 3 votes of their own in step 3", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+    await assertSucceeds(vote(bob(), "bob", ["c1", "c2", "c3"]));
+    await assertSucceeds(vote(bob(), "bob", []));
+    await assertSucceeds(vote(alice(), "alice", ["c2"]));
+  });
+
+  it("should let a member clear their votes by deleting their own document in step 3", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+    await assertSucceeds(deleteDoc(doc(bob(), voterPath("bob"))));
+  });
+
+  it("should reject a fourth vote, repeated card ids and values that are not a list of short strings", async () => {
+    await assertFails(vote(bob(), "bob", ["c1", "c2", "c3", "c4"]));
+    await assertFails(vote(bob(), "bob", ["c1", "c1"]));
+    await assertFails(vote(bob(), "bob", ["c1", 2]));
+    await assertFails(vote(bob(), "bob", [""]));
+    await assertFails(vote(bob(), "bob", ["x".repeat(65)]));
+    await assertFails(vote(bob(), "bob", "c1"));
+    await assertFails(vote(bob(), "bob", null));
+  });
+
+  it("should reject extra fields, a missing field and a wrong updatedAt", async () => {
+    await assertFails(vote(bob(), "bob", ["c1"], VOTING, { admin: true }));
+    await assertFails(setDoc(doc(bob(), voterPath("bob")), { cardIds: ["c1"] }));
+    await assertFails(setDoc(doc(bob(), voterPath("bob")), { updatedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(bob(), voterPath("bob")), { cardIds: ["c1"], updatedAt: seeded }));
+  });
+
+  it("should reject voting for someone else", async () => {
+    await assertFails(vote(bob(), "alice", ["c1"]));
+    await assertFails(vote(alice(), "bob", ["c1"]));
+  });
+
+  it("should reject a vote by a stranger, the admin who is not a member and look-alike accounts", async () => {
+    await assertFails(vote(stranger(), "stranger", ["c1"]));
+    await assertFails(vote(admin(), "admin", ["c1"]));
+    for (const [label, makeClient] of Object.entries(impostors)) {
+      await assertFails(vote(makeClient(), label.replace(/\s/g, "-"), ["c1"]));
+    }
+  });
+
+  it("should reject votes in every step except 3", async () => {
+    for (const phase of [1, 2, 4, 5, 6]) {
+      await assertSucceeds(setPhase(VOTING, phase));
+      await assertFails(vote(bob(), "bob", ["c1"]));
+    }
+    await assertSucceeds(setPhase(VOTING, 3));
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+  });
+
+  it("should freeze the votes after step 3: no change and no delete", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1"]));
+    await assertSucceeds(setPhase(VOTING, 4));
+    await assertFails(vote(bob(), "bob", ["c2"]));
+    await assertFails(deleteDoc(doc(bob(), voterPath("bob"))));
+  });
+
+  it("should reject votes on a board in the review step, a waiting board and a completed board", async () => {
+    await assertFails(vote(bob(), "bob", ["c1"], SRC));
+    await assertFails(vote(bob(), "bob", ["c1"], WAITING));
+    await assertFails(vote(bob(), "bob", ["c1"], COMPLETED));
+  });
+
+  it("should let board members and the admin read every voter document and nobody else", async () => {
+    await assertSucceeds(vote(bob(), "bob", ["c1", "c2"]));
+    await assertSucceeds(getDoc(doc(alice(), voterPath("bob"))));
+    await assertSucceeds(getDoc(doc(bob(), voterPath("bob"))));
+    await assertSucceeds(getDoc(doc(admin(), voterPath("bob"))));
+    await assertSucceeds(getDocs(collection(alice(), `boards/${VOTING}/voters`)));
+    await assertFails(getDoc(doc(stranger(), voterPath("bob"))));
+    await assertFails(getDocs(collection(stranger(), `boards/${VOTING}/voters`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(getDoc(doc(makeClient(), voterPath("bob"))));
+    }
+  });
+});
+
+describe("self rating (D145 to D148)", () => {
+  const ratingPath = (uid: string, boardId = VOTING) => `boards/${boardId}/ratings/${uid}`;
+  const rate = (client: ReturnType<typeof admin>, uid: string, score: unknown, boardId = VOTING, extra: Record<string, unknown> = {}) =>
+    setDoc(doc(client, ratingPath(uid, boardId)), { score, updatedAt: serverTimestamp(), ...extra });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  beforeEach(async () => {
+    await assertSucceeds(setPhase(VOTING, 4));
+  });
+
+  it("should let a member save and change their own score from 1 to 5 in steps of 0.5 in step 4", async () => {
+    for (const score of [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]) {
+      await assertSucceeds(rate(bob(), "bob", score));
+    }
+    await assertSucceeds(rate(alice(), "alice", 3));
+  });
+
+  it("should reject scores outside the scale", async () => {
+    for (const score of [0, 0.5, 5.5, 6, -1, 1.2, 2.75, "3", null, true, [3]]) {
+      await assertFails(rate(bob(), "bob", score));
+    }
+  });
+
+  it("should reject extra fields, a missing field and a wrong updatedAt", async () => {
+    await assertFails(rate(bob(), "bob", 3, VOTING, { admin: true }));
+    await assertFails(setDoc(doc(bob(), ratingPath("bob")), { score: 3 }));
+    await assertFails(setDoc(doc(bob(), ratingPath("bob")), { updatedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(bob(), ratingPath("bob")), { score: 3, updatedAt: seeded }));
+  });
+
+  it("should reject rating for someone else, by a stranger, by the admin who is not a member and by look-alikes", async () => {
+    await assertFails(rate(bob(), "alice", 3));
+    await assertFails(rate(stranger(), "stranger", 3));
+    await assertFails(rate(admin(), "admin", 3));
+    for (const [label, makeClient] of Object.entries(impostors)) {
+      await assertFails(rate(makeClient(), label.replace(/\s/g, "-"), 3));
+    }
+  });
+
+  it("should reject ratings in every step except 4", async () => {
+    for (const phase of [1, 2, 3, 5, 6]) {
+      await assertSucceeds(setPhase(VOTING, phase));
+      await assertFails(rate(bob(), "bob", 3));
+    }
+    await assertSucceeds(setPhase(VOTING, 4));
+    await assertSucceeds(rate(bob(), "bob", 3));
+  });
+
+  it("should freeze the score after step 4 and allow no delete", async () => {
+    await assertSucceeds(rate(bob(), "bob", 3));
+    await assertFails(deleteDoc(doc(bob(), ratingPath("bob"))));
+    await assertSucceeds(setPhase(VOTING, 5));
+    await assertFails(rate(bob(), "bob", 4));
+  });
+
+  it("should reject ratings on a waiting board and a completed board", async () => {
+    await assertFails(rate(bob(), "bob", 3, WAITING));
+    await assertFails(rate(bob(), "bob", 3, COMPLETED));
+  });
+
+  it("should let board members and the admin read every rating and nobody else", async () => {
+    await assertSucceeds(rate(bob(), "bob", 4));
+    await assertSucceeds(getDoc(doc(alice(), ratingPath("bob"))));
+    await assertSucceeds(getDoc(doc(admin(), ratingPath("bob"))));
+    await assertSucceeds(getDocs(collection(alice(), `boards/${VOTING}/ratings`)));
+    await assertFails(getDoc(doc(stranger(), ratingPath("bob"))));
+    await assertFails(getDocs(collection(stranger(), `boards/${VOTING}/ratings`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(getDoc(doc(makeClient(), ratingPath("bob"))));
+    }
+  });
+});
+
+describe("next host wheel (D149 to D152)", () => {
+  const spin = (client: ReturnType<typeof admin>, winner: unknown, extra: Record<string, unknown> = {}, boardId = VOTING) =>
+    updateDoc(doc(client, `boards/${boardId}`), {
+      nextHostUid: winner,
+      nextHostSpunAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      ...extra,
+    });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  beforeEach(async () => {
+    await assertSucceeds(setPhase(VOTING, 5));
+  });
+
+  it("should let the admin store a board member as the next host in step 5, again and again", async () => {
+    await assertSucceeds(spin(admin(), "bob"));
+    await assertSucceeds(spin(admin(), "alice"));
+  });
+
+  it("should reject a winner who is not a member and malformed winners", async () => {
+    await assertFails(spin(admin(), "stranger"));
+    for (const winner of [null, 5, "", ["bob"], "x".repeat(129)]) {
+      await assertFails(spin(admin(), winner));
+    }
+  });
+
+  it("should reject a wrong spin time, extra fields and a missing field", async () => {
+    await assertFails(spin(admin(), "bob", { nextHostSpunAt: seeded }));
+    await assertFails(spin(admin(), "bob", { title: "renamed" }));
+    await assertFails(updateDoc(doc(admin(), `boards/${VOTING}`), { nextHostUid: "bob", updatedAt: serverTimestamp() }));
+  });
+
+  it("should reject the spin by a member, the owner, a stranger and look-alikes", async () => {
+    await assertFails(spin(bob(), "bob"));
+    await assertFails(spin(alice(), "alice"));
+    await assertFails(spin(stranger(), "bob"));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(spin(makeClient(), "bob"));
+    }
+  });
+
+  it("should reject the spin in every step except 5", async () => {
+    for (const phase of [1, 2, 3, 4, 6]) {
+      await assertSucceeds(setPhase(VOTING, phase));
+      await assertFails(spin(admin(), "bob"));
+    }
+  });
+
+  it("should reject the spin on a waiting board and a completed board", async () => {
+    await assertFails(spin(admin(), "bob", {}, WAITING));
+    await assertFails(spin(admin(), "bob", {}, COMPLETED));
+  });
+
+  it("should let members read the result", async () => {
+    await assertSucceeds(spin(admin(), "bob"));
+    const snapshot = await assertSucceeds(getDoc(doc(bob(), `boards/${VOTING}`)));
+    if (snapshot.data()?.nextHostUid !== "bob") throw new Error("result not readable");
+  });
+});
+
+describe("writing only in step 1 (D131 to D134)", () => {
+  const newCard = (authorId: string, overrides: Record<string, unknown> = {}) => ({
+    columnId: "ideas",
+    text: "fresh card",
+    authorId,
+    hidden: false,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  });
+  const setPhase = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  it("should let a member add a card while the board is in step 1", async () => {
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WRITING}/cards/fresh`), newCard("bob")));
+    await assertSucceeds(setDoc(doc(alice(), `boards/${WRITING}/cards/fresh2`), newCard("alice")));
+  });
+
+  it("should reject adding a card in steps 2 to 6", async () => {
+    for (const phase of [2, 3, 4, 5, 6]) {
+      await assertSucceeds(setPhase(WRITING, phase));
+      await assertFails(setDoc(doc(bob(), `boards/${WRITING}/cards/late${phase}`), newCard("bob")));
+      await assertFails(setDoc(doc(alice(), `boards/${WRITING}/cards/late${phase}`), newCard("alice")));
+    }
+  });
+
+  it("should let members write again after the admin moves the board back to step 1", async () => {
+    await assertSucceeds(setPhase(WRITING, 2));
+    await assertFails(setDoc(doc(bob(), `boards/${WRITING}/cards/again`), newCard("bob")));
+    await assertSucceeds(setPhase(WRITING, 1));
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WRITING}/cards/again`), newCard("bob")));
+  });
+
+  it("should reject adding a card on a board in the review step even for a board member who is the owner", async () => {
+    await assertFails(setDoc(doc(alice(), `boards/${SRC}/cards/owner1`), newCard("alice")));
+  });
+
+  it("should reject an author editing or deleting their own card in the review step (D143)", async () => {
+    await assertFails(
+      updateDoc(doc(bob(), `boards/${SRC}/cards/visible`), { text: "edited in review", updatedAt: serverTimestamp() }),
+    );
+    await assertFails(deleteDoc(doc(bob(), `boards/${SRC}/cards/visible`)));
+  });
+
+  it("should reject the board owner deleting a member's card in the review step (D143)", async () => {
+    await assertFails(deleteDoc(doc(alice(), `boards/${SRC}/cards/visible`)));
+  });
+
+  it("should let authors and the board owner edit and delete in step 1 (D143)", async () => {
+    await assertSucceeds(
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`), { text: "edited", updatedAt: serverTimestamp() }),
+    );
+    await assertSucceeds(deleteDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`)));
+    await assertSucceeds(deleteDoc(doc(alice(), `boards/${WRITING}/cards/bobHidden`)));
+  });
+
+  it("should stop members editing and deleting again after the admin moves a step-1 board to review, and allow it when moved back (D143, D144)", async () => {
+    await assertSucceeds(setPhase(WRITING, 2));
+    await assertFails(
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`), { text: "late edit", updatedAt: serverTimestamp() }),
+    );
+    await assertFails(deleteDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`)));
+    await assertSucceeds(setPhase(WRITING, 1));
+    await assertSucceeds(
+      updateDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`), { text: "edit after step 1 again", updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("should keep the admin tools working in the review step (D144)", async () => {
+    await assertSucceeds(
+      updateDoc(doc(admin(), `boards/${SRC}/cards/visible`), { hidden: true, updatedAt: serverTimestamp() }),
+    );
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/secret`)));
+  });
+
+  it("should still let the admin move a card into a board that is in the review step (D133)", async () => {
+    await assertSucceeds(move({ src: [SRC, "visible"], dest: [DEST, "moved"] }));
+  });
+});
+
+describe("private writing step (D126 to D130)", () => {
+  const phaseUpdate = (boardId: string, phase: number) =>
+    updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
+
+  it("should let a member read their own card but not another member's card in step 1", async () => {
+    await assertSucceeds(getDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`)));
+    await assertFails(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
+    await assertSucceeds(getDoc(doc(alice(), `boards/${WRITING}/cards/aliceWrote`)));
+    await assertFails(getDoc(doc(alice(), `boards/${WRITING}/cards/bobWrote`)));
+  });
+
+  it("should allow only the own-cards query in step 1", async () => {
+    const own = await assertSucceeds(
+      getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("authorId", "==", "bob"))),
+    );
+    if (own.size !== 2) throw new Error(`expected 2 own cards, got ${own.size}`);
+    await assertFails(
+      getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("hidden", "==", false))),
+    );
+    await assertFails(getDocs(collection(bob(), `boards/${WRITING}/cards`)));
+  });
+
+  it("should let the admin read every card in step 1", async () => {
+    const all = await assertSucceeds(getDocs(collection(admin(), `boards/${WRITING}/cards`)));
+    if (all.size !== 3) throw new Error(`expected 3 cards, got ${all.size}`);
+  });
+
+  it("should keep a stranger and look-alike accounts out in step 1", async () => {
+    await assertFails(getDoc(doc(stranger(), `boards/${WRITING}/cards/bobWrote`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(getDoc(doc(makeClient(), `boards/${WRITING}/cards/bobWrote`)));
+    }
+  });
+
+  it("should show other members' cards once the admin moves to step 2, and hide them again on step 1", async () => {
+    await assertSucceeds(phaseUpdate(WRITING, 2));
+    await assertSucceeds(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
+    const visible = await assertSucceeds(
+      getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("hidden", "==", false))),
+    );
+    if (visible.size !== 2) throw new Error(`expected 2 visible cards, got ${visible.size}`);
+    await assertSucceeds(phaseUpdate(WRITING, 1));
+    await assertFails(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
+  });
+
+  it("should still hide an admin-hidden card from others in step 2 and later", async () => {
+    await assertSucceeds(phaseUpdate(WRITING, 3));
+    await assertSucceeds(
+      updateDoc(doc(admin(), `boards/${WRITING}/cards/aliceWrote`), { hidden: true, updatedAt: serverTimestamp() }),
+    );
+    await assertFails(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
+    await assertSucceeds(getDoc(doc(alice(), `boards/${WRITING}/cards/aliceWrote`)));
+  });
+
+  it("should show cards to members of a completed board even when it ended in step 1", async () => {
+    await assertSucceeds(getDoc(doc(alice(), `boards/${COMPLETED}/cards/done`)));
+    const visible = await assertSucceeds(
+      getDocs(query(collection(alice(), `boards/${COMPLETED}/cards`), where("hidden", "==", false))),
+    );
+    if (visible.size !== 1) throw new Error(`expected 1 visible card, got ${visible.size}`);
+  });
+});
+
+describe("session step (D116 to D123)", () => {
+  const phaseUpdate = (client: ReturnType<typeof admin>, boardId: string, data: Record<string, unknown>) =>
+    updateDoc(doc(client, `boards/${boardId}`), { ...data, updatedAt: serverTimestamp() });
+
+  it("should let a verified admin set any step from 1 to 6 without being a member", async () => {
+    for (const phase of [2, 6, 1, 4]) await assertSucceeds(phaseUpdate(admin(), SRC, { phase }));
+  });
+
+  it("should reject a step outside 1 to 6 or that is not a whole number", async () => {
+    for (const phase of [0, 7, -1, 2.5, "3", null, true]) {
+      await assertFails(phaseUpdate(admin(), SRC, { phase }));
+    }
+  });
+
+  it("should reject a step change on a completed or a waiting board", async () => {
+    await assertFails(phaseUpdate(admin(), COMPLETED, { phase: 2 }));
+    await assertFails(phaseUpdate(admin(), WAITING, { phase: 2 }));
+  });
+
+  it("should reject changing anything else together with the step", async () => {
+    await assertFails(phaseUpdate(admin(), SRC, { phase: 2, title: "Renamed" }));
+    await assertFails(phaseUpdate(admin(), SRC, { phase: 2, status: "completed" }));
+    await assertFails(phaseUpdate(admin(), SRC, { phase: 2, ownerId: "admin" }));
+  });
+
+  it("should reject a step update that does not set updatedAt to the request time", async () => {
+    await assertFails(updateDoc(doc(admin(), `boards/${SRC}`), { phase: 2, updatedAt: seeded }));
+  });
+
+  it("should reject a step change by the board owner, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(phaseUpdate(client, SRC, { phase: 3 }));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject a step change by a ${label}`, async () => {
+      await assertFails(phaseUpdate(makeClient(), SRC, { phase: 3 }));
+    });
+  }
+
+  it("should let every member read the current step", async () => {
+    await assertSucceeds(phaseUpdate(admin(), SRC, { phase: 3 }));
+    const snapshot = await assertSucceeds(getDoc(doc(bob(), `boards/${SRC}`)));
+    if (snapshot.data()?.phase !== 3) throw new Error("step should be readable");
+  });
+});
+
+describe("board timer (D109 to D115)", () => {
+  const inMinutes = (minutes: number) => Timestamp.fromMillis(Date.now() + minutes * 60_000);
+  const timerUpdate = (client: ReturnType<typeof admin>, boardId: string, data: Record<string, unknown>) =>
+    updateDoc(doc(client, `boards/${boardId}`), { ...data, updatedAt: serverTimestamp() });
+  const startTimer = (client: ReturnType<typeof admin>, boardId = SRC, minutes = 5) =>
+    timerUpdate(client, boardId, { timerEndsAt: inMinutes(minutes), timerDurationSec: minutes * 60 });
+
+  it("should let a verified admin start and stop a timer without being a member", async () => {
+    await assertSucceeds(startTimer(admin()));
+    await assertSucceeds(timerUpdate(admin(), SRC, { timerEndsAt: null, timerDurationSec: null }));
+  });
+
+  it("should accept the longest allowed timer of 2 hours", async () => {
+    await assertSucceeds(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(119), timerDurationSec: 7200 }),
+    );
+  });
+
+  it("should reject an end time in the past or more than 2 hours ahead", async () => {
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(-1), timerDurationSec: 60 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(125), timerDurationSec: 60 }));
+  });
+
+  it("should reject values of the wrong type or range", async () => {
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: "soon", timerDurationSec: 60 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: "300" }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 0 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 7201 }));
+    await assertFails(timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 1.5 }));
+  });
+
+  it("should reject a timer on a completed or a waiting board", async () => {
+    await assertFails(startTimer(admin(), COMPLETED));
+    await assertFails(startTimer(admin(), WAITING));
+  });
+
+  it("should reject changing anything else on the board together with the timer", async () => {
+    await assertFails(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 300, title: "Renamed" }),
+    );
+    await assertFails(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 300, status: "completed" }),
+    );
+    await assertFails(
+      timerUpdate(admin(), SRC, { timerEndsAt: inMinutes(5), timerDurationSec: 300, ownerId: "admin" }),
+    );
+  });
+
+  it("should reject a timer update that does not set updatedAt to the request time", async () => {
+    await assertFails(
+      updateDoc(doc(admin(), `boards/${SRC}`), { timerEndsAt: inMinutes(5), timerDurationSec: 300, updatedAt: seeded }),
+    );
+  });
+
+  it("should reject starting a timer by the board owner, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(startTimer(client));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject starting a timer by a ${label}`, async () => {
+      await assertFails(startTimer(makeClient()));
+    });
+  }
+
+  it("should keep the owner's rename of the board working", async () => {
+    await assertSucceeds(
+      updateDoc(doc(alice(), `boards/${SRC}`), { title: "Renamed by owner", updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("should let every member read the running timer", async () => {
+    await assertSucceeds(startTimer(admin()));
+    const snapshot = await assertSucceeds(getDoc(doc(bob(), `boards/${SRC}`)));
+    if (!snapshot.data()?.timerEndsAt) throw new Error("timer should be readable");
+  });
+});
+
+describe("admin stacking (D102 to D106)", () => {
+  const groupUpdate = (client: ReturnType<typeof admin>, cardId: string, data: Record<string, unknown>, boardId = SRC) =>
+    updateDoc(doc(client, `boards/${boardId}/cards/${cardId}`), { ...data, updatedAt: serverTimestamp() });
+
+  it("should let a verified admin set and clear a groupId without being a member", async () => {
+    await assertSucceeds(groupUpdate(admin(), "visible", { groupId: "visible" }));
+    await assertSucceeds(groupUpdate(admin(), "secret", { groupId: "visible" }));
+    await assertSucceeds(groupUpdate(admin(), "secret", { groupId: null }));
+  });
+
+  it("should let the admin join a stack in another column in one update", async () => {
+    await assertSucceeds(groupUpdate(admin(), "visible", { groupId: "g1", columnId: "to-improve" }));
+  });
+
+  it("should let the admin stack two cards in one batch", async () => {
+    const db = admin();
+    const batch = writeBatch(db);
+    batch.update(doc(db, `boards/${SRC}/cards/visible`), { groupId: "visible", updatedAt: serverTimestamp() });
+    batch.update(doc(db, `boards/${SRC}/cards/secret`), { groupId: "visible", columnId: "went-well", updatedAt: serverTimestamp() });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("should reject a groupId that is not a short non-empty string or null", async () => {
+    await assertFails(groupUpdate(admin(), "visible", { groupId: 5 }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "" }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "x".repeat(65) }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: true }));
+  });
+
+  it("should reject an invalid column together with a groupId", async () => {
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", columnId: "nowhere" }));
+  });
+
+  it("should reject changing text, author or hidden state together with a groupId", async () => {
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", text: "changed" }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", authorId: "admin" }));
+    await assertFails(groupUpdate(admin(), "visible", { groupId: "g", hidden: true }));
+  });
+
+  it("should reject stacking on a completed or a waiting board", async () => {
+    await assertFails(groupUpdate(admin(), "done", { groupId: "g" }, COMPLETED));
+    await assertFails(groupUpdate(admin(), "early", { groupId: "g" }, WAITING));
+  });
+
+  it("should reject stacking by the owner, the author, a member and a stranger", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(groupUpdate(client, "visible", { groupId: "g" }));
+    }
+  });
+
+  for (const [label, makeClient] of Object.entries(impostors)) {
+    it(`should reject stacking by a ${label}`, async () => {
+      await assertFails(groupUpdate(makeClient(), "visible", { groupId: "g" }));
+    });
+  }
+
+  it("should reject a member creating a card that already carries a groupId", async () => {
+    await assertFails(
+      setDoc(doc(bob(), `boards/${SRC}/cards/fresh`), {
+        columnId: "ideas", text: "x", authorId: "bob", hidden: false, groupId: "g",
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+});
+
+describe("admin delete (D100)", () => {
+  it("should let a verified admin delete any card on an in-progress board without being a member", async () => {
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/visible`)));
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/secret`)));
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${SRC}/cards/legacy`)));
+  });
+
+  it("should reject an admin delete on a completed or a waiting board", async () => {
+    await assertFails(deleteDoc(doc(admin(), `boards/${COMPLETED}/cards/done`)));
+    await assertFails(deleteDoc(doc(admin(), `boards/${WAITING}/cards/early`)));
+  });
+
+  it("should still reject deleting another user's card by a member, a stranger and look-alike accounts", async () => {
+    await assertFails(deleteDoc(doc(bob(), `boards/${SRC}/cards/aliceHidden`)));
+    await assertFails(deleteDoc(doc(stranger(), `boards/${SRC}/cards/visible`)));
+    for (const makeClient of Object.values(impostors)) {
+      await assertFails(deleteDoc(doc(makeClient(), `boards/${SRC}/cards/visible`)));
+    }
   });
 });
 
 describe("admin board listing", () => {
   it("should let a verified admin list boards", async () => {
     const snapshot = await assertSucceeds(getDocs(collection(admin(), "boards")));
-    if (snapshot.size !== 5) throw new Error(`expected 5 boards, got ${snapshot.size}`);
+    if (snapshot.size !== 7) throw new Error(`expected 7 boards, got ${snapshot.size}`);
   });
 
   it("should let a verified admin list in-progress boards with a status filter", async () => {
     const snapshot = await assertSucceeds(
       getDocs(query(collection(admin(), "boards"), where("status", "==", "in-progress"))),
     );
-    if (snapshot.size !== 3) throw new Error(`expected 3 boards, got ${snapshot.size}`);
+    if (snapshot.size !== 5) throw new Error(`expected 5 boards, got ${snapshot.size}`);
   });
 
   it("should keep listing boards denied for members, owners and strangers", async () => {
@@ -413,8 +1041,7 @@ describe("move a card to another board", () => {
     await denied({ omit: ["ledger", "delete"] });
   });
 
-  it("should reject deleting the source without the destination", async () => {
-    await denied({ omit: ["ledger", "dest"] });
+  it("should reject a ledger and a source delete without the destination", async () => {
     await denied({ omit: ["dest"] });
   });
 
@@ -426,8 +1053,8 @@ describe("move a card to another board", () => {
     await denied({ omit: ["ledger"] });
   });
 
-  it("should reject deleting a second card with the ledger of the first", async () => {
-    await denied({ extraDelete: [SRC, "secret"] });
+  it("should allow deleting a second card in the same batch because the admin may delete any card (D100)", async () => {
+    await allowed({ extraDelete: [SRC, "secret"] });
   });
 
   it("should reject changed text, column, author or hidden state", async () => {
@@ -501,9 +1128,9 @@ describe("move a card to another board", () => {
   });
 
   it("should still allow a member to create a card with a fresh id after a move", async () => {
-    await allowed();
+    await allowed({ src: [WRITING, "bobWrote"], dest: [DEST, "movedFromWriting"] });
     await assertSucceeds(
-      setDoc(doc(bob(), `boards/${SRC}/cards/fresh`), {
+      setDoc(doc(bob(), `boards/${WRITING}/cards/fresh`), {
         columnId: "ideas", text: "new", authorId: "bob", hidden: false,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       }),
@@ -529,8 +1156,8 @@ describe("move ledger", () => {
     }
   });
 
-  it("should reject deleting the moved card without a ledger", async () => {
-    await assertFails(deleteDoc(doc(admin(), `boards/${DEST}/cards/moved`)));
+  it("should let the admin delete a moved card like any other card (D100)", async () => {
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${DEST}/cards/moved`)));
   });
 
   it("should reject the admin creating a ledger on its own", async () => {

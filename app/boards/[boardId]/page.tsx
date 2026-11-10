@@ -4,19 +4,34 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { BoardColumn } from "@/components/BoardColumn";
-import { DashboardHeader } from "@/components/DashboardHeader";
+import { BoardTimer } from "@/components/BoardTimer";
+import { CenterAlert } from "@/components/CenterAlert";
+import { AccountChip } from "@/components/AccountChip";
 import { DashboardSprout } from "@/components/DashboardSprout";
 import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
+import { ModalDialog } from "@/components/ModalDialog";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
+import { CrowdedFarm } from "@/components/CrowdedFarm";
+import { RatingPanel } from "@/components/RatingPanel";
+import { PhaseStepper } from "@/components/PhaseStepper";
+import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
+import { saveMyRating, subscribeToRatings } from "@/lib/firebase/ratings";
+import { saveMyVotes, subscribeToVotes } from "@/lib/firebase/votes";
+import type { Rating } from "@/lib/ratings";
+import { VOTES_PER_MEMBER, countVotes, toggleVote, votesLeft, type Voter } from "@/lib/votes";
+import { rememberLastBoard } from "@/lib/last-board";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
 import {
   completeSession,
   getOwnMembership,
   joinBoard,
+  setPhase,
   startSession,
+  startTimer,
+  stopTimer,
   subscribeToBoard,
   subscribeToMembers,
 } from "@/lib/firebase/boards";
@@ -24,8 +39,11 @@ import {
   addCard,
   deleteCard,
   editCard,
+  setCardColumn,
   setCardHidden,
+  stackCards,
   subscribeToCards,
+  unstackCard,
 } from "@/lib/firebase/cards";
 import { describeFirebaseError } from "@/lib/firebase/client";
 import {
@@ -34,6 +52,7 @@ import {
   type BoardCard,
   type BoardMember,
   type BoardRole,
+  type ColumnId,
 } from "@/lib/firebase/types";
 
 type MembershipState =
@@ -90,6 +109,10 @@ function BoardPageContent() {
       isCurrent = false;
     };
   }, [boardId, uid]);
+
+  useEffect(() => {
+    if (membership.status === "member") rememberLastBoard(boardId);
+  }, [boardId, membership.status]);
 
   async function handleJoin() {
     if (!user || !playerName) return;
@@ -150,7 +173,7 @@ function BoardPageContent() {
       <div aria-hidden="true" className="dashboard-backdrop">
         <div className="dashboard-backdrop-art" />
       </div>
-      <DashboardHeader current="board" />
+      <AccountChip />
       <main className="board-content">{content}</main>
     </div>
   );
@@ -158,7 +181,7 @@ function BoardPageContent() {
 
 function BackToDashboard() {
   return (
-    <Link href="/dashboard" className="pixel-button pixel-button-gold">
+    <Link href="/boards" className="pixel-button pixel-button-gold">
       กลับหน้าหลัก
     </Link>
   );
@@ -178,6 +201,10 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [movingCard, setMovingCard] = useState<BoardCard | null>(null);
+  const [deletingCard, setDeletingCard] = useState<BoardCard | null>(null);
+  const [stackingCard, setStackingCard] = useState<BoardCard | null>(null);
+  const [voters, setVoters] = useState<Voter[]>([]);
+  const [ratings, setRatings] = useState<Rating[]>([]);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
@@ -195,14 +222,30 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
     if (isWaiting) return;
     return subscribeToCards(
       board.id,
-      { uid, isAdmin },
+      { uid, isAdmin, seesOthers: board.phase >= 2 || board.status === "completed" },
       (nextCards) => {
         setLiveError(null);
         setCards(nextCards);
       },
       (error) => setLiveError(describeFirebaseError(error)),
     );
-  }, [board.id, isWaiting, uid, isAdmin]);
+  }, [board.id, board.phase, board.status, isWaiting, uid, isAdmin]);
+
+  const showVotes = board.phase >= 3 || isCompleted;
+  useEffect(() => {
+    if (!showVotes) return;
+    return subscribeToVotes(board.id, setVoters, (error) => setLiveError(describeFirebaseError(error)));
+  }, [board.id, showVotes]);
+
+  const isRatingStep = board.phase === 4 && !isCompleted;
+  useEffect(() => {
+    if (!isRatingStep) return;
+    return subscribeToRatings(board.id, setRatings, (error) => setLiveError(describeFirebaseError(error)));
+  }, [board.id, isRatingStep]);
+
+  const voteCounts = countVotes(voters);
+  const myVotes = voters.find((voter) => voter.uid === uid)?.cardIds ?? [];
+  const isVotingOpen = board.phase === 3 && !isCompleted;
 
   const authorNames = new Map(members.map((member) => [member.uid, member.displayName]));
   const isOwner = role === "owner";
@@ -226,6 +269,30 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
     }
   }
 
+  async function handleChangeColumn(card: BoardCard, columnId: ColumnId) {
+    if (await runAction(() => setCardColumn(board.id, card.id, columnId))) {
+      const label = BOARD_COLUMNS.find((column) => column.id === columnId)?.label ?? columnId;
+      setNotice(`ย้ายการ์ดไปที่ ${label} แล้ว`);
+    }
+  }
+
+  async function handleStack(dragged: BoardCard, target: BoardCard) {
+    if (await runAction(() => stackCards(board.id, dragged, target))) setNotice("ซ้อนการ์ดแล้ว");
+  }
+
+  async function handleUnstack(card: BoardCard) {
+    if (await runAction(() => unstackCard(board.id, card.id))) setNotice("แยกการ์ดออกจากกองแล้ว");
+  }
+
+  async function handleToggleVote(cardId: string) {
+    const next = toggleVote(myVotes, cardId);
+    if (next) await runAction(() => saveMyVotes(board.id, uid, next));
+  }
+
+  async function handleRate(score: number) {
+    await runAction(() => saveMyRating(board.id, uid, score));
+  }
+
   async function handleCopyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -243,11 +310,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
             <p>{liveError}</p>
           </DialogueBox>
         ) : null}
-        {actionError ? (
-          <p role="alert" className="board-notice">
-            {actionError}
-          </p>
-        ) : null}
+        {actionError ? <CenterAlert tone="error" message={actionError} onClose={() => setActionError(null)} /> : null}
         <TitleScreen
           board={board}
           isOwner={isOwner}
@@ -260,33 +323,57 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
 
   return (
     <>
-      <div className="board-heading">
-        <div className="board-sign">
-          <DashboardSprout />
-          <h1>{board.title}</h1>
-        </div>
-        <p className="board-meta">
-          {isOwner ? "Owner" : "Member"} · {members.length} คน · {isCompleted ? "COMPLETED" : "IN PROGRESS"}
-        </p>
-        <div className="board-tools">
-          <button type="button" className="board-button" onClick={handleCopyLink}>
-            {copyState === "copied"
-              ? "คัดลอกลิงก์แล้ว"
-              : copyState === "failed"
-                ? "คัดลอกไม่สำเร็จ"
-                : "คัดลอกลิงก์แชร์"}
-          </button>
-          {isOwner && !isCompleted ? (
-            <button type="button" className="board-button board-button-danger" onClick={() => setIsConfirmingComplete(true)}>
-              จบเซสชัน
+      <PhaseStepper
+        phase={board.phase}
+        isAdmin={isAdmin}
+        isLocked={isCompleted}
+        onChange={(phase) => void runAction(() => setPhase(board.id, phase))}
+        boardInfo={
+          <>
+            <DashboardSprout />
+            <div>
+              <h1>{board.title}</h1>
+              <p>
+                {isOwner ? "Owner" : "Member"} · {members.length} คน · {isCompleted ? "COMPLETED" : "IN PROGRESS"}
+              </p>
+            </div>
+          </>
+        }
+        actions={
+          <>
+            {isVotingOpen ? (
+              <span className="vote-meter" role="status">
+                โหวตเหลือ {votesLeft(myVotes)}/{VOTES_PER_MEMBER}
+              </span>
+            ) : null}
+            {isCompleted || board.phase !== 1 ? null : (
+              <BoardTimer
+                board={board}
+                isAdmin={isAdmin}
+                onStart={(minutes) => void runAction(() => startTimer(board.id, minutes))}
+                onStop={() => void runAction(() => stopTimer(board.id))}
+              />
+            )}
+            <button type="button" className="board-button board-button-quiet" onClick={handleCopyLink}>
+              {copyState === "copied"
+                ? "คัดลอกลิงก์แล้ว"
+                : copyState === "failed"
+                  ? "คัดลอกไม่สำเร็จ"
+                  : "คัดลอกลิงก์แชร์"}
             </button>
-          ) : null}
-        </div>
-      </div>
+            {isOwner && !isCompleted ? (
+              <button type="button" className="board-button board-button-danger" onClick={() => setIsConfirmingComplete(true)}>
+                จบเซสชัน
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {isConfirmingComplete ? (
-        <DialogueBox
+        <ModalDialog
           title="End session?"
+          onClose={() => setIsConfirmingComplete(false)}
           actions={
             <>
               <button
@@ -311,7 +398,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
           }
         >
           <p>เมื่อจบแล้ว บอร์ดจะเป็นแบบอ่านอย่างเดียวและเริ่มใหม่ไม่ได้</p>
-        </DialogueBox>
+        </ModalDialog>
       ) : null}
 
       {isCompleted ? (
@@ -325,16 +412,8 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
           <p>{liveError}</p>
         </DialogueBox>
       ) : null}
-      {actionError ? (
-        <p role="alert" className="board-notice">
-          {actionError}
-        </p>
-      ) : null}
-      {notice ? (
-        <p role="status" className="board-notice">
-          {notice}
-        </p>
-      ) : null}
+      {actionError ? <CenterAlert tone="error" message={actionError} onClose={() => setActionError(null)} /> : null}
+      {notice ? <CenterAlert tone="success" message={notice} onClose={() => setNotice(null)} /> : null}
 
       {movingCard ? (
         <MoveCardDialog
@@ -348,7 +427,54 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         />
       ) : null}
 
-      {cards === null && !liveError ? (
+      {stackingCard ? (
+        <StackCardDialog
+          card={stackingCard}
+          candidates={(cards ?? []).filter((candidate) => candidate.id !== stackingCard.id)}
+          onClose={() => setStackingCard(null)}
+          onConfirm={(target) => {
+            const dragged = stackingCard;
+            setStackingCard(null);
+            void handleStack(dragged, target);
+          }}
+        />
+      ) : null}
+
+      {deletingCard ? (
+        <ModalDialog
+          title="Delete card?"
+          onClose={() => setDeletingCard(null)}
+          actions={
+            <>
+              <button
+                type="button"
+                className="pixel-button pixel-button-danger"
+                onClick={async () => {
+                  const card = deletingCard;
+                  if (await runAction(() => deleteCard(board.id, card.id))) {
+                    setDeletingCard(null);
+                    setNotice("ลบการ์ดแล้ว");
+                  }
+                }}
+              >
+                ลบการ์ด
+              </button>
+              <button type="button" className="pixel-button pixel-button-gold" onClick={() => setDeletingCard(null)}>
+                ยกเลิก
+              </button>
+            </>
+          }
+        >
+          <p className="board-card-preview">{deletingCard.text}</p>
+          <p>การ์ดนี้จะถูกลบถาวรและกู้คืนไม่ได้</p>
+        </ModalDialog>
+      ) : null}
+
+      {board.phase === 5 && !isCompleted ? (
+        <CrowdedFarm board={board} members={members} uid={uid} isAdmin={isAdmin} runAction={runAction} />
+      ) : isRatingStep ? (
+        <RatingPanel ratings={ratings} members={members} uid={uid} onRate={(score) => void handleRate(score)} />
+      ) : cards === null && !liveError ? (
         <LoadingNotice />
       ) : (
         <div className="board-columns">
@@ -363,7 +489,32 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
               isOwner={isOwner}
               isAdmin={isAdmin}
               readOnly={isCompleted}
+              canAdd={!isCompleted && board.phase === 1}
               onToggleHidden={handleToggleHidden}
+              voteInfoFor={(card) => ({
+                count: voteCounts.get(card.id) ?? 0,
+                showCount: showVotes,
+                isOpen: isVotingOpen,
+                hasVoted: myVotes.includes(card.id),
+                isDisabled: votesLeft(myVotes) === 0 && !myVotes.includes(card.id),
+                onToggle: () => void handleToggleVote(card.id),
+              })}
+              onChangeColumn={handleChangeColumn}
+              onStackWith={(card) => {
+                setNotice(null);
+                setActionError(null);
+                setStackingCard(card);
+              }}
+              onUnstack={handleUnstack}
+              onStackDrop={(draggedCardId, target) => {
+                const dragged = (cards ?? []).find((candidate) => candidate.id === draggedCardId);
+                if (dragged) void handleStack(dragged, target);
+              }}
+              onAdminDelete={(card) => {
+                setNotice(null);
+                setActionError(null);
+                setDeletingCard(card);
+              }}
               onMove={(card) => {
                 setNotice(null);
                 setActionError(null);

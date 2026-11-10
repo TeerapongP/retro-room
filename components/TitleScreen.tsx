@@ -29,7 +29,7 @@ export function TitleScreen({ board, isOwner, members, onStart }: TitleScreenPro
       <PixelCloud className="pixel-drift absolute top-10 right-[8%] -z-10 w-20 sm:w-28" />
 
       <div className="pixel-sign px-6 py-5 text-center">
-        <h1 id="title-screen-heading" className="font-pixel text-xl sm:text-3xl">
+        <h1 id="title-screen-heading" className="font-pixel text-[64px] sm:text-[96px]">
           RETRO ROOM
         </h1>
         <p className="mt-3 text-sm">กระดานรีโทรสเปกทีฟของทีม</p>
@@ -52,7 +52,7 @@ export function TitleScreen({ board, isOwner, members, onStart }: TitleScreenPro
         <div className="flex flex-col items-center gap-3 text-center">
           <button
             type="button"
-            className="pixel-button pixel-button-gold press-start font-pixel px-6 py-4 text-sm sm:text-base"
+            className="pixel-button pixel-button-gold press-start font-pixel px-6 py-4 text-[32px]"
             onClick={handleStart}
             disabled={isStarting}
           >

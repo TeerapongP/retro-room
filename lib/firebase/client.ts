@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
+import { isMockMode } from "../mock";
 
 const EMULATOR_PROJECT_ID = "demo-retro-room";
 const AUTH_EMULATOR_URL = "http://127.0.0.1:9099";
@@ -59,6 +60,8 @@ function getFirebaseApp(): FirebaseApp {
 }
 
 export function getFirebaseAuth(): Auth {
+  // Mock mode never talks to Firebase; the placeholder only satisfies default parameters (F19, D89).
+  if (isMockMode()) return {} as Auth;
   const auth = getAuth(getFirebaseApp());
   if (isEmulatorRequested() && !connectedEmulatorServices().has(auth)) {
     connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
@@ -68,6 +71,7 @@ export function getFirebaseAuth(): Auth {
 }
 
 export function getFirebaseFirestore(): Firestore {
+  if (isMockMode()) return {} as Firestore;
   const firestore = getFirestore(getFirebaseApp());
   if (isEmulatorRequested() && !connectedEmulatorServices().has(firestore)) {
     connectFirestoreEmulator(firestore, FIRESTORE_EMULATOR_HOST, FIRESTORE_EMULATOR_PORT);
@@ -86,6 +90,18 @@ export function describeFirebaseError(error: unknown): string {
       return "คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ (permission denied)";
     case "unavailable":
       return "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่ (unavailable)";
+    case "aborted":
+      return "มีการแก้ไขพร้อมกันหลายครั้งจนบันทึกไม่สำเร็จ กรุณากดอีกครั้ง (aborted)";
+    case "round-in-progress":
+      return "ยังมีรอบเกมที่เล่นอยู่ ต้องจบหรือยกเลิกก่อน";
+    case "fallback-pending":
+      return "รอบที่ยกเลิกยังไม่ได้หมุนวงล้อสำรอง ต้องหมุนก่อนเริ่มรอบใหม่";
+    case "already-resolved":
+      return "รอบนี้มีผลหรือจบไปแล้ว";
+    case "not-active":
+      return "รอบนี้ไม่ใช่รอบปัจจุบัน หรือบอร์ดไม่ได้อยู่ขั้นที่ 5";
+    case "not-eligible":
+      return "ผู้ที่ถูกเลือกไม่ได้เล่นรอบนี้";
     case "unauthenticated":
       return "กรุณาเข้าสู่ระบบอีกครั้ง (unauthenticated)";
     case "auth/popup-blocked":
