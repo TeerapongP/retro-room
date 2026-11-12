@@ -252,6 +252,75 @@ service cloud.firestore {
         && data.resolvedAt == request.time;
     }
 
+    // ---- Fishing Festival game rules (gameType == "fishing" on farmGames collection) ----
+
+    function validFishingCreate(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && get(boardPath(boardId)).data.get('phase', 1) == 5
+        && data.gameType == 'fishing'
+        && data.status == 'selecting-wheel'
+        && data.startedAt == request.time
+        && data.fishingDurationSec in [30, 45, 60]
+        && data.ignoredUids is list
+        && data.get('wheelSegment', null) == null
+        && data.get('fishingEndsAt', null) == null
+        && data.get('winnerUid', null) == null
+        && data.get('resolvedAt', null) == null
+        && getAfter(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId;
+    }
+
+    function validFishingSpinWheel(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status == 'selecting-wheel'
+        && data.status == 'fishing'
+        && data.get('wheelSegment', null) != null
+        && data.wheelSpunAt == request.time
+        && data.get('fishingEndsAt', null) != null
+        && data.fishingEndsAt > request.time
+        && data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'wheelSegment', 'wheelSpunAt', 'fishingEndsAt', 'updatedAt']);
+    }
+
+    function validFishingEndFishing(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status == 'fishing'
+        && data.status == 'scoring'
+        && data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'updatedAt']);
+    }
+
+    function validFishingSetIgnoredUids(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status in ['selecting-wheel', 'fishing', 'scoring']
+        && data.diff(resource.data).affectedKeys()
+             .hasOnly(['ignoredUids', 'updatedAt'])
+        && data.ignoredUids is list;
+    }
+
+    function validFishingFinish(boardId, gameId) {
+      let data = request.resource.data;
+      let board = get(boardPath(boardId)).data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status == 'scoring'
+        && data.status == 'finished'
+        && data.get('winnerUid', null) != null
+        && data.resolvedAt == request.time
+        && exists(memberPath(boardId, data.winnerUid))
+        && !(data.winnerUid in resource.data.get('ignoredUids', []))
+        && !(data.winnerUid == board.get('hostUid', board.ownerId))
+        && data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'resolution', 'winnerUid', 'resolvedAt', 'updatedAt']);
+    }
+
     function validFarmChoice(boardId, gameId, uid) {
       let data = request.resource.data;
       let board = get(boardPath(boardId)).data;
@@ -575,16 +644,37 @@ service cloud.firestore {
       // `get` their own choice and cannot `list`; after it every member can read all choices to work out the result.
       match /farmGames/{gameId} {
         allow read: if isMember(boardId) || isAdmin();
-        allow create: if isAdmin()
+        allow create: if (isAdmin()
           && sessionInProgress(boardId)
           && get(boardPath(boardId)).data.get('phase', 1) == 5
           && request.resource.data.keys().hasOnly(['startedAt', 'status'])
           && request.resource.data.keys().hasAll(['startedAt', 'status'])
           && request.resource.data.startedAt == request.time
           && request.resource.data.status == 'selecting'
-          && getAfter(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId;
-        allow update: if validFarmFinish(boardId, gameId) || validFarmCancel(boardId, gameId);
+          && getAfter(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId)
+          || validFishingCreate(boardId, gameId);
+        allow update: if validFarmFinish(boardId, gameId) || validFarmCancel(boardId, gameId)
+          || validFishingSpinWheel(boardId, gameId)
+          || validFishingEndFishing(boardId, gameId)
+          || validFishingSetIgnoredUids(boardId, gameId)
+          || validFishingFinish(boardId, gameId);
         allow delete: if false;
+
+        match /catches/{uid} {
+          allow read: if isMember(boardId) || isAdmin();
+          allow create, update: if signedIn()
+            && request.auth.uid == uid
+            && isMember(boardId)
+            && get(gamePath(boardId, gameId)).data.get('gameType', '') == 'fishing'
+            && get(gamePath(boardId, gameId)).data.status == 'fishing'
+            && request.time <= get(gamePath(boardId, gameId)).data.fishingEndsAt
+            && request.resource.data.keys().hasOnly(['catchCount', 'lastCatchAt', 'updatedAt'])
+            && request.resource.data.catchCount is int
+            && request.resource.data.catchCount > 0
+            && request.resource.data.lastCatchAt == request.time
+            && request.resource.data.updatedAt == request.time;
+          allow delete: if false;
+        }
 
         match /choices/{uid} {
           allow get: if (signedIn() && request.auth.uid == uid && isMember(boardId))

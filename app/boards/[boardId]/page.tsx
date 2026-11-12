@@ -12,7 +12,7 @@ import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
 import { ModalDialog } from "@/components/ModalDialog";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
-import { CrowdedFarm } from "@/components/CrowdedFarm";
+import { FishingFestival } from "@/components/FishingFestival";
 import { RatingPanel } from "@/components/RatingPanel";
 import { PhaseStepper } from "@/components/PhaseStepper";
 import { StackCardDialog } from "@/components/StackCardDialog";
@@ -547,7 +547,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       ) : null}
 
       {board.phase === 5 && !isCompleted ? (
-        <CrowdedFarm board={board} members={members} uid={uid} isAdmin={isAdmin} runAction={runAction} />
+        <FishingFestival board={board} members={members} user={user} isAdmin={isAdmin} />
       ) : isRatingStep ? (
         <RatingPanel ratings={ratings} members={members} uid={uid} onRate={(score) => void handleRate(score)} />
       ) : cards === null && !liveError ? (

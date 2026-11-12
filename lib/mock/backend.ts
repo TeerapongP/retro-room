@@ -23,7 +23,11 @@ import {
   type BoardStatus,
   type ColumnId,
   type DashboardBoard,
+  type FishCatch,
+  type FishingGame,
+  type FishingGameStatus,
   type MoveTargetBoard,
+  type WheelSegment,
 } from "../firebase/types";
 
 /**
@@ -82,6 +86,26 @@ type StoredCard = {
   groupId?: string | null;
   createdAt: string;
 };
+type StoredFishingGame = {
+  id: string;
+  startedAt: string;
+  status: FishingGameStatus;
+  fishingDurationSec: 30 | 45 | 60;
+  ignoredUids: string[];
+  wheelSegment: WheelSegment | null;
+  wheelSpunAt: string | null;
+  fishingEndsAt: string | null;
+  resolution: "wheel" | "none" | null;
+  winnerUid: string | null;
+  resolvedAt: string | null;
+};
+
+type StoredFishCatch = {
+  catchCount: number;
+  lastCatchAt: string | null;
+  updatedAt: string | null;
+};
+
 type MockState = {
   session: string | null;
   profiles: Record<string, string>;
@@ -95,6 +119,9 @@ type MockState = {
   /** Crowded Farm rounds and choices per board (F30); absent in states saved before the game existed. */
   farmGames?: Record<string, Record<string, StoredFarmGame>>;
   farmChoices?: Record<string, Record<string, Record<string, FarmFieldId>>>;
+  /** Fishing Festival games per board; absent in states saved before this feature existed. */
+  fishGames?: Record<string, Record<string, StoredFishingGame>>;
+  fishCatches?: Record<string, Record<string, Record<string, StoredFishCatch>>>;
   counter: number;
 };
 
@@ -275,6 +302,40 @@ export function createMockBackend(options: MockBackendOptions = {}) {
 
   function farmDeadline(game: StoredFarmGame): number {
     return Date.parse(game.startedAt) + FARM_SELECTION_SECONDS * 1000;
+  }
+
+  function fishGamesOf(boardId: string): Record<string, StoredFishingGame> {
+    return ((state.fishGames ??= {})[boardId] ??= {});
+  }
+
+  function fishCatchesOf(boardId: string, gameId: string): Record<string, StoredFishCatch> {
+    return (((state.fishCatches ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function toFishingGame(gameId: string, stored: StoredFishingGame): FishingGame {
+    return {
+      id: gameId,
+      gameType: "fishing",
+      status: stored.status,
+      startedAt: new Date(stored.startedAt),
+      wheelSegment: stored.wheelSegment,
+      wheelSpunAt: stored.wheelSpunAt ? new Date(stored.wheelSpunAt) : null,
+      fishingEndsAt: stored.fishingEndsAt ? new Date(stored.fishingEndsAt) : null,
+      fishingDurationSec: stored.fishingDurationSec,
+      ignoredUids: [...stored.ignoredUids],
+      resolution: stored.resolution,
+      winnerUid: stored.winnerUid,
+      resolvedAt: stored.resolvedAt ? new Date(stored.resolvedAt) : null,
+    };
+  }
+
+  function toFishCatch(uid: string, stored: StoredFishCatch): FishCatch {
+    return {
+      uid,
+      catchCount: stored.catchCount,
+      lastCatchAt: stored.lastCatchAt ? new Date(stored.lastCatchAt) : null,
+      updatedAt: stored.updatedAt ? new Date(stored.updatedAt) : null,
+    };
   }
 
   function isFarmPlayerOf(boardId: string, uid: string, game: StoredFarmGame): boolean {
@@ -562,6 +623,102 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       board.nextHostGameId = gameId;
       board.nextHostSpunAt = now().toISOString();
       changed();
+    },
+
+    async startFishingGame(boardId: string, durationSec: 30 | 45 | 60): Promise<void> {
+      const board = boardOrThrow(boardId);
+      const gameId = nextId("fishgame");
+      fishGamesOf(boardId)[gameId] = {
+        id: gameId,
+        startedAt: now().toISOString(),
+        status: "selecting-wheel",
+        fishingDurationSec: durationSec,
+        ignoredUids: [],
+        wheelSegment: null,
+        wheelSpunAt: null,
+        fishingEndsAt: null,
+        resolution: null,
+        winnerUid: null,
+        resolvedAt: null,
+      };
+      board.farmActiveGameId = gameId;
+      changed();
+    },
+
+    async spinActivityWheel(boardId: string, gameId: string, segment: WheelSegment): Promise<void> {
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      game.wheelSegment = segment;
+      game.wheelSpunAt = now().toISOString();
+      game.status = "fishing";
+      // Base the window on the spin time, not on game creation, so the full duration is always available.
+      game.fishingEndsAt = new Date(now().getTime() + game.fishingDurationSec * 1000).toISOString();
+      changed();
+    },
+
+    async recordCatch(boardId: string, gameId: string, uid: string): Promise<void> {
+      const catches = fishCatchesOf(boardId, gameId);
+      const existing = catches[uid];
+      if (existing) {
+        existing.catchCount += 1;
+        existing.lastCatchAt = now().toISOString();
+        existing.updatedAt = now().toISOString();
+      } else {
+        catches[uid] = { catchCount: 1, lastCatchAt: now().toISOString(), updatedAt: now().toISOString() };
+      }
+      changed();
+    },
+
+    async endFishing(boardId: string, gameId: string): Promise<void> {
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      game.status = "scoring";
+      changed();
+    },
+
+    async finishFishingGame(boardId: string, gameId: string, winnerUid: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      game.status = "finished";
+      game.resolution = "wheel";
+      game.winnerUid = winnerUid;
+      game.resolvedAt = now().toISOString();
+      board.nextHostUid = winnerUid;
+      board.nextHostGameId = gameId;
+      board.nextHostSpunAt = now().toISOString();
+      changed();
+    },
+
+    async setIgnoredUids(boardId: string, gameId: string, uids: string[]): Promise<void> {
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      game.ignoredUids = [...uids];
+      changed();
+    },
+
+    subscribeToFishingGame(
+      boardId: string,
+      gameId: string,
+      cb: (game: FishingGame | null) => void,
+      onError: (error: unknown) => void,
+    ): Unsubscribe {
+      return subscribe(() => {
+        const stored = state.fishGames?.[boardId]?.[gameId];
+        return stored ? toFishingGame(gameId, stored) : null;
+      }, cb, onError);
+    },
+
+    subscribeToFishCatches(
+      boardId: string,
+      gameId: string,
+      cb: (catches: FishCatch[]) => void,
+      onError: (error: unknown) => void,
+    ): Unsubscribe {
+      return subscribe(() => {
+        const catchMap = state.fishCatches?.[boardId]?.[gameId] ?? {};
+        return Object.entries(catchMap).map(([uid, stored]) => toFishCatch(uid, stored));
+      }, cb, onError);
     },
 
     async startTimer(boardId: string, minutes: number): Promise<void> {

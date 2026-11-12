@@ -2,10 +2,13 @@ import {
   Timestamp,
   collection,
   doc,
+  increment,
   onSnapshot,
   runTransaction,
   serverTimestamp,
   setDoc,
+  updateDoc,
+  writeBatch,
   type DocumentData,
   type Firestore,
   type Unsubscribe,
@@ -22,6 +25,7 @@ import {
 } from "../crowded-farm";
 import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
+import type { FishCatch, FishingGame, FishingGameStatus, WheelSegment } from "./types";
 
 /**
  * Crowded Farm services (F30). Starting, finishing, cancelling and storing a fallback result are transactions:
@@ -279,6 +283,224 @@ export async function storeCancelledFarmFallback(
       });
     },
     TRANSACTION_OPTIONS,
+  );
+}
+
+const FISHING_GAME_STATUSES: ReadonlySet<string> = new Set<FishingGameStatus>([
+  "selecting-wheel",
+  "fishing",
+  "scoring",
+  "finished",
+  "cancelled",
+]);
+
+const WHEEL_SEGMENTS: ReadonlySet<string> = new Set<WheelSegment>([
+  "small-fish",
+  "big-fish",
+  "golden-fish",
+  "lucky",
+  "double-points",
+  "rare-fish",
+]);
+
+function toFishingGame(gameId: string, data: DocumentData): FishingGame | null {
+  if (data.gameType !== "fishing") return null;
+  const rawStatus: unknown = data.status;
+  const status: FishingGameStatus =
+    typeof rawStatus === "string" && FISHING_GAME_STATUSES.has(rawStatus)
+      ? (rawStatus as FishingGameStatus)
+      : "selecting-wheel";
+  const rawSegment: unknown = data.wheelSegment;
+  const wheelSegment: WheelSegment | null =
+    typeof rawSegment === "string" && WHEEL_SEGMENTS.has(rawSegment)
+      ? (rawSegment as WheelSegment)
+      : null;
+  const rawDuration = data.fishingDurationSec;
+  const fishingDurationSec: 30 | 45 | 60 = rawDuration === 45 ? 45 : rawDuration === 60 ? 60 : 30;
+  const rawResolution: unknown = data.resolution;
+  const resolution: "wheel" | "none" | null =
+    rawResolution === "wheel" ? "wheel" : rawResolution === "none" ? "none" : null;
+  return {
+    id: gameId,
+    gameType: "fishing",
+    status,
+    startedAt: toDate(data.startedAt),
+    wheelSegment,
+    wheelSpunAt: toDate(data.wheelSpunAt),
+    fishingEndsAt: toDate(data.fishingEndsAt),
+    fishingDurationSec,
+    ignoredUids: Array.isArray(data.ignoredUids)
+      ? data.ignoredUids.filter((uid): uid is string => typeof uid === "string")
+      : [],
+    resolution,
+    winnerUid: typeof data.winnerUid === "string" ? data.winnerUid : null,
+    resolvedAt: toDate(data.resolvedAt),
+  };
+}
+
+function toFishCatch(uid: string, data: DocumentData): FishCatch {
+  return {
+    uid,
+    catchCount: typeof data.catchCount === "number" ? data.catchCount : 0,
+    lastCatchAt: toDate(data.lastCatchAt),
+    updatedAt: toDate(data.updatedAt),
+  };
+}
+
+export async function startFishingGame(
+  boardId: string,
+  durationSec: 30 | 45 | 60,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().startFishingGame(boardId, durationSec);
+  const newId = newFarmGameId(boardId, db);
+  const batch = writeBatch(db);
+  batch.set(doc(db, "boards", boardId, "farmGames", newId), {
+    gameType: "fishing",
+    status: "selecting-wheel",
+    startedAt: serverTimestamp(),
+    fishingDurationSec: durationSec,
+    ignoredUids: [],
+    wheelSegment: null,
+    wheelSpunAt: null,
+    fishingEndsAt: null,
+    resolution: null,
+    winnerUid: null,
+    resolvedAt: null,
+  });
+  batch.update(doc(db, "boards", boardId), {
+    farmActiveGameId: newId,
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+export async function spinActivityWheel(
+  boardId: string,
+  gameId: string,
+  segment: WheelSegment,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().spinActivityWheel(boardId, gameId, segment);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      const data = gameSnap.data({ serverTimestamps: "estimate" });
+      const fishingDurationSec: number =
+        typeof data?.fishingDurationSec === "number" ? data.fishingDurationSec : 30;
+      // fishingEndsAt is based on the spin time, not the game creation time, so the
+      // full fishing window is always available after the wheel lands.
+      transaction.update(gameRef, {
+        wheelSegment: segment,
+        wheelSpunAt: serverTimestamp(),
+        status: "fishing",
+        fishingEndsAt: Timestamp.fromMillis(Timestamp.now().toMillis() + fishingDurationSec * 1000),
+        updatedAt: serverTimestamp(),
+      });
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+export async function recordCatch(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().recordCatch(boardId, gameId, uid);
+  await setDoc(
+    doc(db, "boards", boardId, "farmGames", gameId, "catches", uid),
+    { catchCount: increment(1), lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+}
+
+export async function endFishing(
+  boardId: string,
+  gameId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().endFishing(boardId, gameId);
+  await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "scoring",
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function finishFishingGame(
+  boardId: string,
+  gameId: string,
+  winnerUid: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().finishFishingGame(boardId, gameId, winnerUid);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "finished",
+    resolution: "wheel",
+    winnerUid,
+    resolvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(db, "boards", boardId), {
+    nextHostUid: winnerUid,
+    nextHostGameId: gameId,
+    nextHostSpunAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+export async function setIgnoredUids(
+  boardId: string,
+  gameId: string,
+  uids: string[],
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().setIgnoredUids(boardId, gameId, uids);
+  await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
+    ignoredUids: uids,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function subscribeToFishingGame(
+  boardId: string,
+  gameId: string,
+  cb: (game: FishingGame | null) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToFishingGame(boardId, gameId, cb, onError);
+  return onSnapshot(
+    doc(db, "boards", boardId, "farmGames", gameId),
+    (snapshot) => {
+      const data = snapshot.data({ serverTimestamps: "estimate" });
+      cb(snapshot.exists() && data ? toFishingGame(snapshot.id, data) : null);
+    },
+    onError,
+  );
+}
+
+export function subscribeToFishCatches(
+  boardId: string,
+  gameId: string,
+  cb: (catches: FishCatch[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToFishCatches(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "catches"),
+    (snapshot) => {
+      cb(
+        snapshot.docs.map((catchDoc) => toFishCatch(catchDoc.id, catchDoc.data({ serverTimestamps: "estimate" }))),
+      );
+    },
+    onError,
   );
 }
 

@@ -80,3 +80,40 @@ export type DashboardBoard = {
   role: BoardRole;
   joinedAt: Date | null;
 };
+
+export type FishingGameStatus =
+  | "selecting-wheel"
+  | "fishing"
+  | "scoring"
+  | "finished"
+  | "cancelled";
+
+export type WheelSegment =
+  | "small-fish"
+  | "big-fish"
+  | "golden-fish"
+  | "lucky"
+  | "double-points"
+  | "rare-fish";
+
+export type FishingGame = {
+  id: string;
+  gameType: "fishing";
+  status: FishingGameStatus;
+  startedAt: Date | null;
+  wheelSegment: WheelSegment | null;
+  wheelSpunAt: Date | null;
+  fishingEndsAt: Date | null;
+  fishingDurationSec: 30 | 45 | 60;
+  ignoredUids: string[];
+  resolution: "wheel" | "none" | null;
+  winnerUid: string | null;
+  resolvedAt: Date | null;
+};
+
+export type FishCatch = {
+  uid: string;
+  catchCount: number;
+  lastCatchAt: Date | null;
+  updatedAt: Date | null;
+};
