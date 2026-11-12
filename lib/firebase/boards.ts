@@ -5,6 +5,7 @@ import {
   collectionGroup,
   deleteField,
   doc,
+  getDocs,
   getDoc,
   onSnapshot,
   orderBy,
@@ -151,6 +152,24 @@ export async function resetBoard(
     hostUid: deleteField(),
     pastHostUids: deleteField(),
   });
+}
+
+export async function clearBoard(
+  boardId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().clearBoard(boardId);
+  const [cardsSnap, votersSnap, ratingsSnap] = await Promise.all([
+    getDocs(collection(db, "boards", boardId, "cards")),
+    getDocs(collection(db, "boards", boardId, "voters")),
+    getDocs(collection(db, "boards", boardId, "ratings")),
+  ]);
+  const batch = writeBatch(db);
+  for (const d of [...cardsSnap.docs, ...votersSnap.docs, ...ratingsSnap.docs]) {
+    batch.delete(d.ref);
+  }
+  batch.update(doc(db, "boards", boardId), { phase: 1, updatedAt: serverTimestamp() });
+  await batch.commit();
 }
 
 export async function joinBoard(

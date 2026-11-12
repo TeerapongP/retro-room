@@ -25,6 +25,7 @@ import { VOTES_PER_MEMBER, countVotes, toggleVote, votesLeft, type Voter } from 
 import { rememberLastBoard } from "@/lib/last-board";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
 import {
+  clearBoard,
   completeSession,
   resetBoard,
   getOwnMembership,
@@ -210,6 +211,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
   const [isConfirmingReset, setIsConfirmingReset] = useState(false);
+  const [isConfirmingClear, setIsConfirmingClear] = useState(false);
   const isWaiting = board.status === "waiting";
   const isCompleted = board.status === "completed";
   const isAdmin = isAdminUser(user);
@@ -368,6 +370,11 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
                 จบเซสชัน
               </button>
             ) : null}
+            {isAdmin && !isCompleted ? (
+              <button type="button" className="board-button board-button-danger" onClick={() => setIsConfirmingClear(true)}>
+                ล้างบอร์ด
+              </button>
+            ) : null}
             {isAdmin && isCompleted ? (
               <button type="button" className="board-button" onClick={() => setIsConfirmingReset(true)}>
                 เริ่มใหม่
@@ -436,6 +443,37 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
           }
         >
           <p>บอร์ดจะกลับไปสถานะก่อนเริ่ม การ์ด โหวต และคะแนนทั้งหมดยังอยู่</p>
+        </ModalDialog>
+      ) : null}
+
+      {isConfirmingClear ? (
+        <ModalDialog
+          title="ล้างบอร์ด?"
+          onClose={() => setIsConfirmingClear(false)}
+          actions={
+            <>
+              <button
+                type="button"
+                className="pixel-button pixel-button-danger"
+                onClick={async () => {
+                  if (await runAction(() => clearBoard(board.id))) {
+                    setIsConfirmingClear(false);
+                  }
+                }}
+              >
+                ล้างบอร์ด
+              </button>
+              <button
+                type="button"
+                className="pixel-button pixel-button-gold"
+                onClick={() => setIsConfirmingClear(false)}
+              >
+                ยกเลิก
+              </button>
+            </>
+          }
+        >
+          <p>การ์ด โหวต และคะแนนทั้งหมดจะถูกลบ บอร์ดยังคงเปิดอยู่</p>
         </ModalDialog>
       ) : null}
 

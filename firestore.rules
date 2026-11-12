@@ -431,6 +431,14 @@ service cloud.firestore {
                .hasOnly(['status', 'startedAt', 'updatedAt'])
           && request.resource.data.startedAt == request.time
           && request.resource.data.updatedAt == request.time)
+        // admin ends an in-progress session
+        || (isAdmin()
+          && resource.data.get('status', 'in-progress') == 'in-progress'
+          && request.resource.data.status == 'completed'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'completedAt', 'updatedAt'])
+          && request.resource.data.completedAt == request.time
+          && request.resource.data.updatedAt == request.time)
         // admin resets a completed board back to waiting
         || (isAdmin()
           && resource.data.get('status', 'in-progress') == 'completed'
@@ -541,10 +549,11 @@ service cloud.firestore {
           && request.resource.data.keys().hasAll(['cardIds', 'updatedAt'])
           && validVotes(request.resource.data.cardIds)
           && request.resource.data.updatedAt == request.time;
-        allow delete: if signedIn() && request.auth.uid == uid
+        allow delete: if (signedIn() && request.auth.uid == uid
           && isMember(boardId)
           && sessionInProgress(boardId)
-          && votingOpen(boardId);
+          && votingOpen(boardId))
+          || isAdmin();
       }
 
       // One self rating per member (F28, D145 to D148): a score from 1 to 5 in steps of 0.5, written by the member only
@@ -559,6 +568,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasAll(['score', 'updatedAt'])
           && validRating(request.resource.data.score)
           && request.resource.data.updatedAt == request.time;
+        allow delete: if isAdmin();
       }
 
       // Crowded Farm rounds (F30, D153 to D162). Choices are private until the deadline: before it a member can only

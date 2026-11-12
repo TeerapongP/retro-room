@@ -598,6 +598,15 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       changed();
     },
 
+    async clearBoard(boardId: string): Promise<void> {
+      boardOrThrow(boardId);
+      delete state.cards[boardId];
+      if (state.votes) delete state.votes[boardId];
+      if (state.ratings) delete state.ratings[boardId];
+      boardOrThrow(boardId).phase = 1;
+      changed();
+    },
+
     async joinBoard(boardId: string, uid: string, playerName: string): Promise<void> {
       boardOrThrow(boardId);
       (state.members[boardId] ??= {})[uid] = {
