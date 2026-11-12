@@ -480,12 +480,12 @@ service cloud.firestore {
         // The plain `resource.data.hidden == false` form is required: the `get('hidden', false)` form
         // let an unfiltered member query return hidden cards in the emulator (spike, 2026-11-06).
         // A card without a hidden field is therefore readable by its author and the admin only.
-        // In step 1 (writing) a member reads only their own cards; from step 2 on, or once the board is
-        // completed, every card that is not hidden (F24, D126 to D130).
+        // All non-hidden cards are readable by all members in any phase; the UI blurs others' cards
+        // in step 1 (D126 updated: phase restriction moved to UI layer).
         allow read: if isAdmin()
           || (isMember(boardId)
             && (resource.data.authorId == request.auth.uid
-              || (resource.data.hidden == false && cardsRevealed(boardId))));
+              || resource.data.hidden == false));
         allow create: if (isMember(boardId)
             && sessionInProgress(boardId)
             && writingOpen(boardId)

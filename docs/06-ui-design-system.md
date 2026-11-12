@@ -176,7 +176,7 @@ The board bar (title, meta line, timer, share, end) and the step panel are now o
 
 ## Private writing step (F24, D126 to D130)
 
-The step 1 description reads "ทุกคนเขียนการ์ดของตัวเอง คนอื่นจะยังไม่เห็นการ์ดของคุณจนกว่าจะถึงขั้นทบทวน". The Board screen subscribes to cards by step (`seesOthers` is true from step 2 or on a completed board). The admin view is unchanged. Column counts in step 1 count only the cards the member can read.
+In step 1 all non-hidden cards are fetched and shown. Cards not written by the current viewer have the `.board-card-blurred` class applied by `BoardColumn` (`blursOthers && card.authorId !== uid`), which blurs `.board-card-text` and `.board-card-meta` with `filter: blur(5px)`. The admin is blurred the same as other members (D127 updated). Column counts reflect all non-hidden cards since all are fetched. The blur is removed from step 2 on (`blursOthers` is false).
 
 ## Writing only in step 1 (F25, D131 to D134)
 

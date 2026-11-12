@@ -209,7 +209,7 @@ describe("session lifecycle", () => {
     const watcherB = { cards: undefined as BoardCard[] | undefined };
     const unsubscribe = subscribeToCards(
       boardId,
-      { uid: userB.uid, isAdmin: false, seesOthers: true },
+      { uid: userB.uid, isAdmin: false },
       (next) => (watcherB.cards = next),
       fail,
       userB.db,
@@ -234,11 +234,11 @@ describe("real-time cards", () => {
     await setPhase(boardId, 2, admin.db);
   }
 
-  function watchCards(boardId: string, user: TestUser, seesOthers = true) {
+  function watchCards(boardId: string, user: TestUser) {
     const state = { cards: undefined as BoardCard[] | undefined, calls: 0 };
     const unsubscribe = subscribeToCards(
       boardId,
-      { uid: user.uid, isAdmin: false, seesOthers },
+      { uid: user.uid, isAdmin: false },
       (next) => {
         state.cards = next;
         state.calls += 1;
@@ -249,24 +249,24 @@ describe("real-time cards", () => {
     return { state, unsubscribe };
   }
 
-  it(`should deliver a card from user A to user B only after the admin starts the review`, async () => {
+  it(`should let user B see user A's non-hidden card in step 1 (blurred in UI only)`, async () => {
     const boardId = await boardWithAAndB();
     await addCard(boardId, userA.user, "went-well", "Shipped on time", userA.db);
-    const writingB = watchCards(boardId, userB, false);
-    await waitUntil(() => writingB.state.cards !== undefined);
-    expect(writingB.state.cards).toEqual([]);
+    const writingB = watchCards(boardId, userB);
+    await waitUntil(() => writingB.state.cards?.length === 1);
     writingB.unsubscribe();
+
+    expect(writingB.state.cards?.[0]).toMatchObject({
+      text: "Shipped on time",
+      columnId: "went-well",
+      authorId: userA.uid,
+    });
 
     await startReview(boardId);
     const reviewB = watchCards(boardId, userB);
     await waitUntil(() => reviewB.state.cards?.length === 1);
     reviewB.unsubscribe();
-
-    expect(reviewB.state.cards?.[0]).toMatchObject({
-      text: "Shipped on time",
-      columnId: "went-well",
-      authorId: userA.uid,
-    });
+    expect(reviewB.state.cards?.[0]).toMatchObject({ text: "Shipped on time" });
   });
 
   it(`should deny adding a card once the board is in the review step`, async () => {
@@ -283,7 +283,7 @@ describe("real-time cards", () => {
 
   it(`should let an author see their own edits and deletes in real time in step 1`, async () => {
     const boardId = await boardWithAAndB();
-    const writerB = watchCards(boardId, userB, false);
+    const writerB = watchCards(boardId, userB);
     await addCard(boardId, userB.user, "ideas", "First draft", userB.db);
     await waitUntil(() => writerB.state.cards?.length === 1);
     const cardId = writerB.state.cards![0].id;
@@ -298,7 +298,7 @@ describe("real-time cards", () => {
   it(`should deny editing and deleting once the board is in the review step`, async () => {
     const boardId = await boardWithAAndB();
     await addCard(boardId, userB.user, "ideas", "B's card", userB.db);
-    const writerB = watchCards(boardId, userB, false);
+    const writerB = watchCards(boardId, userB);
     await waitUntil(() => writerB.state.cards?.length === 1);
     const cardId = writerB.state.cards![0].id;
     writerB.unsubscribe();
@@ -312,7 +312,7 @@ describe("real-time cards", () => {
   it(`should deny a member editing or deleting another member's card`, async () => {
     const boardId = await boardWithAAndB();
     await addCard(boardId, userA.user, "to-improve", "A's card", userA.db);
-    const writerA = watchCards(boardId, userA, false);
+    const writerA = watchCards(boardId, userA);
     await waitUntil(() => writerA.state.cards?.length === 1);
     const cardId = writerA.state.cards![0].id;
     writerA.unsubscribe();
@@ -329,7 +329,7 @@ describe("real-time cards", () => {
     const boardId = await boardWithAAndB();
     await addCard(boardId, userB.user, "ideas", "B's card", userB.db);
     const adminView = { cards: undefined as BoardCard[] | undefined };
-    const stopAdmin = subscribeToCards(boardId, { uid: admin.uid, isAdmin: true, seesOthers: true }, (next) => (adminView.cards = next), fail, admin.db);
+    const stopAdmin = subscribeToCards(boardId, { uid: admin.uid, isAdmin: true }, (next) => (adminView.cards = next), fail, admin.db);
     await waitUntil(() => adminView.cards?.length === 1);
 
     await deleteCard(boardId, adminView.cards![0].id, userA.db);
@@ -342,7 +342,7 @@ describe("real-time cards", () => {
     let errorCode: string | undefined;
     const unsubscribe = subscribeToCards(
       boardId,
-      { uid: userC.uid, isAdmin: false, seesOthers: false },
+      { uid: userC.uid, isAdmin: false },
       () => {},
       (error) => (errorCode = (error as { code: string }).code),
       userC.db,

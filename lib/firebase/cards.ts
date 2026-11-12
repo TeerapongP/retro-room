@@ -21,8 +21,7 @@ import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
 import type { BoardCard, ColumnId, MoveTargetBoard } from "./types";
 
-/** `seesOthers` is true from step 2 on or on a completed board; in step 1 a member reads only their own cards (F24, D126). */
-export type CardViewer = { uid: string; isAdmin: boolean; seesOthers: boolean };
+export type CardViewer = { uid: string; isAdmin: boolean };
 
 function toBoardCard(cardDoc: QueryDocumentSnapshot): BoardCard {
   const data = cardDoc.data({ serverTimestamps: "estimate" });
@@ -44,9 +43,8 @@ function byCreatedAt(first: BoardCard, second: BoardCard): number {
 
 /**
  * Firestore Rules are not filters (D76). The admin reads everything with one query. Anyone else
- * needs queries the Rules can prove safe: their own cards, and, once other cards are revealed (D126), the cards
- * that are not hidden. In step 1 the second query would be denied, so it is not started. Results are merged here.
- * No orderBy is used so no composite index is needed.
+ * needs queries the Rules can prove safe: their own cards, and all non-hidden cards. Results are
+ * merged here. No orderBy is used so no composite index is needed.
  */
 export function subscribeToCards(
   boardId: string,
@@ -66,7 +64,7 @@ export function subscribeToCards(
     );
   }
 
-  let visibleCards: BoardCard[] | null = viewer.seesOthers ? null : [];
+  let visibleCards: BoardCard[] | null = null;
   let ownCards: BoardCard[] | null = null;
   const publish = () => {
     if (visibleCards === null || ownCards === null) return;
@@ -75,16 +73,14 @@ export function subscribeToCards(
     onCards([...merged.values()].sort(byCreatedAt));
   };
 
-  const stopVisible = viewer.seesOthers
-    ? onSnapshot(
-        query(cardsCollection, where("hidden", "==", false)),
-        (snapshot) => {
-          visibleCards = snapshot.docs.map(toBoardCard);
-          publish();
-        },
-        onError,
-      )
-    : () => {};
+  const stopVisible = onSnapshot(
+    query(cardsCollection, where("hidden", "==", false)),
+    (snapshot) => {
+      visibleCards = snapshot.docs.map(toBoardCard);
+      publish();
+    },
+    onError,
+  );
   const stopOwn = onSnapshot(
     query(cardsCollection, where("authorId", "==", viewer.uid)),
     (snapshot) => {

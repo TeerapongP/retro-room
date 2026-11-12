@@ -224,7 +224,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
     if (isWaiting) return;
     return subscribeToCards(
       board.id,
-      { uid, isAdmin, seesOthers: board.phase >= 2 || board.status === "completed" },
+      { uid, isAdmin },
       (nextCards) => {
         setLiveError(null);
         setCards(nextCards);
@@ -528,6 +528,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
               isAdmin={isAdmin}
               readOnly={isCompleted}
               canAdd={!isCompleted && board.phase === 1}
+              blursOthers={board.phase === 1 && !isCompleted}
               onToggleHidden={handleToggleHidden}
               voteInfoFor={(card) => ({
                 count: voteCounts.get(card.id) ?? 0,

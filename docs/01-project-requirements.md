@@ -44,7 +44,7 @@ EasyRetro-inspired Sprint Retrospective web app. Visual direction is a cozy late
 | F21 | Stack cards (owner request): the admin can stack cards about the same topic by dragging one onto another, or from the card menu. A stack shows as a pile with a count and opens to show all its cards. See D102 to D108 |
 | F22 | Board timer (owner request, first item of the earlier "Retrospective Timer" non-goal): the admin starts a countdown on an in-progress board and everyone sees the same time. See D109 to D115 |
 | F23 | Session stepper (owner request): the top navbar of the Board is replaced by a six-step bar (เขียน, ทบทวน, โหวต, ให้คะแนนตัวเอง, โฮสต์คนถัดไป, สรุป) that the admin moves and everyone sees. See D116 to D123 |
-| F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees only their own cards; other members' cards appear from step 2 on. Amends D76 and D119. See D126 to D130 |
+| F24 | Private writing step (owner request): while the board is in step 1 (เขียน), a member sees all non-hidden cards but others' cards are blurred (content unreadable). Cards are unblurred from step 2 on. Amends D76 and D119. See D126 to D130 |
 | F25 | Writing only in step 1 (owner request): new cards can be written only while the board is in step 1 (เขียน); from step 2 on nobody can add a card. Amends D119. See D131 to D134 |
 | F26 | Voting (owner request; the first real use of step 3, โหวต): each member has up to 3 votes on a board and puts them on cards. This approves the earlier non-goal "Voting" for this form only. See D135 to D142 |
 | F27 | No editing or deleting after step 1 (owner request): from step 2 on, members can no longer edit or delete cards; the `แก้ไข` and `ลบ` buttons are removed. Settles the open point of D132. See D143 and D144 |
@@ -317,9 +317,9 @@ The owner approved the three policies below and the ledger approach after an emu
 
 | ID | Decision |
 | --- | --- |
-| D126 | In step 1 (เขียน) a member can read only the cards they wrote. Other members' cards are not readable, so they are not shown and not counted. From step 2 (ทบทวน) on, every member reads all cards that are not hidden by the admin (D76). This amends D119: the step now controls who can read cards. It still blocks nothing else: writing, editing, deleting and the timer work in every step |
-| D127 | Default: the admin still reads every card in every step (D76), because the admin runs the session. The board owner has no extra rights: an owner who is not the admin sees only their own cards in step 1 |
-| D128 | Default: moving the step back to step 1 hides other members' cards again; moving forward shows them. Cards written by a member in step 2 or later are visible to others at once |
+| D126 | In step 1 (เขียน) all non-hidden cards are readable by all members, but others' cards are blurred (text unreadable) in the UI. The blur is client-side only; the data is in the DOM. From step 2 (ทบทวน) on, every member reads all non-hidden cards without blur. This amends D119: the step now controls the UI presentation. Writing, editing, deleting and the timer work in every step |
+| D127 | The admin is blurred the same as all other members in step 1: the admin's own cards are clear and everyone else's cards are blurred. The admin's server-side read access is unchanged (can still read all cards via admin query). The board owner has no extra UI rights |
+| D128 | Default: moving the step back to step 1 blurs others' cards again; moving forward unblurs them. Cards written by a member in step 2 or later are visible (unblurred) to others at once |
 | D129 | A completed board shows every non-hidden card to its members whatever step it ended on, so a session ended in step 1 does not lose its cards. A board without a step counts as step 1 (D117) |
 | D130 | Enforced by Rules, not by the interface: the card read rule checks the board's `phase` and `status`. A member's subscription uses two queries (D76); in step 1 only the query for their own cards is allowed, so the client subscribes by step and renews the subscription when the step changes. The Rules cannot hide a card's existence from the count the member's own query returns, which is only their own cards |
 

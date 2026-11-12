@@ -24,6 +24,8 @@ type BoardColumnProps = {
   readOnly: boolean;
   /** Members write, edit and delete cards only in step 1 of an in-progress board (F25, F27, D131, D143). */
   canAdd: boolean;
+  /** True in step 1: others' cards are shown but blurred (D126 updated). */
+  blursOthers: boolean;
   onToggleHidden: (card: BoardCard) => void;
   onMove: (card: BoardCard) => void;
   onAdminDelete: (card: BoardCard) => void;
@@ -47,6 +49,7 @@ export function BoardColumn({
   isAdmin,
   readOnly,
   canAdd,
+  blursOthers,
   onToggleHidden,
   onMove,
   onAdminDelete,
@@ -131,6 +134,7 @@ export function BoardColumn({
               authorName={authorNames.get(card.authorId) ?? FALLBACK_DISPLAY_NAME}
               canEdit={canAdd && card.authorId === uid}
               canDelete={canAdd && (card.authorId === uid || isOwner)}
+              blurred={blursOthers && card.authorId !== uid}
               showAdminMenu={isAdmin && !readOnly}
               onToggleHidden={() => onToggleHidden(card)}
               onMove={() => onMove(card)}

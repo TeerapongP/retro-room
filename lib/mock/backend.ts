@@ -100,7 +100,7 @@ type MockState = {
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
 type Unsubscribe = () => void;
-type CardViewer = { uid: string; isAdmin: boolean; seesOthers?: boolean };
+type CardViewer = { uid: string; isAdmin: boolean };
 
 export type MockBackendOptions = {
   storage?: StorageLike;
@@ -313,10 +313,9 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     return board;
   }
 
-  /** Same rule as firestore.rules: other members' cards show from step 2 on, or when the board is completed (D126, D129). */
-  function othersAreRevealed(boardId: string): boolean {
-    const board = state.boards[boardId];
-    return board?.status === "completed" || clampPhase(board?.phase) >= 2;
+  /** All non-hidden cards are readable regardless of phase; phase restriction was moved to the UI layer (D126 updated). */
+  function othersAreRevealed(_boardId: string): boolean {
+    return true;
   }
 
   function cardsOf(boardId: string): Record<string, StoredCard> {

@@ -22,6 +22,8 @@ type StickyNoteProps = {
   onStackDrop: (draggedCardId: string) => void;
   vote: CardVoteInfo;
   onAdminDelete: () => void;
+  /** True in step 1 for cards not written by the current user; content is blurred (D126 updated). */
+  blurred: boolean;
   onEdit: (cardId: string, text: string) => Promise<boolean>;
   onDelete: (cardId: string) => Promise<boolean>;
 };
@@ -44,6 +46,7 @@ export function StickyNote({
   authorName,
   canEdit,
   canDelete,
+  blurred,
   showAdminMenu,
   onToggleHidden,
   onMove,
@@ -72,7 +75,7 @@ export function StickyNote({
 
   return (
     <li
-      className={`board-card board-card-${card.columnId} ${card.hidden ? "board-card-hidden" : ""} ${showAdminMenu && !isEditing ? "board-card-draggable" : ""} ${isDropTarget ? "board-card-drop" : ""}`}
+      className={`board-card board-card-${card.columnId} ${card.hidden ? "board-card-hidden" : ""} ${blurred ? "board-card-blurred" : ""} ${showAdminMenu && !isEditing ? "board-card-draggable" : ""} ${isDropTarget ? "board-card-drop" : ""}`}
       draggable={showAdminMenu && !isEditing}
       onDragStart={(event) => {
         if (!showAdminMenu || isEditing) return;
