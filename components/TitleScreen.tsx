@@ -35,8 +35,7 @@ export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenPro
   return (
     <section
       aria-labelledby="title-screen-heading"
-      className="title-stage fixed inset-0 isolate flex flex-col items-center gap-5 overflow-hidden px-4 pt-6 pb-32"
-    >
+      className="title-stage relative isolate flex min-h-dvh flex-col items-center gap-5 overflow-hidden px-4 pt-6 pb-32"    >
       <PixelCloud className="pixel-drift absolute top-2 left-[6%] -z-10 w-24 sm:w-32" />
       <PixelCloud className="pixel-drift absolute top-10 right-[8%] -z-10 w-20 sm:w-28" />
 

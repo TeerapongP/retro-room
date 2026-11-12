@@ -983,7 +983,11 @@ body {
 }
 
 /* Content: Start panel 572 x 154 at 106 below the navbar; Retro label 136 x 53; empty panel 547 x 196. */
-.dashboard-content { display: grid; width: clamp(min(100%, 32rem), calc(572 * var(--u)), 100%); margin: max(2.5rem, calc(106 * var(--u))) auto 0; }
+.dashboard-content {
+  display: grid;
+  width: min(calc(100% - 2rem), 35.75rem);
+  margin: max(2.5rem, 6.625rem) auto 0;
+}
 .dashboard-panel { padding: max(0.75rem, calc(19.5 * var(--u))) max(1rem, calc(21 * var(--u))); }
 .dashboard-create-title { font-size: max(0.7rem, calc(18 * var(--u))); line-height: 1.2; margin-bottom: max(1rem, calc(22 * var(--u))); gap: max(0.65rem, calc(14 * var(--u))); }
 .dashboard-create-title .dashboard-sprout { width: max(1.5rem, calc(26 * var(--u))); height: max(1.5rem, calc(26 * var(--u))); }
