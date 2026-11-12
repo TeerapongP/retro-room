@@ -1,0 +1,70 @@
+TA GBA monothai_MAX & TA GBA monothai_Mini — FONTLOG
+===================================================
+
+Version: 1.000 (initial public release package, 2026)
+Designer: Taweechai Assawarangsitsang (TA Font)
+License: SIL Open Font License 1.1 (OFL-1.1)
+Website: https://isamart2530.myportfolio.com/
+
+1. PROJECT BACKGROUND / ที่มา
+-------------------------
+พัฒนาต่อยอดจากงานออกแบบฟอนต์ TA 8 Bit เพื่อทดลองการแสดงข้อความไทย
+บนหน้าจอเกมยุคเก่าและพื้นที่แสดงผลที่จำกัด โดยใช้การทดลองกับเกม
+และศึกษาข้อมูลทางเทคนิค โดยมี AI ช่วยด้านการสืบค้น/เรียนรู้ระหว่างพัฒนา
+
+The family grew from the experimental TA 8 Bit project, focused on
+Thai text for retro-game screens and constrained display areas.
+Development involved game-display testing and technical research,
+including AI-assisted research and learning.
+
+2. DESIGN / ลักษณะการออกแบบ
+---------------------------
+- Grid: 64-unit design steps; UPM: 1024.
+- Approach: semi-monospaced Thai and Latin pixel fonts.
+- MAX: generally 5 x 6 grid cells for common Thai base glyphs;
+  selected wide glyphs about 7 x 6; designed for easier dialogue reading.
+- Mini: generally 4 x 5 grid cells for common Thai base glyphs;
+  selected wide glyphs about 6 x 5; designed for very tight UI spaces.
+- Thai experiments: shortened extensions in ป ฝ ฟ ฤ ฏ ฎ and
+  simplified bases in ฐ ญ to save vertical space.
+- OpenType: Thai mark-positioning data (`mark`, `mkmk`) and alternate
+  mark handling; support varies by software and game engine.
+- Formats: TTF and OTF; single Regular weight in both families.
+
+3. RELEASE HISTORY / ประวัติเวอร์ชัน
+------------------------------------
+Version 1.000 — prepared for first public OFL release (2026)
+- Established the public family names TA GBA monothai_MAX and
+  TA GBA monothai_Mini, replacing the earlier TA 8 Bit naming.
+- Prepared the two experimental compact Thai pixel designs for
+  public use, modification, and redistribution under OFL 1.1.
+- Included TTF and OTF builds and copyright/Reserved Font Name metadata.
+- Completed local Windows installation and Thai-text display checks
+  reported by the designer before distribution.
+
+Earlier experimental development / งานก่อนรุ่นเผยแพร่
+- Explored compact pixel lettering for limited game displays.
+- Adjusted Thai letterforms and mark placement to manage constrained
+  space, with readability trade-offs noted by the designer.
+
+Earlier build dates and detailed patch numbers are not documented in
+the supplied project notes; no additional release versions are claimed.
+
+4. KNOWN LIMITATIONS / ข้อจำกัด
+-------------------------------
+- Experimental, simplified letterforms may be harder to read than
+  conventional Thai fonts, especially at very small sizes.
+- Shaping, rendering sharpness, and vertical-mark placement can vary
+  between software applications, browsers, and game engines.
+- Testing in selected environments does not guarantee universal support.
+
+5. CONTRIBUTIONS / การพัฒนาต่อ
+-----------------------------
+OFL 1.1 permits modification and redistribution subject to its terms.
+Modified fonts must not use the Reserved Font Names `monothai_MAX`
+and `monothai_Mini` as their primary font names without permission.
+Please preserve copyright, license information, and contribution history.
+
+Copyright (c) 2022-2026 Taweechai Assawarangsitsang (TA Font).
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+See OFL.txt for the full license.

@@ -1,0 +1,610 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function boardPath(boardId) {
+      return /databases/$(database)/documents/boards/$(boardId);
+    }
+
+    function memberPath(boardId, uid) {
+      return /databases/$(database)/documents/boards/$(boardId)/members/$(uid);
+    }
+
+    function isMember(boardId) {
+      return signedIn() && exists(memberPath(boardId, request.auth.uid));
+    }
+
+    // Verified admin account (D74). Rules enforce it; the client check only hides buttons.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.get('email', null) == 'thirapong.pin@ascendcorp.com'
+        && request.auth.token.get('email_verified', false) == true;
+    }
+
+    function cardPath(boardId, cardId) {
+      return /databases/$(database)/documents/boards/$(boardId)/cards/$(cardId);
+    }
+
+    function movePath(boardId, cardId) {
+      return /databases/$(database)/documents/boards/$(boardId)/cardMoves/$(cardId);
+    }
+
+    function isOwner(boardId) {
+      return isMember(boardId)
+        && get(memberPath(boardId, request.auth.uid)).data.role == 'owner';
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function validPlayerName(name) {
+      return name is string
+        && name.size() >= 1 && name.size() <= 20
+        && name.matches('.*[^\\s].*');
+    }
+
+    function validPhotoUrl(data) {
+      return data.get('photoURL', null) == null || data.photoURL is string;
+    }
+
+    function hasPlayerName(uid) {
+      return exists(userPath(uid)) && 'nameSetAt' in get(userPath(uid)).data;
+    }
+
+    function boardStatus(boardId) {
+      return get(boardPath(boardId)).data.get('status', 'in-progress');
+    }
+
+    function sessionInProgress(boardId) {
+      return boardStatus(boardId) == 'in-progress';
+    }
+
+    function validBoardTitle(title) {
+      return title is string && title.size() >= 1 && title.size() <= 80;
+    }
+
+    // The shared countdown of a board (F22, D111, D112): the admin changes only the timer fields, on an in-progress board.
+    function validTimerUpdate(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && data.diff(resource.data).affectedKeys().hasOnly(['timerEndsAt', 'timerDurationSec', 'updatedAt'])
+        && data.updatedAt == request.time
+        && (data.get('timerEndsAt', null) == null
+          || (data.timerEndsAt is timestamp
+            && data.timerEndsAt > request.time
+            && data.timerEndsAt <= request.time + duration.value(2, 'h')))
+        && (data.get('timerDurationSec', null) == null
+          || (data.timerDurationSec is int && data.timerDurationSec >= 1 && data.timerDurationSec <= 7200));
+    }
+
+    // The step of the session, 1 to 6 (F23, D117, D121): the admin changes only the step, on an in-progress board.
+    // Admin spins the next-host wheel in step 5 (F29, D149 to D152): the winner must be a member of the board.
+    function validHostSpin(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        // Once a Crowded Farm round exists on the board, results go through the farm rules only. A write that merely
+        // repeats the stored nextHostGameId looks like an old spin, so without this a stale game could overwrite
+        // the newer result (D158).
+        && !resource.data.keys().hasAny(['farmActiveGameId'])
+        && data.diff(resource.data).affectedKeys().hasOnly(['nextHostUid', 'nextHostSpunAt', 'updatedAt'])
+        && data.keys().hasAll(['nextHostUid', 'nextHostSpunAt'])
+        && data.updatedAt == request.time
+        && data.nextHostSpunAt == request.time
+        && data.nextHostUid is string
+        && data.nextHostUid.size() >= 1
+        && data.nextHostUid.size() <= 128
+        && exists(memberPath(boardId, data.nextHostUid));
+    }
+
+    // ---- Crowded Farm (F30, D153 to D162) ----
+    // The deadline is exactly 15 seconds after the server time stored in startedAt (no endsAt, D153). The Rules cannot
+    // check the scoring, the tie group or the random wheel pick: the admin is trusted for those (D161).
+    function gamePath(boardId, gameId) {
+      return /databases/$(database)/documents/boards/$(boardId)/farmGames/$(gameId);
+    }
+
+    function farmBeforeDeadline(boardId, gameId) {
+      return request.time < get(gamePath(boardId, gameId)).data.startedAt + duration.value(15, 's');
+    }
+
+    // A player is a member who joined no later than the game started. Memberships are append-only with joinedAt ==
+    // request.time, so the player list of a round cannot change after it starts (D154).
+    function farmPlayer(boardId, gameId, uid) {
+      return uid is string
+        && uid.size() >= 1
+        && uid.size() <= 128
+        && exists(memberPath(boardId, uid))
+        && get(memberPath(boardId, uid)).data.joinedAt <= get(gamePath(boardId, gameId)).data.startedAt;
+    }
+
+    // A new round may start when there is no round, the last one finished, or the last one was cancelled and its
+    // fallback wheel result is already stored (nextHostGameId == that game, D156).
+    function farmMayStart(boardId, previousGameId, resolvedGameId) {
+      return previousGameId == null
+        || get(gamePath(boardId, previousGameId)).data.status == 'finished'
+        || (get(gamePath(boardId, previousGameId)).data.status == 'cancelled'
+          && resolvedGameId == previousGameId);
+    }
+
+    // Who may become the next Host (D163): not the current Host and not a previous Host of this board. A board whose Host
+    // was never handed over is hosted by its owner. The lists are stored on the board document and only change in
+    // validHostHandover, so every result write is checked against data the admin cannot edit in the same write.
+    function mayBecomeNextHost(board, uid) {
+      return uid != board.get('hostUid', board.ownerId)
+        && !(uid in board.get('pastHostUids', []));
+    }
+
+    // Board side of "start a round": only the pointer changes and the new game is created in the same batch.
+    function validFarmPointer(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        && data.diff(resource.data).affectedKeys().hasOnly(['farmActiveGameId', 'updatedAt'])
+        && data.keys().hasAll(['farmActiveGameId', 'updatedAt'])
+        && data.updatedAt == request.time
+        && data.farmActiveGameId is string
+        && data.farmActiveGameId.size() >= 1
+        && data.farmActiveGameId.size() <= 64
+        && !exists(gamePath(boardId, data.farmActiveGameId))
+        && existsAfter(gamePath(boardId, data.farmActiveGameId))
+        && getAfter(gamePath(boardId, data.farmActiveGameId)).data.status == 'selecting'
+        && farmMayStart(boardId, resource.data.get('farmActiveGameId', null), resource.data.get('nextHostGameId', null));
+    }
+
+    // Board side of "store the result": either together with the game being finished in the same batch, or alone for a
+    // cancelled game's fallback wheel. A result is stored once per game and only for the active game (D157, D158).
+    function validFarmHostResult(boardId) {
+      let data = request.resource.data;
+      let gameId = data.get('nextHostGameId', null);
+      let affected = data.diff(resource.data).affectedKeys();
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        && gameId is string
+        && gameId == resource.data.get('farmActiveGameId', null)
+        && resource.data.get('nextHostGameId', null) != gameId
+        && data.updatedAt == request.time
+        && farmPlayer(boardId, gameId, data.nextHostUid)
+        && mayBecomeNextHost(resource.data, data.nextHostUid)
+        && (
+          (get(gamePath(boardId, gameId)).data.status == 'selecting'
+            && getAfter(gamePath(boardId, gameId)).data.status == 'finished'
+            && getAfter(gamePath(boardId, gameId)).data.winnerUid == data.nextHostUid
+            && (
+              (getAfter(gamePath(boardId, gameId)).data.resolution == 'direct'
+                && affected.hasOnly(['nextHostUid', 'nextHostGameId', 'updatedAt']))
+              || (getAfter(gamePath(boardId, gameId)).data.resolution in ['tie-wheel', 'all-wheel']
+                && affected.hasOnly(['nextHostUid', 'nextHostSpunAt', 'nextHostGameId', 'updatedAt'])
+                && data.nextHostSpunAt == request.time)
+            ))
+          || (get(gamePath(boardId, gameId)).data.status == 'cancelled'
+            && affected.hasOnly(['nextHostUid', 'nextHostSpunAt', 'nextHostGameId', 'updatedAt'])
+            && data.nextHostSpunAt == request.time)
+        );
+    }
+
+    // Game side of "finish": the game and the board are written together or not at all (getAfter checks the board).
+    function validFarmFinish(boardId, gameId) {
+      let data = request.resource.data;
+      let boardBefore = get(boardPath(boardId)).data;
+      let boardAfter = getAfter(boardPath(boardId)).data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && boardBefore.get('phase', 1) == 5
+        && boardBefore.get('farmActiveGameId', null) == gameId
+        && boardBefore.get('nextHostGameId', null) != gameId
+        && resource.data.status == 'selecting'
+        && request.time >= resource.data.startedAt + duration.value(15, 's')
+        && data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolution', 'winnerUid', 'resolvedAt'])
+        && data.keys().hasAll(['startedAt', 'status', 'resolution', 'winnerUid', 'resolvedAt'])
+        && data.status == 'finished'
+        && data.resolution in ['direct', 'tie-wheel', 'all-wheel']
+        && data.resolvedAt == request.time
+        && farmPlayer(boardId, gameId, data.winnerUid)
+        && mayBecomeNextHost(boardBefore, data.winnerUid)
+        && boardAfter.get('nextHostUid', null) == data.winnerUid
+        && boardAfter.get('nextHostGameId', null) == gameId
+        && (data.resolution == 'direct'
+          ? boardAfter.get('nextHostSpunAt', null) == boardBefore.get('nextHostSpunAt', null)
+          : boardAfter.get('nextHostSpunAt', null) == request.time);
+    }
+
+    // The admin hands the Host role to the stored next Host (D163): the old Host joins the past Hosts in the same write.
+    // Selecting someone as next Host never makes them a past Host. While a round is active its result must be stored.
+    function validHostHandover(boardId) {
+      let data = request.resource.data;
+      let host = resource.data.get('hostUid', resource.data.ownerId);
+      let past = resource.data.get('pastHostUids', []);
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        && data.diff(resource.data).affectedKeys().hasOnly(['hostUid', 'pastHostUids', 'updatedAt'])
+        && data.keys().hasAll(['hostUid', 'pastHostUids', 'updatedAt'])
+        && data.updatedAt == request.time
+        && resource.data.get('nextHostUid', null) is string
+        && data.hostUid == resource.data.nextHostUid
+        && mayBecomeNextHost(resource.data, data.hostUid)
+        && data.pastHostUids == past.concat([host])
+        && data.pastHostUids.size() <= 200
+        && (!('farmActiveGameId' in resource.data)
+          || resource.data.farmActiveGameId == resource.data.get('nextHostGameId', null));
+    }
+
+    // A cancelled game keeps no winner (D157).
+    function validFarmCancel(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && get(boardPath(boardId)).data.get('phase', 1) == 5
+        && get(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId
+        && resource.data.status == 'selecting'
+        && data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAt'])
+        && data.keys().hasOnly(['startedAt', 'status', 'resolvedAt'])
+        && data.status == 'cancelled'
+        && data.resolvedAt == request.time;
+    }
+
+    function validFarmChoice(boardId, gameId, uid) {
+      let data = request.resource.data;
+      let board = get(boardPath(boardId)).data;
+      return signedIn()
+        && request.auth.uid == uid
+        && isMember(boardId)
+        && board.get('status', 'in-progress') == 'in-progress'
+        && board.get('phase', 1) == 5
+        && board.get('farmActiveGameId', null) == gameId
+        && get(gamePath(boardId, gameId)).data.status == 'selecting'
+        && farmBeforeDeadline(boardId, gameId)
+        && farmPlayer(boardId, gameId, uid)
+        && data.keys().hasOnly(['field', 'updatedAt'])
+        && data.keys().hasAll(['field', 'updatedAt'])
+        && data.field in ['carrot', 'corn', 'strawberry']
+        && data.updatedAt == request.time;
+    }
+
+    function validPhaseUpdate(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && data.diff(resource.data).affectedKeys().hasOnly(['phase', 'updatedAt'])
+        && data.updatedAt == request.time
+        && data.phase is int
+        && data.phase >= 1
+        && data.phase <= 6;
+    }
+
+    // Other members' cards are readable from step 2 on, or when the board is completed (F24, D126, D129).
+    function cardsRevealed(boardId) {
+      let board = get(boardPath(boardId)).data;
+      return board.get('status', 'in-progress') == 'completed' || board.get('phase', 1) >= 2;
+    }
+
+    // Members create, edit and delete cards only in step 1; a board without a step counts as step 1 (F25, F27, D131, D143).
+    function writingOpen(boardId) {
+      return get(boardPath(boardId)).data.get('phase', 1) == 1;
+    }
+
+    // Votes can be placed only in step 3 (F26, D135).
+    function votingOpen(boardId) {
+      return get(boardPath(boardId)).data.get('phase', 1) == 3;
+    }
+
+    // Self ratings can be placed only in step 4 (F28, D145).
+    function ratingOpen(boardId) {
+      return get(boardPath(boardId)).data.get('phase', 1) == 4;
+    }
+
+    // A score from 1 to 5 in steps of 0.5 (D146).
+    function validRating(score) {
+      return score is number
+        && score >= 1
+        && score <= 5
+        && score * 2 == math.floor(score * 2);
+    }
+
+    function validVoteId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 64;
+    }
+
+    // At most 3 distinct card ids, each a short string (D137).
+    function validVotes(cardIds) {
+      return cardIds is list
+        && cardIds.size() <= 3
+        && cardIds.toSet().size() == cardIds.size()
+        && (cardIds.size() < 1 || validVoteId(cardIds[0]))
+        && (cardIds.size() < 2 || validVoteId(cardIds[1]))
+        && (cardIds.size() < 3 || validVoteId(cardIds[2]));
+    }
+
+    function validColumn(columnId) {
+      return columnId in ['went-well', 'to-improve', 'ideas'];
+    }
+
+    // A card's stack label (F21, D102): a short string, or null when it is not in a stack.
+    function validGroupId(data) {
+      return !('groupId' in data)
+        || data.groupId == null
+        || (data.groupId is string && data.groupId.size() >= 1 && data.groupId.size() <= 64);
+    }
+
+    function validCardText(text) {
+      return text is string && text.size() >= 1 && text.size() <= 500;
+    }
+
+    // Move of a card to another board (D77): admin only, one atomic batch of three writes
+    // (ledger, destination card, source delete) that Rules bind to each other with getAfter().
+    function validMovedCard(destBoardId, destCardId) {
+      let data = request.resource.data;
+      let sourceBoardId = data.movedFromBoardId;
+      let sourceCardId = data.movedFromCardId;
+      return isAdmin()
+        && data.keys().hasOnly(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt', 'movedFromBoardId', 'movedFromCardId'])
+        && data.keys().hasAll(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt', 'movedFromBoardId', 'movedFromCardId'])
+        && sourceBoardId is string && sourceCardId is string
+        && sourceBoardId != destBoardId
+        && sessionInProgress(destBoardId) && sessionInProgress(sourceBoardId)
+        && exists(cardPath(sourceBoardId, sourceCardId))
+        && !existsAfter(cardPath(sourceBoardId, sourceCardId))
+        && !exists(movePath(sourceBoardId, sourceCardId))
+        && !exists(movePath(destBoardId, destCardId))
+        && getAfter(movePath(sourceBoardId, sourceCardId)).data.destBoardId == destBoardId
+        && getAfter(movePath(sourceBoardId, sourceCardId)).data.destCardId == destCardId
+        && data.text == get(cardPath(sourceBoardId, sourceCardId)).data.text
+        && data.authorId == get(cardPath(sourceBoardId, sourceCardId)).data.authorId
+        && data.columnId == get(cardPath(sourceBoardId, sourceCardId)).data.columnId
+        && data.hidden == get(cardPath(sourceBoardId, sourceCardId)).data.get('hidden', false)
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function validMovedSourceDelete(boardId, cardId) {
+      let ledgerAfter = getAfter(movePath(boardId, cardId)).data;
+      let destinationAfter = getAfter(cardPath(ledgerAfter.destBoardId, ledgerAfter.destCardId)).data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && !exists(movePath(boardId, cardId))
+        && existsAfter(movePath(boardId, cardId))
+        && existsAfter(cardPath(ledgerAfter.destBoardId, ledgerAfter.destCardId))
+        && destinationAfter.movedFromBoardId == boardId
+        && destinationAfter.movedFromCardId == cardId;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'nameSetAt'])
+        && request.resource.data.keys().hasAll(['displayName', 'createdAt', 'nameSetAt'])
+        && validPlayerName(request.resource.data.displayName)
+        && validPhotoUrl(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.nameSetAt == request.time;
+      // Only a profile that has no player name yet may be updated, once.
+      allow update: if signedIn() && request.auth.uid == uid
+        && !('nameSetAt' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['displayName', 'photoURL', 'nameSetAt'])
+        && validPlayerName(request.resource.data.displayName)
+        && validPhotoUrl(request.resource.data)
+        && request.resource.data.nameSetAt == request.time;
+      allow delete: if false;
+    }
+
+    match /boards/{boardId} {
+      allow get: if signedIn();
+      // Only the admin may list boards (to pick a move destination, D80).
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['title', 'ownerId', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['title', 'ownerId', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.ownerId == request.auth.uid
+        && validBoardTitle(request.resource.data.title)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && getAfter(memberPath(boardId, request.auth.uid)).data.role == 'owner';
+      allow update: if (isOwner(boardId)
+        && request.resource.data.updatedAt == request.time
+        && (
+          // rename
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'updatedAt'])
+            && validBoardTitle(request.resource.data.title))
+          // start: waiting to in-progress
+          || (resource.data.get('status', 'in-progress') == 'waiting'
+            && request.resource.data.status == 'in-progress'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'startedAt', 'updatedAt'])
+            && request.resource.data.startedAt == request.time)
+          // complete: in-progress to completed
+          || (resource.data.get('status', 'in-progress') == 'in-progress'
+            && request.resource.data.status == 'completed'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'completedAt', 'updatedAt'])
+            && request.resource.data.completedAt == request.time)
+        ))
+        // admin resets a completed board back to waiting
+        || (isAdmin()
+          && resource.data.get('status', 'in-progress') == 'completed'
+          && request.resource.data.status == 'waiting'
+          && request.resource.data.updatedAt == request.time)
+        // admin starts or stops the shared timer (F22, D112)
+        || validTimerUpdate(boardId)
+        // admin moves the session step (F23, D121)
+        || validPhaseUpdate(boardId)
+        // admin spins the next-host wheel (F29, D149)
+        || validHostSpin(boardId)
+        // Crowded Farm (F30): start a round, store its result
+        || validFarmPointer(boardId)
+        || validFarmHostResult(boardId)
+        // The Host role passes to the stored next Host (F30, D163)
+        || validHostHandover(boardId);
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow get: if signedIn() && request.auth.uid == uid;
+        allow list: if isMember(boardId);
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'joinedAt'])
+          && request.resource.data.keys().hasAll(['uid', 'role', 'displayName', 'joinedAt'])
+          && request.resource.data.uid == uid
+          && hasPlayerName(uid)
+          && request.resource.data.displayName == get(userPath(uid)).data.displayName
+          && request.resource.data.joinedAt == request.time
+          && (
+            (request.resource.data.role == 'member'
+              && exists(boardPath(boardId)))
+            || (request.resource.data.role == 'owner'
+              && !exists(boardPath(boardId))
+              && getAfter(boardPath(boardId)).data.ownerId == uid)
+          );
+        allow update, delete: if false;
+      }
+
+      match /cards/{cardId} {
+        // Rules are not filters: members must query with hidden == false or authorId == uid (D76).
+        // The plain `resource.data.hidden == false` form is required: the `get('hidden', false)` form
+        // let an unfiltered member query return hidden cards in the emulator (spike, 2026-11-06).
+        // A card without a hidden field is therefore readable by its author and the admin only.
+        // In step 1 (writing) a member reads only their own cards; from step 2 on, or once the board is
+        // completed, every card that is not hidden (F24, D126 to D130).
+        allow read: if isAdmin()
+          || (isMember(boardId)
+            && (resource.data.authorId == request.auth.uid
+              || (resource.data.hidden == false && cardsRevealed(boardId))));
+        allow create: if (isMember(boardId)
+            && sessionInProgress(boardId)
+            && writingOpen(boardId)
+            && request.resource.data.keys().hasOnly(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])
+            && request.resource.data.keys().hasAll(['columnId', 'text', 'authorId', 'hidden', 'createdAt', 'updatedAt'])
+            && request.resource.data.authorId == request.auth.uid
+            && request.resource.data.hidden == false
+            && validColumn(request.resource.data.columnId)
+            && validCardText(request.resource.data.text)
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && !exists(movePath(boardId, cardId)))
+          || validMovedCard(boardId, cardId);
+        allow update: if (isMember(boardId)
+            && sessionInProgress(boardId)
+            && writingOpen(boardId)
+            && resource.data.authorId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'updatedAt'])
+            && validCardText(request.resource.data.text)
+            && request.resource.data.updatedAt == request.time)
+          // admin hide / unhide (D75)
+          || (isAdmin()
+            && sessionInProgress(boardId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hidden', 'updatedAt'])
+            && request.resource.data.hidden is bool
+            && request.resource.data.updatedAt == request.time)
+          // admin stacks or unstacks a card, optionally moving it to the column of its stack (D102 to D106)
+          || (isAdmin()
+            && sessionInProgress(boardId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupId', 'columnId', 'updatedAt'])
+            && validGroupId(request.resource.data)
+            && validColumn(request.resource.data.columnId)
+            && request.resource.data.updatedAt == request.time)
+          // admin moves a card to another column of the same board (D101)
+          || (isAdmin()
+            && sessionInProgress(boardId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['columnId', 'updatedAt'])
+            && validColumn(request.resource.data.columnId)
+            && request.resource.data.updatedAt == request.time);
+        allow delete: if (isMember(boardId)
+            && sessionInProgress(boardId)
+            && writingOpen(boardId)
+            && (resource.data.authorId == request.auth.uid || isOwner(boardId)))
+          // The admin may delete any card of an in-progress board (D100). The move still needs its ledger to create
+          // the copy, so a copy cannot be made without deleting the source.
+          || (isAdmin() && sessionInProgress(boardId))
+          || validMovedSourceDelete(boardId, cardId);
+      }
+
+      // One document per voter (F26, D135 to D138): up to 3 distinct card ids, written by the member only while the
+      // board is in progress and in step 3. Members and the admin read all voter documents.
+      match /voters/{uid} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && isMember(boardId)
+          && sessionInProgress(boardId)
+          && votingOpen(boardId)
+          && request.resource.data.keys().hasOnly(['cardIds', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['cardIds', 'updatedAt'])
+          && validVotes(request.resource.data.cardIds)
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if signedIn() && request.auth.uid == uid
+          && isMember(boardId)
+          && sessionInProgress(boardId)
+          && votingOpen(boardId);
+      }
+
+      // One self rating per member (F28, D145 to D148): a score from 1 to 5 in steps of 0.5, written by the member only
+      // while the board is in progress and in step 4. Members and the admin read all ratings. There is no delete.
+      match /ratings/{uid} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && isMember(boardId)
+          && sessionInProgress(boardId)
+          && ratingOpen(boardId)
+          && request.resource.data.keys().hasOnly(['score', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['score', 'updatedAt'])
+          && validRating(request.resource.data.score)
+          && request.resource.data.updatedAt == request.time;
+      }
+
+      // Crowded Farm rounds (F30, D153 to D162). Choices are private until the deadline: before it a member can only
+      // `get` their own choice and cannot `list`; after it every member can read all choices to work out the result.
+      match /farmGames/{gameId} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow create: if isAdmin()
+          && sessionInProgress(boardId)
+          && get(boardPath(boardId)).data.get('phase', 1) == 5
+          && request.resource.data.keys().hasOnly(['startedAt', 'status'])
+          && request.resource.data.keys().hasAll(['startedAt', 'status'])
+          && request.resource.data.startedAt == request.time
+          && request.resource.data.status == 'selecting'
+          && getAfter(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId;
+        allow update: if validFarmFinish(boardId, gameId) || validFarmCancel(boardId, gameId);
+        allow delete: if false;
+
+        match /choices/{uid} {
+          allow get: if (signedIn() && request.auth.uid == uid && isMember(boardId))
+            || ((isMember(boardId) || isAdmin()) && !farmBeforeDeadline(boardId, gameId));
+          allow list: if (isMember(boardId) || isAdmin()) && !farmBeforeDeadline(boardId, gameId);
+          allow create, update: if validFarmChoice(boardId, gameId, uid);
+          allow delete: if false;
+        }
+      }
+
+      // Ledger of moved cards (D77): created once together with the move, then immutable.
+      match /cardMoves/{cardId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.keys().hasOnly(['destBoardId', 'destCardId', 'movedAt'])
+          && request.resource.data.destBoardId is string
+          && request.resource.data.destCardId is string
+          && request.resource.data.destBoardId != boardId
+          && request.resource.data.movedAt == request.time
+          && sessionInProgress(boardId)
+          && sessionInProgress(request.resource.data.destBoardId)
+          && exists(cardPath(boardId, cardId))
+          && !existsAfter(cardPath(boardId, cardId))
+          && existsAfter(cardPath(request.resource.data.destBoardId, request.resource.data.destCardId))
+          && getAfter(cardPath(request.resource.data.destBoardId, request.resource.data.destCardId)).data.movedFromBoardId == boardId
+          && getAfter(cardPath(request.resource.data.destBoardId, request.resource.data.destCardId)).data.movedFromCardId == cardId;
+        allow update, delete: if false;
+      }
+    }
+
+    match /{path=**}/members/{uid} {
+      allow list: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

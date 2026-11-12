@@ -1,0 +1,378 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  createBoard,
+  getOwnMembership,
+  joinBoard,
+  completeSession,
+  setPhase,
+  startSession,
+  subscribeToBoard,
+  subscribeToMembers,
+  subscribeToMemberships,
+} from "@/lib/firebase/boards";
+import { addCard, deleteCard, editCard, setCardHidden, subscribeToCards } from "@/lib/firebase/cards";
+import type { Board, BoardCard, BoardMember, DashboardBoard } from "@/lib/firebase/types";
+import { ADMIN_EMAIL } from "@/lib/firebase/admin";
+import { createTestUser, pause, resetEmulators, waitUntil, type TestUser } from "./helpers";
+
+let userA: TestUser;
+let userB: TestUser;
+let userC: TestUser;
+let admin: TestUser;
+
+beforeEach(async () => {
+  await resetEmulators();
+  userA = await createTestUser("user-a", "User A");
+  userB = await createTestUser("user-b", "User B");
+  userC = await createTestUser("user-c", "User C");
+  admin = await createTestUser("admin", "Admin", { email: ADMIN_EMAIL });
+});
+
+afterEach(async () => {
+  await resetEmulators();
+});
+
+async function createBoardAsA(title = "Sprint 1"): Promise<string> {
+  return createBoard(userA.user, title, userA.name, userA.db);
+}
+
+describe("board creation and sharing", () => {
+  it(`should give the creator an owner membership when a board is created`, async () => {
+    const boardId = await createBoardAsA();
+
+    const membership = await getOwnMembership(boardId, userA.uid, userA.db);
+
+    expect(membership).toMatchObject({ uid: userA.uid, role: "owner", displayName: "User A" });
+  });
+
+  it(`should let a second user see the board but not a membership when opening the shared link`, async () => {
+    const boardId = await createBoardAsA("Shared board");
+    let board: Board | null | undefined;
+    const unsubscribe = subscribeToBoard(boardId, (next) => (board = next), fail, userB.db);
+
+    await waitUntil(() => board !== undefined);
+    const membership = await getOwnMembership(boardId, userB.uid, userB.db);
+    unsubscribe();
+
+    expect(board?.title).toBe("Shared board");
+    expect(membership).toBeNull();
+  });
+
+  it(`should report a missing board as null when the link is wrong`, async () => {
+    let board: Board | null | undefined;
+    const unsubscribe = subscribeToBoard("doesNotExist", (next) => (board = next), fail, userB.db);
+
+    await waitUntil(() => board !== undefined);
+    unsubscribe();
+
+    expect(board).toBeNull();
+  });
+
+  it(`should add the second user as member when they join`, async () => {
+    const boardId = await createBoardAsA();
+
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+
+    expect(await getOwnMembership(boardId, userB.uid, userB.db)).toMatchObject({
+      role: "member",
+      displayName: "User B",
+    });
+  });
+
+  it(`should reject joining twice when already a member`, async () => {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+
+    await expect(joinBoard(boardId, userB.user, userB.name, userB.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+  });
+
+  it(`should deny joining a board that does not exist when the link is wrong`, async () => {
+    await expect(joinBoard("doesNotExist", userB.user, userB.name, userB.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+  });
+});
+
+describe("membership views", () => {
+  it(`should list only own boards on the dashboard, newest joined first`, async () => {
+    const firstBoardId = await createBoardAsA("First");
+    await pause(50);
+    const secondBoardId = await createBoardAsA("Second");
+    await joinBoard(firstBoardId, userB.user, userB.name, userB.db);
+    let boardsOfA: DashboardBoard[] | undefined;
+    let boardsOfB: DashboardBoard[] | undefined;
+    let boardsOfC: DashboardBoard[] | undefined;
+    const unsubscribers = [
+      subscribeToMemberships(userA.uid, (next) => (boardsOfA = next), fail, userA.db),
+      subscribeToMemberships(userB.uid, (next) => (boardsOfB = next), fail, userB.db),
+      subscribeToMemberships(userC.uid, (next) => (boardsOfC = next), fail, userC.db),
+    ];
+
+    await waitUntil(() => !!boardsOfA && !!boardsOfB && !!boardsOfC);
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+
+    expect(boardsOfA?.map((board) => board.boardId)).toEqual([secondBoardId, firstBoardId]);
+    expect(boardsOfB?.map((board) => [board.boardId, board.role])).toEqual([[firstBoardId, "member"]]);
+    expect(boardsOfC).toEqual([]);
+  });
+
+  it(`should show the member list to members when someone joins`, async () => {
+    const boardId = await createBoardAsA();
+    let members: BoardMember[] = [];
+    const unsubscribe = subscribeToMembers(boardId, (next) => (members = next), fail, userA.db);
+    await waitUntil(() => members.length === 1);
+
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+    await waitUntil(() => members.length === 2);
+    unsubscribe();
+
+    expect(members.map((member) => member.displayName).sort()).toEqual(["User A", "User B"]);
+  });
+
+  it(`should deny reading the member list when not a member`, async () => {
+    const boardId = await createBoardAsA();
+    let errorCode: string | undefined;
+    const unsubscribe = subscribeToMembers(
+      boardId,
+      () => {},
+      (error) => (errorCode = (error as { code: string }).code),
+      userC.db,
+    );
+
+    await waitUntil(() => errorCode !== undefined);
+    unsubscribe();
+
+    expect(errorCode).toBe("permission-denied");
+  });
+});
+
+describe("session lifecycle", () => {
+  function watchBoard(boardId: string, user: TestUser) {
+    const state = { board: undefined as Board | null | undefined };
+    const unsubscribe = subscribeToBoard(boardId, (next) => (state.board = next), fail, user.db);
+    return { state, unsubscribe };
+  }
+
+  it(`should create boards in the waiting status`, async () => {
+    const boardId = await createBoardAsA();
+    const watcher = watchBoard(boardId, userA);
+
+    await waitUntil(() => watcher.state.board !== undefined);
+    watcher.unsubscribe();
+
+    expect(watcher.state.board?.status).toBe("waiting");
+  });
+
+  it(`should move the member into the session in real time when the owner starts`, async () => {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+    const watcherB = watchBoard(boardId, userB);
+    await waitUntil(() => watcherB.state.board?.status === "waiting");
+
+    await startSession(boardId, userA.db);
+    await waitUntil(() => watcherB.state.board?.status === "in-progress");
+    watcherB.unsubscribe();
+  });
+
+  it(`should deny a member and a non-member starting the session`, async () => {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+
+    await expect(startSession(boardId, userB.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(startSession(boardId, userC.db)).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it(`should deny adding cards before the session starts`, async () => {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+
+    await expect(
+      addCard(boardId, userB.user, "ideas", "Too early", userB.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it(`should keep a completed session read-only and not restartable`, async () => {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+    await startSession(boardId, userA.db);
+    await addCard(boardId, userB.user, "ideas", "Kept", userB.db);
+
+    await expect(completeSession(boardId, userB.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await completeSession(boardId, userA.db);
+
+    await expect(
+      addCard(boardId, userB.user, "ideas", "Too late", userB.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(startSession(boardId, userA.db)).rejects.toMatchObject({ code: "permission-denied" });
+    const watcherB = { cards: undefined as BoardCard[] | undefined };
+    const unsubscribe = subscribeToCards(
+      boardId,
+      { uid: userB.uid, isAdmin: false, seesOthers: true },
+      (next) => (watcherB.cards = next),
+      fail,
+      userB.db,
+    );
+    await waitUntil(() => watcherB.cards !== undefined);
+    unsubscribe();
+    expect(watcherB.cards?.map((card) => card.text)).toEqual(["Kept"]);
+  });
+});
+
+describe("real-time cards", () => {
+  /** A board in step 1: writing is open and members read only their own cards (D126, D131). */
+  async function boardWithAAndB(): Promise<string> {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+    await startSession(boardId, userA.db);
+    return boardId;
+  }
+
+  /** The admin moves the board to the review step: everyone reads all cards, nobody can add one (D126, D131). */
+  async function startReview(boardId: string): Promise<void> {
+    await setPhase(boardId, 2, admin.db);
+  }
+
+  function watchCards(boardId: string, user: TestUser, seesOthers = true) {
+    const state = { cards: undefined as BoardCard[] | undefined, calls: 0 };
+    const unsubscribe = subscribeToCards(
+      boardId,
+      { uid: user.uid, isAdmin: false, seesOthers },
+      (next) => {
+        state.cards = next;
+        state.calls += 1;
+      },
+      fail,
+      user.db,
+    );
+    return { state, unsubscribe };
+  }
+
+  it(`should deliver a card from user A to user B only after the admin starts the review`, async () => {
+    const boardId = await boardWithAAndB();
+    await addCard(boardId, userA.user, "went-well", "Shipped on time", userA.db);
+    const writingB = watchCards(boardId, userB, false);
+    await waitUntil(() => writingB.state.cards !== undefined);
+    expect(writingB.state.cards).toEqual([]);
+    writingB.unsubscribe();
+
+    await startReview(boardId);
+    const reviewB = watchCards(boardId, userB);
+    await waitUntil(() => reviewB.state.cards?.length === 1);
+    reviewB.unsubscribe();
+
+    expect(reviewB.state.cards?.[0]).toMatchObject({
+      text: "Shipped on time",
+      columnId: "went-well",
+      authorId: userA.uid,
+    });
+  });
+
+  it(`should deny adding a card once the board is in the review step`, async () => {
+    const boardId = await boardWithAAndB();
+    await startReview(boardId);
+
+    await expect(
+      addCard(boardId, userB.user, "ideas", "Too late for writing", userB.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(
+      addCard(boardId, userA.user, "ideas", "Owner too late", userA.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it(`should let an author see their own edits and deletes in real time in step 1`, async () => {
+    const boardId = await boardWithAAndB();
+    const writerB = watchCards(boardId, userB, false);
+    await addCard(boardId, userB.user, "ideas", "First draft", userB.db);
+    await waitUntil(() => writerB.state.cards?.length === 1);
+    const cardId = writerB.state.cards![0].id;
+
+    await editCard(boardId, cardId, "Edited", userB.db);
+    await waitUntil(() => writerB.state.cards?.[0]?.text === "Edited");
+    await deleteCard(boardId, cardId, userB.db);
+    await waitUntil(() => writerB.state.cards?.length === 0);
+    writerB.unsubscribe();
+  });
+
+  it(`should deny editing and deleting once the board is in the review step`, async () => {
+    const boardId = await boardWithAAndB();
+    await addCard(boardId, userB.user, "ideas", "B's card", userB.db);
+    const writerB = watchCards(boardId, userB, false);
+    await waitUntil(() => writerB.state.cards?.length === 1);
+    const cardId = writerB.state.cards![0].id;
+    writerB.unsubscribe();
+    await startReview(boardId);
+
+    await expect(editCard(boardId, cardId, "Late edit", userB.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(deleteCard(boardId, cardId, userB.db)).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(deleteCard(boardId, cardId, userA.db)).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it(`should deny a member editing or deleting another member's card`, async () => {
+    const boardId = await boardWithAAndB();
+    await addCard(boardId, userA.user, "to-improve", "A's card", userA.db);
+    const writerA = watchCards(boardId, userA, false);
+    await waitUntil(() => writerA.state.cards?.length === 1);
+    const cardId = writerA.state.cards![0].id;
+    writerA.unsubscribe();
+
+    await expect(editCard(boardId, cardId, "Hacked", userB.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+    await expect(deleteCard(boardId, cardId, userB.db)).rejects.toMatchObject({
+      code: "permission-denied",
+    });
+  });
+
+  it(`should let the owner delete a member's card in step 1`, async () => {
+    const boardId = await boardWithAAndB();
+    await addCard(boardId, userB.user, "ideas", "B's card", userB.db);
+    const adminView = { cards: undefined as BoardCard[] | undefined };
+    const stopAdmin = subscribeToCards(boardId, { uid: admin.uid, isAdmin: true, seesOthers: true }, (next) => (adminView.cards = next), fail, admin.db);
+    await waitUntil(() => adminView.cards?.length === 1);
+
+    await deleteCard(boardId, adminView.cards![0].id, userA.db);
+    await waitUntil(() => adminView.cards?.length === 0);
+    stopAdmin();
+  });
+
+  it(`should deny reading and writing cards when not a member`, async () => {
+    const boardId = await boardWithAAndB();
+    let errorCode: string | undefined;
+    const unsubscribe = subscribeToCards(
+      boardId,
+      { uid: userC.uid, isAdmin: false, seesOthers: false },
+      () => {},
+      (error) => (errorCode = (error as { code: string }).code),
+      userC.db,
+    );
+
+    await waitUntil(() => errorCode !== undefined);
+    unsubscribe();
+
+    expect(errorCode).toBe("permission-denied");
+    await expect(
+      addCard(boardId, userC.user, "ideas", "Intruder", userC.db),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it(`should stop delivering updates when the listener is unsubscribed`, async () => {
+    const boardId = await boardWithAAndB();
+    await addCard(boardId, userA.user, "ideas", "A's card", userA.db);
+    await startReview(boardId);
+    const watcherB = watchCards(boardId, userB);
+    await waitUntil(() => watcherB.state.cards?.length === 1);
+    watcherB.unsubscribe();
+    const callsAfterUnsubscribe = watcherB.state.calls;
+
+    await setCardHidden(boardId, watcherB.state.cards![0].id, true, admin.db);
+    await pause(400);
+
+    expect(watcherB.state.calls).toBe(callsAfterUnsubscribe);
+  });
+});
+
+function fail(error: unknown): never {
+  throw error instanceof Error ? error : new Error(String(error));
+}

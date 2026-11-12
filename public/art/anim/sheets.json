@@ -1,0 +1,52 @@
+{
+  "flowers-white-1-sway": {
+    "frames": 4,
+    "frameWidth": 176,
+    "frameHeight": 143,
+    "pad": 3
+  },
+  "flowers-white-2-sway": {
+    "frames": 4,
+    "frameWidth": 149,
+    "frameHeight": 125,
+    "pad": 3
+  },
+  "flowers-white-3-sway": {
+    "frames": 4,
+    "frameWidth": 170,
+    "frameHeight": 125,
+    "pad": 3
+  },
+  "flowers-yellow-1-sway": {
+    "frames": 4,
+    "frameWidth": 135,
+    "frameHeight": 240,
+    "pad": 3
+  },
+  "flowers-yellow-2-sway": {
+    "frames": 4,
+    "frameWidth": 108,
+    "frameHeight": 223,
+    "pad": 3
+  },
+  "flowers-pink-1-sway": {
+    "frames": 4,
+    "frameWidth": 143,
+    "frameHeight": 129,
+    "pad": 3
+  },
+  "flowers-pink-2-sway": {
+    "frames": 4,
+    "frameWidth": 159,
+    "frameHeight": 135,
+    "pad": 3
+  },
+  "dog-wag": {
+    "frames": 4,
+    "frameWidth": 177,
+    "frameHeight": 152,
+    "pad": 0,
+    "padTop": 8,
+    "padRight": 10
+  }
+}
