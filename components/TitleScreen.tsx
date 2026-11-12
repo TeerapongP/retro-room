@@ -35,7 +35,7 @@ export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenPro
   return (
     <section
       aria-labelledby="title-screen-heading"
-      className="title-stage relative isolate flex h-dvh flex-col items-center gap-5 overflow-hidden px-4 pt-6 pb-32"
+      className="title-stage fixed inset-0 isolate flex flex-col items-center gap-5 overflow-hidden px-4 pt-6 pb-32"
     >
       {/* Countryside backdrop – same art used by the dashboard */}
       <div
