@@ -281,12 +281,6 @@ service cloud.firestore {
         && data.phase <= 6;
     }
 
-    // Other members' cards are readable from step 2 on, or when the board is completed (F24, D126, D129).
-    function cardsRevealed(boardId) {
-      let board = get(boardPath(boardId)).data;
-      return board.get('status', 'in-progress') == 'completed' || board.get('phase', 1) >= 2;
-    }
-
     // Members create, edit and delete cards only in step 1; a board without a step counts as step 1 (F25, F27, D131, D143).
     function writingOpen(boardId) {
       return get(boardPath(boardId)).data.get('phase', 1) == 1;
