@@ -37,24 +37,6 @@ export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenPro
       aria-labelledby="title-screen-heading"
       className="title-stage fixed inset-0 isolate flex flex-col items-center gap-5 overflow-hidden px-4 pt-6 pb-32"
     >
-      {/* Countryside backdrop – same art used by the dashboard */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-        style={{ zIndex: -20, background: "#0e94fd" }}
-      >
-        <div
-          className="login-pixel absolute bottom-0"
-          style={{
-            left: "calc((100vw - max(100vw, calc(100dvh * 1852 / 849))) * 0.3)",
-            width: "max(100vw, calc(100dvh * 1852 / 849))",
-            aspectRatio: "1852 / 849",
-            backgroundImage: "url('/art/dashboard/countryside.png')",
-            backgroundSize: "100% 100%",
-          }}
-        />
-      </div>
-
       <PixelCloud className="pixel-drift absolute top-2 left-[6%] -z-10 w-24 sm:w-32" />
       <PixelCloud className="pixel-drift absolute top-10 right-[8%] -z-10 w-20 sm:w-28" />
 
