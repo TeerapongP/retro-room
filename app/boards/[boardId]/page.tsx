@@ -315,7 +315,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         {actionError ? <CenterAlert tone="error" message={actionError} onClose={() => setActionError(null)} /> : null}
         <TitleScreen
           board={board}
-          isOwner={isOwner}
+          isAdmin={isAdmin}
           members={members}
           onStart={() => runAction(() => startSession(board.id))}
         />

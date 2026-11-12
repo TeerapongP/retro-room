@@ -6,12 +6,12 @@ import type { Board, BoardMember } from "@/lib/firebase/types";
 
 type TitleScreenProps = {
   board: Board;
-  isOwner: boolean;
+  isAdmin: boolean;
   members: BoardMember[];
   onStart: () => Promise<boolean>;
 };
 
-export function TitleScreen({ board, isOwner, members, onStart }: TitleScreenProps) {
+export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenProps) {
   const [isStarting, setIsStarting] = useState(false);
 
   async function handleStart() {
@@ -48,7 +48,7 @@ export function TitleScreen({ board, isOwner, members, onStart }: TitleScreenPro
         </ul>
       </div>
 
-      {isOwner ? (
+      {isAdmin ? (
         <div className="flex flex-col items-center gap-3 text-center">
           <button
             type="button"
