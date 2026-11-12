@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import {
   FarmError,
+  excludedHostUids,
   isFarmFieldId,
   type FarmChoice,
   type FarmFieldId,
@@ -131,6 +132,16 @@ export async function chooseFarmField(
   });
 }
 
+/** True when the uid is the current Host or a previous Host of the board (D163): they may not become the next Host. */
+function isExcludedHost(board: DocumentData, uid: string): boolean {
+  const past: unknown = board.pastHostUids;
+  return excludedHostUids({
+    ownerId: String(board.ownerId),
+    hostUid: typeof board.hostUid === "string" ? board.hostUid : null,
+    pastHostUids: Array.isArray(past) ? past.filter((entry): entry is string => typeof entry === "string") : [],
+  }).includes(uid);
+}
+
 function isBoardOpenForFarm(board: DocumentData | undefined): board is DocumentData {
   return board !== undefined && (board.status ?? "in-progress") === "in-progress" && board.phase === 5;
 }
@@ -183,13 +194,11 @@ export async function finishFarmGame(
   if (isMockMode()) return getMockBackend().finishFarmGame(boardId, gameId, winnerUid, resolution);
   const boardRef = doc(db, "boards", boardId);
   const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
-  const winnerRef = doc(db, "boards", boardId, "members", winnerUid);
   await runTransaction(
     db,
     async (transaction) => {
       const board = (await transaction.get(boardRef)).data();
       const game = (await transaction.get(gameRef)).data();
-      const winner = (await transaction.get(winnerRef)).data();
       if (!isBoardOpenForFarm(board) || board.farmActiveGameId !== gameId || !game) {
         throw new FarmError("not-active", "This round is not the active round");
       }
@@ -197,11 +206,10 @@ export async function finishFarmGame(
         throw new FarmError("already-resolved", "This round already has a result");
       }
       if (game.status !== "selecting") throw new FarmError("not-active", "This round was cancelled");
-      const joinedAt = winner?.joinedAt;
-      const startedAt = game.startedAt;
-      if (!(joinedAt instanceof Timestamp) || !(startedAt instanceof Timestamp) || joinedAt.toMillis() >= startedAt.toMillis()) {
-        throw new FarmError("not-eligible", "The winner did not play this round");
+      if (isExcludedHost(board, winnerUid)) {
+        throw new FarmError("host-excluded", "The current or a previous Host cannot be next Host");
       }
+      // Whether the winner played is checked by the Rules (farmPlayer): a member can only `get` their own member document.
       transaction.update(gameRef, { status: "finished", resolution, winnerUid, resolvedAt: serverTimestamp() });
       transaction.update(boardRef, {
         nextHostUid: winnerUid,
@@ -248,28 +256,56 @@ export async function storeCancelledFarmFallback(
   if (isMockMode()) return getMockBackend().storeCancelledFarmFallback(boardId, gameId, winnerUid);
   const boardRef = doc(db, "boards", boardId);
   const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
-  const winnerRef = doc(db, "boards", boardId, "members", winnerUid);
   await runTransaction(
     db,
     async (transaction) => {
       const board = (await transaction.get(boardRef)).data();
       const game = (await transaction.get(gameRef)).data();
-      const winner = (await transaction.get(winnerRef)).data();
       if (!isBoardOpenForFarm(board) || board.farmActiveGameId !== gameId || game?.status !== "cancelled") {
         throw new FarmError("not-active", "This round is not the active cancelled round");
       }
       if (board.nextHostGameId === gameId) {
         throw new FarmError("already-resolved", "The fallback result is already stored");
       }
-      const joinedAt = winner?.joinedAt;
-      const startedAt = game.startedAt;
-      if (!(joinedAt instanceof Timestamp) || !(startedAt instanceof Timestamp) || joinedAt.toMillis() >= startedAt.toMillis()) {
-        throw new FarmError("not-eligible", "The winner did not play this round");
+      if (isExcludedHost(board, winnerUid)) {
+        throw new FarmError("host-excluded", "The current or a previous Host cannot be next Host");
       }
+      // Whether the winner played is checked by the Rules (farmPlayer): a member can only `get` their own member document.
       transaction.update(boardRef, {
         nextHostUid: winnerUid,
         nextHostSpunAt: serverTimestamp(),
         nextHostGameId: gameId,
+        updatedAt: serverTimestamp(),
+      });
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+/**
+ * Hands the Host role to the stored next Host (D163): the old Host moves to `pastHostUids` and the next Host becomes
+ * `hostUid`, in one write. Nobody becomes a previous Host just by being selected; only this call makes the change.
+ */
+export async function handOverHost(boardId: string, db: Firestore = getFirebaseFirestore()): Promise<void> {
+  if (isMockMode()) return getMockBackend().handOverHost(boardId);
+  const boardRef = doc(db, "boards", boardId);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const board = (await transaction.get(boardRef)).data();
+      if (!isBoardOpenForFarm(board)) throw new FarmError("not-active", "The board is not in step 5");
+      const nextHostUid: unknown = board.nextHostUid;
+      const activeGameId: unknown = board.farmActiveGameId;
+      if (typeof nextHostUid !== "string" || (typeof activeGameId === "string" && board.nextHostGameId !== activeGameId)) {
+        throw new FarmError("no-next-host", "There is no stored next Host to hand over to");
+      }
+      if (isExcludedHost(board, nextHostUid)) throw new FarmError("host-excluded", "This person already is or was the Host");
+      const past: unknown = board.pastHostUids;
+      const pastHostUids = Array.isArray(past) ? past.filter((entry): entry is string => typeof entry === "string") : [];
+      const currentHostUid = typeof board.hostUid === "string" ? board.hostUid : String(board.ownerId);
+      transaction.update(boardRef, {
+        hostUid: nextHostUid,
+        pastHostUids: [...pastHostUids, currentHostUid],
         updatedAt: serverTimestamp(),
       });
     },

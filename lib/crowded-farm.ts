@@ -35,27 +35,52 @@ export type FieldTally = {
   playerCount: number;
   /** Score rounded to two decimals, in hundredths. For display only; never used to pick the winner. */
   scoreHundredths: number;
+  /** The best score of all players, excluded Hosts included. */
   isBest: boolean;
+  /** The best score among the fields that hold at least one player who may become the next Host. */
+  isBestEligible: boolean;
 };
 
 export type FarmOutcome =
   | { kind: "direct"; winnerUid: string }
   | { kind: "tie-wheel"; candidateUids: string[] }
-  | { kind: "all-wheel"; candidateUids: string[] };
+  | { kind: "all-wheel"; candidateUids: string[] }
+  /** Nobody who may become the next Host is left (every player is the current or a previous Host). */
+  | { kind: "none" };
 
 export type FarmReveal = {
   outcome: FarmOutcome;
   tallies: FieldTally[];
   /** True when at least one player chose a field themselves. */
   hasExplicitChoice: boolean;
+  /** The field of every player, chosen or assigned. Empty when nobody chose. */
+  fieldByUid: Record<string, FarmFieldId>;
+  /** Players who may become the next Host, and players who may not. Both groups play and score. */
+  eligibleUids: string[];
+  excludedUids: string[];
 };
+
+/** What the board stores about who hosts (D163): the Host of now and everyone who handed the role over. */
+export type FarmHostInfo = { ownerId: string; hostUid: string | null; pastHostUids: ReadonlyArray<string> };
+
+/** The current Host; a board whose Host was never handed over is hosted by its owner (D163). */
+export function currentHostUid(info: FarmHostInfo): string {
+  return info.hostUid ?? info.ownerId;
+}
+
+/** Everyone who may not become the next Host: the current Host and every previous Host of this board. */
+export function excludedHostUids(info: FarmHostInfo): string[] {
+  return [...new Set([currentHostUid(info), ...info.pastHostUids])].sort();
+}
 
 export type FarmErrorCode =
   | "round-in-progress"
   | "fallback-pending"
   | "already-resolved"
   | "not-active"
-  | "not-eligible";
+  | "not-eligible"
+  | "host-excluded"
+  | "no-next-host";
 
 /** A business reason why a Crowded Farm action cannot happen now. Thrown inside transactions, so it never retries. */
 export class FarmError extends Error {
@@ -121,13 +146,20 @@ export function formatScore(hundredths: number): string {
 /**
  * Works out the result of a round from the revealed choices. Players are the members who joined before the game
  * started. Choices of other users are ignored. Every client runs this and must reach the same answer.
+ *
+ * Every player counts for the field populations and the scores, the excluded Hosts too (D164). `excludedUids` only
+ * narrows who may become the next Host: the winner comes from the best score group that holds an eligible player.
  */
 export function revealFarmGame(
   gameId: string,
   playerUids: ReadonlyArray<string>,
   choices: ReadonlyArray<FarmChoice>,
+  excludedUids: ReadonlyArray<string>,
 ): FarmReveal {
   const sortedPlayerUids = [...playerUids].sort();
+  const excluded = new Set(excludedUids);
+  const eligibleUids = sortedPlayerUids.filter((uid) => !excluded.has(uid));
+  const excludedPlayerUids = sortedPlayerUids.filter((uid) => excluded.has(uid));
   const explicitFieldByUid = new Map<string, FarmFieldId>();
   for (const choice of choices) {
     if (sortedPlayerUids.includes(choice.uid) && isFarmFieldId(choice.field)) {
@@ -136,11 +168,20 @@ export function revealFarmGame(
   }
 
   if (explicitFieldByUid.size === 0) {
-    const emptyTallies = FARM_FIELDS.map((field) => ({ field, playerCount: 0, scoreHundredths: 0, isBest: false }));
+    const emptyTallies = FARM_FIELDS.map((field) => ({
+      field,
+      playerCount: 0,
+      scoreHundredths: 0,
+      isBest: false,
+      isBestEligible: false,
+    }));
     return {
-      outcome: { kind: "all-wheel", candidateUids: sortedPlayerUids },
+      outcome: eligibleUids.length === 0 ? { kind: "none" } : { kind: "all-wheel", candidateUids: eligibleUids },
       tallies: emptyTallies,
       hasExplicitChoice: false,
+      fieldByUid: {},
+      eligibleUids,
+      excludedUids: excludedPlayerUids,
     };
   }
 
@@ -154,35 +195,55 @@ export function revealFarmGame(
     playerCount: sortedPlayerUids.filter((uid) => fieldByUid.get(uid) === field.id).length,
   }));
   const occupied = counts.filter((entry) => entry.playerCount > 0);
-  const best = occupied.reduce((leader, entry) =>
-    isBetterScore(entry.field.baseYield, entry.playerCount, leader.field.baseYield, leader.playerCount)
-      ? entry
-      : leader,
+  // Best score first. Fields with an equal score (exact cross-multiplication) share one group.
+  const ranked = [...occupied].sort((left, right) => {
+    if (isBetterScore(left.field.baseYield, left.playerCount, right.field.baseYield, right.playerCount)) return -1;
+    if (isBetterScore(right.field.baseYield, right.playerCount, left.field.baseYield, left.playerCount)) return 1;
+    return 0;
+  });
+  const groups: (typeof ranked)[] = [];
+  for (const entry of ranked) {
+    const group = groups[groups.length - 1];
+    const isSameScore =
+      group !== undefined &&
+      !isBetterScore(group[0].field.baseYield, group[0].playerCount, entry.field.baseYield, entry.playerCount);
+    if (isSameScore) group.push(entry);
+    else groups.push([entry]);
+  }
+
+  const bestFieldIds = new Set(groups[0].map((entry) => entry.field.id));
+  const bestEligibleGroup = groups.find((group) =>
+    eligibleUids.some((uid) => group.some((entry) => entry.field.id === fieldByUid.get(uid))),
   );
-  const isBest = (entry: { field: FarmField; playerCount: number }) =>
-    entry.playerCount > 0 &&
-    !isBetterScore(best.field.baseYield, best.playerCount, entry.field.baseYield, entry.playerCount) &&
-    !isBetterScore(entry.field.baseYield, entry.playerCount, best.field.baseYield, best.playerCount);
+  const bestEligibleFieldIds = new Set(bestEligibleGroup?.map((entry) => entry.field.id));
 
   const tallies: FieldTally[] = counts.map((entry) => ({
     field: entry.field,
     playerCount: entry.playerCount,
     scoreHundredths: entry.playerCount > 0 ? scoreHundredths(entry.field.baseYield, entry.playerCount) : 0,
-    isBest: isBest(entry),
+    isBest: bestFieldIds.has(entry.field.id),
+    isBestEligible: bestEligibleFieldIds.has(entry.field.id),
   }));
 
-  const bestFieldIds = new Set(tallies.filter((tally) => tally.isBest).map((tally) => tally.field.id));
-  const candidateUids = sortedPlayerUids.filter((uid) => bestFieldIds.has(fieldByUid.get(uid) as FarmFieldId));
-  const outcome: FarmOutcome =
-    candidateUids.length === 1
-      ? { kind: "direct", winnerUid: candidateUids[0] }
-      : { kind: "tie-wheel", candidateUids };
-  return { outcome, tallies, hasExplicitChoice: true };
+  const candidateUids = eligibleUids.filter((uid) => bestEligibleFieldIds.has(fieldByUid.get(uid) as FarmFieldId));
+  let outcome: FarmOutcome;
+  if (candidateUids.length === 0) outcome = { kind: "none" };
+  else if (candidateUids.length === 1) outcome = { kind: "direct", winnerUid: candidateUids[0] };
+  else outcome = { kind: "tie-wheel", candidateUids };
+  return {
+    outcome,
+    tallies,
+    hasExplicitChoice: true,
+    fieldByUid: Object.fromEntries(fieldByUid),
+    eligibleUids,
+    excludedUids: excludedPlayerUids,
+  };
 }
 
 /** Whoever may win the wheel for this outcome; a direct winner is a list of one. */
 export function candidateUidsOf(outcome: FarmOutcome): string[] {
-  return outcome.kind === "direct" ? [outcome.winnerUid] : outcome.candidateUids;
+  if (outcome.kind === "direct") return [outcome.winnerUid];
+  return outcome.kind === "none" ? [] : outcome.candidateUids;
 }
 
 /** Compares the winner stored by the admin with the result every client works out itself (D161, trusted admin). */

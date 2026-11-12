@@ -181,6 +181,10 @@ export function subscribeToBoard(
               nextHostSpunAt: toDate(data.nextHostSpunAt),
               farmActiveGameId: typeof data.farmActiveGameId === "string" ? data.farmActiveGameId : null,
               nextHostGameId: typeof data.nextHostGameId === "string" ? data.nextHostGameId : null,
+              hostUid: typeof data.hostUid === "string" ? data.hostUid : null,
+              pastHostUids: Array.isArray(data.pastHostUids)
+                ? data.pastHostUids.filter((entry: unknown): entry is string => typeof entry === "string")
+                : [],
             }
           : null,
       );

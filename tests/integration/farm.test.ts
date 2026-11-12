@@ -1,4 +1,4 @@
-import { collection, disableNetwork, doc, enableNetwork, getDoc, getDocs } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, serverTimestamp, writeBatch } from "firebase/firestore";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ADMIN_EMAIL } from "@/lib/firebase/admin";
 import { createBoard, joinBoard, setPhase, startSession, subscribeToBoard, subscribeToMembers } from "@/lib/firebase/boards";
@@ -6,6 +6,7 @@ import {
   cancelFarmGame,
   chooseFarmField,
   finishFarmGame,
+  handOverHost,
   newFarmGameId,
   startFarmGame,
   storeCancelledFarmFallback,
@@ -15,6 +16,8 @@ import {
 } from "@/lib/firebase/farm";
 import type { Board, BoardMember } from "@/lib/firebase/types";
 import {
+  candidateUidsOf,
+  excludedHostUids,
   farmDeadlineMillis,
   isFarmPlayer,
   isPersistedWinnerConsistent,
@@ -23,7 +26,7 @@ import {
   type FarmFieldId,
   type FarmGame,
 } from "@/lib/crowded-farm";
-import { createTestUser, pause, resetEmulators, waitUntil, type TestUser } from "./helpers";
+import { createTestUser, pause, reconnectTestUser, resetEmulators, waitUntil, type TestUser } from "./helpers";
 
 /**
  * Crowded Farm against the emulators. These tests share one board and run in order, because the 15 second
@@ -86,9 +89,25 @@ async function waitForDeadline(gameId: string): Promise<void> {
   const game = await readGame(gameId);
   const waitMs = farmDeadlineMillis(game.startedAt!) + 1500 - Date.now();
   if (waitMs > 0) await pause(waitMs);
+  await reconnectClients();
 }
 
-function readChoices(viewer: TestUser, gameId: string): Promise<FarmChoice[]> {
+/**
+ * The Rules emulator fixes `request.time` per connection at its first request, so after a real-time wait the clients
+ * that were already connected would still look "before the deadline" to the Rules. Production evaluates the time per
+ * request. Reconnecting is also what a refresh does, so the tests keep the same uids.
+ */
+async function reconnectClients(): Promise<void> {
+  [owner, second, third, admin] = await Promise.all([owner, second, third, admin].map(reconnectTestUser));
+}
+
+/**
+ * Lists the choices through a fresh connection: the Rules emulator keeps the read time of a connection fixed at its
+ * first read, so a client that was already connected before the deadline would still look "before the deadline".
+ * A fresh client also has no local cache, so the first snapshot is the server's full list.
+ */
+async function readChoices(viewer: TestUser, gameId: string): Promise<FarmChoice[]> {
+  const fresh = await reconnectTestUser(viewer);
   return new Promise((resolve, reject) => {
     const stop = subscribeToFarmChoices(
       boardId,
@@ -101,7 +120,7 @@ function readChoices(viewer: TestUser, gameId: string): Promise<FarmChoice[]> {
         stop();
         reject(new Error(`${viewer.name} could not list the choices: ${(error as { code?: string }).code}`));
       },
-      viewer.db,
+      fresh.db,
     );
   });
 }
@@ -145,7 +164,14 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     stopOwn();
 
     let listError: unknown;
-    const stopList = subscribeToFarmChoices(boardId, firstGameId, () => fail("the list must not open"), (error) => (listError = error), second.db);
+    // A fresh client has no local cache: a cached snapshot of the member's own choice must not pass for a list.
+    const stopList = subscribeToFarmChoices(
+      boardId,
+      firstGameId,
+      () => fail("the list must not open"),
+      (error) => (listError = error),
+      (await reconnectTestUser(second)).db,
+    );
     await waitUntil(() => listError !== undefined);
     stopList();
     expect(listError).toMatchObject(permissionDenied);
@@ -168,7 +194,7 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
   });
 
   it("should refuse to finish before the deadline", async () => {
-    await expect(finishFarmGame(boardId, firstGameId, owner.uid, "direct", admin.db)).rejects.toMatchObject(permissionDenied);
+    await expect(finishFarmGame(boardId, firstGameId, second.uid, "direct", admin.db)).rejects.toMatchObject(permissionDenied);
   });
 
   it("should reject a choice after 15 seconds, and open the choices to every member and the admin", async () => {
@@ -191,7 +217,7 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     const results = await Promise.all(
       [owner, second, third].map(async (viewer, index) => {
         const players = memberLists[index].read().filter((member) => isFarmPlayer(member.joinedAt, game.startedAt));
-        return revealFarmGame(firstGameId, players.map((player) => player.uid), await readChoices(viewer, firstGameId));
+        return revealFarmGame(firstGameId, players.map((player) => player.uid), await readChoices(viewer, firstGameId), [owner.uid]);
       }),
     );
     memberLists.forEach((list) => list.stop());
@@ -202,8 +228,8 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
 
   it("should store exactly one result when two finishes run at once and never overwrite it", async () => {
     const outcomes = await Promise.allSettled([
-      finishFarmGame(boardId, firstGameId, owner.uid, "tie-wheel", admin.db),
       finishFarmGame(boardId, firstGameId, second.uid, "tie-wheel", admin.db),
+      finishFarmGame(boardId, firstGameId, third.uid, "tie-wheel", admin.db),
     ]);
     const fulfilled = outcomes.flatMap((outcome, index) => (outcome.status === "fulfilled" ? [index] : []));
     const rejected = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
@@ -211,14 +237,14 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     expect(rejected).toHaveLength(1);
     expect(["already-resolved", "permission-denied", "aborted"]).toContain((rejected[0].reason as { code: string }).code);
 
-    const winnerUid = fulfilled[0] === 0 ? owner.uid : second.uid;
+    const winnerUid = fulfilled[0] === 0 ? second.uid : third.uid;
     const game = await readGame(firstGameId);
     expect(game).toMatchObject({ status: "finished", resolution: "tie-wheel", winnerUid });
     const board = await currentBoard();
     expect(board).toMatchObject({ nextHostUid: winnerUid, nextHostGameId: firstGameId });
     expect(board.nextHostSpunAt).toBeInstanceOf(Date);
 
-    await expect(finishFarmGame(boardId, firstGameId, third.uid, "direct", admin.db)).rejects.toMatchObject({ code: "already-resolved" });
+    await expect(finishFarmGame(boardId, firstGameId, second.uid, "direct", admin.db)).rejects.toMatchObject({ code: "already-resolved" });
     expect((await readGame(firstGameId)).winnerUid).toBe(winnerUid);
   });
 
@@ -228,10 +254,10 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     const game = await readGame(firstGameId);
     const players = members.read().filter((member) => isFarmPlayer(member.joinedAt, game.startedAt));
     members.stop();
-    const reveal = revealFarmGame(firstGameId, players.map((player) => player.uid), await readChoices(owner, firstGameId));
+    const reveal = revealFarmGame(firstGameId, players.map((player) => player.uid), await readChoices(owner, firstGameId), [owner.uid]);
     expect(isPersistedWinnerConsistent(reveal.outcome, "someone-outside")).toBe(false);
     expect(isPersistedWinnerConsistent(reveal.outcome, game.winnerUid!)).toBe(
-      reveal.outcome.kind === "direct" ? reveal.outcome.winnerUid === game.winnerUid : reveal.outcome.candidateUids.includes(game.winnerUid!),
+      candidateUidsOf(reveal.outcome).includes(game.winnerUid!),
     );
   });
 
@@ -250,14 +276,14 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     const activeGameId = (await currentBoard()).farmActiveGameId!;
     await waitForDeadline(activeGameId);
     const [finishOutcome, cancelOutcome] = await Promise.allSettled([
-      finishFarmGame(boardId, activeGameId, owner.uid, "tie-wheel", admin.db),
+      finishFarmGame(boardId, activeGameId, second.uid, "tie-wheel", admin.db),
       cancelFarmGame(boardId, activeGameId, admin.db),
     ]);
     expect([finishOutcome.status, cancelOutcome.status].filter((status) => status === "fulfilled")).toHaveLength(1);
     const game = await readGame(activeGameId);
     const board = await currentBoard();
     if (finishOutcome.status === "fulfilled") {
-      expect(game).toMatchObject({ status: "finished", winnerUid: owner.uid });
+      expect(game).toMatchObject({ status: "finished", winnerUid: second.uid });
       expect(board.nextHostGameId).toBe(activeGameId);
     } else {
       expect(game.status).toBe("cancelled");
@@ -280,7 +306,7 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     await expect(cancelFarmGame(boardId, activeGameId, admin.db)).rejects.toMatchObject({ code: "already-resolved" });
 
     const outcomes = await Promise.allSettled([
-      storeCancelledFarmFallback(boardId, activeGameId, owner.uid, admin.db),
+      storeCancelledFarmFallback(boardId, activeGameId, second.uid, admin.db),
       storeCancelledFarmFallback(boardId, activeGameId, third.uid, admin.db),
     ]);
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
@@ -288,14 +314,14 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     expect(["already-resolved", "permission-denied", "aborted"]).toContain((rejected.reason as { code: string }).code);
 
     board = await currentBoard();
-    const storedWinner = outcomes[0].status === "fulfilled" ? owner.uid : third.uid;
+    const storedWinner = outcomes[0].status === "fulfilled" ? second.uid : third.uid;
     expect(board).toMatchObject({ nextHostUid: storedWinner, nextHostGameId: activeGameId });
     expect((await readGame(activeGameId)).winnerUid).toBeNull();
 
     const nextGameId = newFarmGameId(boardId, admin.db);
     await startFarmGame(boardId, nextGameId, admin.db);
 
-    await expect(storeCancelledFarmFallback(boardId, activeGameId, second.uid, admin.db)).rejects.toBeTruthy();
+    await expect(storeCancelledFarmFallback(boardId, activeGameId, third.uid, admin.db)).rejects.toBeTruthy();
     const afterStale = await currentBoard();
     expect(afterStale.nextHostUid).toBe(storedWinner);
     expect(afterStale.farmActiveGameId).toBe(nextGameId);
@@ -307,7 +333,7 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
   });
 
   it("should let a reconnecting client recover the round, its own choice and the stored state", async () => {
-    const reconnected = await createTestUser("farm-second", "Second");
+    const reconnected = await reconnectTestUser(second);
     expect(reconnected.uid).toBe(second.uid);
     const activeGameId = (await currentBoard()).farmActiveGameId!;
     expect(await (async () => {
@@ -319,16 +345,186 @@ describe("Crowded Farm on the emulators (D153 to D162)", () => {
     })()).toBeNull();
     expect((await readGame(activeGameId)).status).toBe("selecting");
   });
+});
 
-  it("should refuse to start a round while the client is offline", async () => {
-    await disableNetwork(admin.db);
-    try {
-      await cancelFarmGame(boardId, (await currentBoard()).farmActiveGameId!, admin.db).then(
-        () => expect.unreachable("an offline transaction must not succeed"),
-        (error) => expect(typeof (error as { code?: unknown }).code).toBe("string"),
-      );
-    } finally {
-      await enableNetwork(admin.db);
+/**
+ * Host eligibility on a second board (F30, D163 to D166). The owner hosts first. Everybody plays and scores; only the
+ * current Host and the previous Hosts are left out of the next-Host choice, and a person who was merely selected is
+ * not a previous Host until the role is handed over.
+ */
+describe("Host eligibility on the emulators (D163 to D166)", () => {
+  let fourth: TestUser;
+
+  beforeAll(async () => {
+    fourth = await createTestUser("farm-fourth", "Fourth");
+    boardId = await createBoard(owner.user, "Host board", owner.name, owner.db);
+    await joinBoard(boardId, second.user, second.name, second.db);
+    await joinBoard(boardId, third.user, third.name, third.db);
+    await joinBoard(boardId, fourth.user, fourth.name, fourth.db);
+    await startSession(boardId, owner.db);
+    await setPhase(boardId, 5, admin.db);
+  }, 30_000);
+
+  const everyone = () => [owner, second, third, fourth];
+
+  async function startRound(): Promise<string> {
+    const gameId = newFarmGameId(boardId, admin.db);
+    await startFarmGame(boardId, gameId, admin.db);
+    return gameId;
+  }
+
+  async function choose(gameId: string, picks: Array<[TestUser, FarmFieldId]>): Promise<void> {
+    for (const [user, field] of picks) await chooseFarmField(boardId, gameId, user.uid, field, user.db);
+  }
+
+  /** The result as one client works it out: members, the revealed choices and the Host data of the board. */
+  async function revealAs(viewer: TestUser, gameId: string) {
+    const members = readMembers(viewer);
+    await waitUntil(() => members.read().length === 4);
+    const game = await readGame(gameId);
+    const players = members.read().filter((member) => isFarmPlayer(member.joinedAt, game.startedAt));
+    members.stop();
+    const choices = await readChoices(viewer, gameId);
+    return revealFarmGame(gameId, players.map((player) => player.uid), choices, excludedHostUids(await currentBoard()));
+  }
+
+  async function revealAsEveryClient(gameId: string) {
+    const results = [];
+    for (const viewer of [owner, second, third, fourth]) results.push(await revealAs(viewer, gameId));
+    for (const result of results) expect(result).toEqual(results[0]);
+    return results[0];
+  }
+
+  /** Finishes through the batch the Rules see, skipping the client's own check, to prove the Rules refuse it too. */
+  async function rawFinish(gameId: string, winnerUid: string, resolution: string): Promise<void> {
+    const batch = writeBatch(admin.db);
+    batch.update(doc(admin.db, "boards", boardId, "farmGames", gameId), {
+      status: "finished",
+      resolution,
+      winnerUid,
+      resolvedAt: serverTimestamp(),
+    });
+    batch.update(doc(admin.db, "boards", boardId), {
+      nextHostUid: winnerUid,
+      nextHostGameId: gameId,
+      updatedAt: serverTimestamp(),
+      ...(resolution === "direct" ? {} : { nextHostSpunAt: serverTimestamp() }),
+    });
+    await batch.commit();
+  }
+
+  const hostExcluded = { code: "host-excluded" };
+
+  it("should score every player, pass over a top group that holds only the Host, and pick the next group directly", async () => {
+    const gameId = await startRound();
+    // The Host (owner) alone on strawberry has the top score 8.00; carrot holds the eligible fourth with 6.00.
+    await choose(gameId, [[owner, "strawberry"], [second, "corn"], [third, "corn"], [fourth, "carrot"]]);
+    await waitForDeadline(gameId);
+
+    const reveal = await revealAsEveryClient(gameId);
+    expect(reveal.tallies.map((tally) => [tally.field.id, tally.playerCount])).toEqual([
+      ["carrot", 1],
+      ["corn", 2],
+      ["strawberry", 1],
+    ]);
+    expect(reveal.tallies.find((tally) => tally.field.id === "strawberry")).toMatchObject({ isBest: true, isBestEligible: false });
+    expect(reveal.outcome).toEqual({ kind: "direct", winnerUid: fourth.uid });
+    expect(reveal.excludedUids).toEqual([owner.uid]);
+
+    await expect(finishFarmGame(boardId, gameId, owner.uid, "direct", admin.db)).rejects.toMatchObject(hostExcluded);
+    await expect(rawFinish(gameId, owner.uid, "direct")).rejects.toMatchObject(permissionDenied);
+    await finishFarmGame(boardId, gameId, fourth.uid, "direct", admin.db);
+    expect(await currentBoard()).toMatchObject({ nextHostUid: fourth.uid, nextHostGameId: gameId, hostUid: null, pastHostUids: [] });
+  }, 60_000);
+
+  it("should keep only the eligible players in a tie and refuse the Host in the stored tie result", async () => {
+    const gameId = await startRound();
+    await choose(gameId, everyone().map((user): [TestUser, FarmFieldId] => [user, "corn"]));
+    await waitForDeadline(gameId);
+
+    const reveal = await revealAsEveryClient(gameId);
+    expect(reveal.outcome).toEqual({ kind: "tie-wheel", candidateUids: [second.uid, third.uid, fourth.uid].sort() });
+    expect(reveal.tallies.find((tally) => tally.field.id === "corn")?.playerCount).toBe(4);
+
+    await expect(finishFarmGame(boardId, gameId, owner.uid, "tie-wheel", admin.db)).rejects.toMatchObject(hostExcluded);
+    await expect(rawFinish(gameId, owner.uid, "tie-wheel")).rejects.toMatchObject(permissionDenied);
+    await finishFarmGame(boardId, gameId, second.uid, "tie-wheel", admin.db);
+    expect(await currentBoard()).toMatchObject({ nextHostUid: second.uid, hostUid: null, pastHostUids: [] });
+  }, 60_000);
+
+  it("should wheel only the eligible players when nobody chooses, and leave the selected winner a non-previous Host", async () => {
+    const gameId = await startRound();
+    await waitForDeadline(gameId);
+    const reveal = await revealAsEveryClient(gameId);
+    expect(reveal.hasExplicitChoice).toBe(false);
+    expect(reveal.outcome).toEqual({ kind: "all-wheel", candidateUids: [second.uid, third.uid, fourth.uid].sort() });
+    await expect(rawFinish(gameId, owner.uid, "all-wheel")).rejects.toMatchObject(permissionDenied);
+    await finishFarmGame(boardId, gameId, third.uid, "all-wheel", admin.db);
+    // Selected twice, never handed the role: still neither the Host nor a previous Host.
+    expect(excludedHostUids(await currentBoard())).toEqual([owner.uid]);
+  }, 60_000);
+
+  it("should refuse the Host in the cancelled fallback, then hand the role over once and keep no duplicate", async () => {
+    const gameId = await startRound();
+    await cancelFarmGame(boardId, gameId, admin.db);
+    await expect(storeCancelledFarmFallback(boardId, gameId, owner.uid, admin.db)).rejects.toMatchObject(hostExcluded);
+    await storeCancelledFarmFallback(boardId, gameId, second.uid, admin.db);
+
+    await handOverHost(boardId, admin.db);
+    expect(await currentBoard()).toMatchObject({ hostUid: second.uid, pastHostUids: [owner.uid], nextHostUid: second.uid });
+    await expect(handOverHost(boardId, admin.db)).rejects.toMatchObject(hostExcluded);
+    expect((await currentBoard()).pastHostUids).toEqual([owner.uid]);
+  }, 30_000);
+
+  it("should exclude the new Host and the previous Host in the next round, for every client and after a reconnect", async () => {
+    const gameId = await startRound();
+    await choose(gameId, [[second, "strawberry"], [third, "corn"], [fourth, "corn"], [owner, "carrot"]]);
+    await waitForDeadline(gameId);
+
+    // strawberry 8.00 holds only second (the new Host) and carrot 6.00 only the owner (a past Host), so the best group
+    // with eligible players is corn 3.50 with third and fourth.
+    const reveal = await revealAsEveryClient(gameId);
+    expect(reveal.excludedUids).toEqual([owner.uid, second.uid].sort());
+    expect(reveal.outcome).toEqual({ kind: "tie-wheel", candidateUids: [third.uid, fourth.uid].sort() });
+
+    await expect(finishFarmGame(boardId, gameId, second.uid, "tie-wheel", admin.db)).rejects.toMatchObject(hostExcluded);
+    await expect(rawFinish(gameId, owner.uid, "tie-wheel")).rejects.toMatchObject(permissionDenied);
+    await finishFarmGame(boardId, gameId, fourth.uid, "tie-wheel", admin.db);
+
+    const refreshed = await reconnectTestUser(third);
+    let board: Board | null = null;
+    const stop = subscribeToBoard(boardId, (next) => (board = next), fail, refreshed.db);
+    await waitUntil(() => board !== null);
+    stop();
+    expect(excludedHostUids(board!)).toEqual([owner.uid, second.uid].sort());
+  }, 60_000);
+
+  it("should never select an excluded player when every player is the Host or a previous Host", async () => {
+    await handOverHost(boardId, admin.db);
+    expect(await currentBoard()).toMatchObject({ hostUid: fourth.uid, pastHostUids: [owner.uid, second.uid] });
+
+    // third is the only one left: hand the role to third through a cancelled round's fallback.
+    const fallbackGameId = await startRound();
+    await cancelFarmGame(boardId, fallbackGameId, admin.db);
+    await storeCancelledFarmFallback(boardId, fallbackGameId, third.uid, admin.db);
+    await handOverHost(boardId, admin.db);
+    expect(excludedHostUids(await currentBoard())).toEqual(everyone().map((user) => user.uid).sort());
+
+    const gameId = await startRound();
+    await choose(gameId, [[owner, "corn"], [second, "carrot"], [third, "carrot"], [fourth, "strawberry"]]);
+    await waitForDeadline(gameId);
+    const reveal = await revealAsEveryClient(gameId);
+    expect(reveal.outcome).toEqual({ kind: "none" });
+    expect(reveal.tallies.reduce((sum, tally) => sum + tally.playerCount, 0)).toBe(4);
+    for (const user of everyone()) {
+      await expect(finishFarmGame(boardId, gameId, user.uid, "tie-wheel", admin.db)).rejects.toMatchObject(hostExcluded);
+      await expect(rawFinish(gameId, user.uid, "tie-wheel")).rejects.toMatchObject(permissionDenied);
     }
-  }, 40_000);
+
+    await cancelFarmGame(boardId, gameId, admin.db);
+    for (const user of everyone()) {
+      await expect(storeCancelledFarmFallback(boardId, gameId, user.uid, admin.db)).rejects.toMatchObject(hostExcluded);
+    }
+    expect((await currentBoard()).nextHostGameId).not.toBe(gameId);
+  }, 90_000);
 });

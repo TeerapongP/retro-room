@@ -255,26 +255,26 @@ describe("mock Crowded Farm", () => {
   });
 
   it("should finish a direct winner without a wheel spin and refuse a second finish", async () => {
-    const { backend, admin, boardId, advance } = await farmBoard();
+    const { backend, boardId, advance } = await farmBoard();
     const gameId = backend.newFarmGameId(boardId);
     await backend.startFarmGame(boardId, gameId);
-    await expect(backend.finishFarmGame(boardId, gameId, admin.uid, "direct")).rejects.toMatchObject({ code: "permission-denied" });
+    await expect(backend.finishFarmGame(boardId, gameId, "bob", "direct")).rejects.toMatchObject({ code: "permission-denied" });
     advance(16);
-    await backend.finishFarmGame(boardId, gameId, admin.uid, "direct");
+    await backend.finishFarmGame(boardId, gameId, "bob", "direct");
     await expect(backend.finishFarmGame(boardId, gameId, "bob", "direct")).rejects.toMatchObject({ code: "already-resolved" });
     let board: { nextHostUid: string | null; nextHostGameId: string | null; nextHostSpunAt: Date | null } | null = null;
     const stop = backend.subscribeToBoard(boardId, (next) => (board = next), fail);
     await flush();
     stop();
-    expect(board).toMatchObject({ nextHostUid: admin.uid, nextHostGameId: gameId, nextHostSpunAt: null });
+    expect(board).toMatchObject({ nextHostUid: "bob", nextHostGameId: gameId, nextHostSpunAt: null });
   });
 
   it("should set the spin time for a wheel result", async () => {
-    const { backend, admin, boardId, advance } = await farmBoard();
+    const { backend, boardId, advance } = await farmBoard();
     const gameId = backend.newFarmGameId(boardId);
     await backend.startFarmGame(boardId, gameId);
     advance(16);
-    await backend.finishFarmGame(boardId, gameId, admin.uid, "tie-wheel");
+    await backend.finishFarmGame(boardId, gameId, "bob", "tie-wheel");
     let spunAt: Date | null = null;
     const stop = backend.subscribeToBoard(boardId, (next) => (spunAt = next?.nextHostSpunAt ?? null), fail);
     await flush();
@@ -295,6 +295,43 @@ describe("mock Crowded Farm", () => {
     await backend.storeCancelledFarmFallback(boardId, first, "bob");
     await expect(backend.storeCancelledFarmFallback(boardId, first, "bob")).rejects.toMatchObject({ code: "already-resolved" });
     await backend.startFarmGame(boardId, backend.newFarmGameId(boardId));
+  });
+
+  it("should refuse the owner as next Host until a hand-over, then the new Host and the previous Hosts", async () => {
+    const { backend, admin, boardId, advance } = await farmBoard();
+    await backend.joinBoard(boardId, "cy", "Cy");
+    const first = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, first);
+    advance(16);
+    await expect(backend.finishFarmGame(boardId, first, admin.uid, "direct")).rejects.toMatchObject({ code: "host-excluded" });
+    await backend.finishFarmGame(boardId, first, "bob", "direct");
+
+    // Selected is not a previous Host: nothing is stored until the hand-over.
+    let board: { hostUid: string | null; pastHostUids: string[] } | null = null;
+    const stop = backend.subscribeToBoard(boardId, (next) => (board = next), fail);
+    await flush();
+    expect(board).toMatchObject({ hostUid: null, pastHostUids: [] });
+
+    await backend.handOverHost(boardId);
+    await flush();
+    expect(board).toMatchObject({ hostUid: "bob", pastHostUids: [admin.uid] });
+    await expect(backend.handOverHost(boardId)).rejects.toMatchObject({ code: "host-excluded" });
+
+    const second = backend.newFarmGameId(boardId);
+    await backend.startFarmGame(boardId, second);
+    advance(16);
+    for (const excluded of [admin.uid, "bob"]) {
+      await expect(backend.finishFarmGame(boardId, second, excluded, "tie-wheel")).rejects.toMatchObject({ code: "host-excluded" });
+    }
+    await backend.finishFarmGame(boardId, second, "cy", "tie-wheel");
+    stop();
+  });
+
+  it("should hand over only a stored result of the active round", async () => {
+    const { backend, boardId } = await farmBoard();
+    await expect(backend.handOverHost(boardId)).rejects.toMatchObject({ code: "no-next-host" });
+    await backend.startFarmGame(boardId, backend.newFarmGameId(boardId));
+    await expect(backend.handOverHost(boardId)).rejects.toMatchObject({ code: "no-next-host" });
   });
 
   it("should refuse the old wheel spin once a farm round exists and farm actions outside step 5", async () => {

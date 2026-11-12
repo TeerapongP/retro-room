@@ -133,6 +133,14 @@ service cloud.firestore {
           && resolvedGameId == previousGameId);
     }
 
+    // Who may become the next Host (D163): not the current Host and not a previous Host of this board. A board whose Host
+    // was never handed over is hosted by its owner. The lists are stored on the board document and only change in
+    // validHostHandover, so every result write is checked against data the admin cannot edit in the same write.
+    function mayBecomeNextHost(board, uid) {
+      return uid != board.get('hostUid', board.ownerId)
+        && !(uid in board.get('pastHostUids', []));
+    }
+
     // Board side of "start a round": only the pointer changes and the new game is created in the same batch.
     function validFarmPointer(boardId) {
       let data = request.resource.data;
@@ -165,6 +173,7 @@ service cloud.firestore {
         && resource.data.get('nextHostGameId', null) != gameId
         && data.updatedAt == request.time
         && farmPlayer(boardId, gameId, data.nextHostUid)
+        && mayBecomeNextHost(resource.data, data.nextHostUid)
         && (
           (get(gamePath(boardId, gameId)).data.status == 'selecting'
             && getAfter(gamePath(boardId, gameId)).data.status == 'finished'
@@ -200,11 +209,33 @@ service cloud.firestore {
         && data.resolution in ['direct', 'tie-wheel', 'all-wheel']
         && data.resolvedAt == request.time
         && farmPlayer(boardId, gameId, data.winnerUid)
+        && mayBecomeNextHost(boardBefore, data.winnerUid)
         && boardAfter.get('nextHostUid', null) == data.winnerUid
         && boardAfter.get('nextHostGameId', null) == gameId
         && (data.resolution == 'direct'
           ? boardAfter.get('nextHostSpunAt', null) == boardBefore.get('nextHostSpunAt', null)
           : boardAfter.get('nextHostSpunAt', null) == request.time);
+    }
+
+    // The admin hands the Host role to the stored next Host (D163): the old Host joins the past Hosts in the same write.
+    // Selecting someone as next Host never makes them a past Host. While a round is active its result must be stored.
+    function validHostHandover(boardId) {
+      let data = request.resource.data;
+      let host = resource.data.get('hostUid', resource.data.ownerId);
+      let past = resource.data.get('pastHostUids', []);
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        && data.diff(resource.data).affectedKeys().hasOnly(['hostUid', 'pastHostUids', 'updatedAt'])
+        && data.keys().hasAll(['hostUid', 'pastHostUids', 'updatedAt'])
+        && data.updatedAt == request.time
+        && resource.data.get('nextHostUid', null) is string
+        && data.hostUid == resource.data.nextHostUid
+        && mayBecomeNextHost(resource.data, data.hostUid)
+        && data.pastHostUids == past.concat([host])
+        && data.pastHostUids.size() <= 200
+        && (!('farmActiveGameId' in resource.data)
+          || resource.data.farmActiveGameId == resource.data.get('nextHostGameId', null));
     }
 
     // A cancelled game keeps no winner (D157).
@@ -406,7 +437,9 @@ service cloud.firestore {
         || validHostSpin(boardId)
         // Crowded Farm (F30): start a round, store its result
         || validFarmPointer(boardId)
-        || validFarmHostResult(boardId);
+        || validFarmHostResult(boardId)
+        // The Host role passes to the stored next Host (F30, D163)
+        || validHostHandover(boardId);
       allow delete: if false;
 
       match /members/{uid} {
