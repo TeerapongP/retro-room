@@ -24,6 +24,7 @@ type FishingFestivalProps = {
   members: BoardMember[];
   user: User;
   isAdmin: boolean;
+  onAdvancePhase?: () => void;
 };
 
 type Phase = FishingGame["status"] | "idle";
@@ -77,12 +78,12 @@ function useNow(intervalMs: number, isActive: boolean): number {
 }
 
 /** Step 5: the Fishing Festival mini-game that picks the next Host. */
-export function FishingFestival({ board, members, user, isAdmin }: FishingFestivalProps) {
+export function FishingFestival({ board, members, user, isAdmin, onAdvancePhase }: FishingFestivalProps) {
   const gameId = board.farmActiveGameId;
-  return <FestivalRound key={gameId ?? "none"} gameId={gameId} board={board} members={members} user={user} isAdmin={isAdmin} />;
+  return <FestivalRound key={gameId ?? "none"} gameId={gameId} board={board} members={members} user={user} isAdmin={isAdmin} onAdvancePhase={onAdvancePhase} />;
 }
 
-function FestivalRound({ gameId, board, members, user, isAdmin }: FishingFestivalProps & { gameId: string | null }) {
+function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }: FishingFestivalProps & { gameId: string | null }) {
   const [game, setGame] = useState<FishingGame | null | undefined>(gameId === null ? null : undefined);
   const [catches, setCatches] = useState<FishCatch[]>([]);
   const [durationSec, setDurationSec] = useState<DurationSec>(45);
@@ -239,6 +240,11 @@ function FestivalRound({ gameId, board, members, user, isAdmin }: FishingFestiva
         {canHandOver ? (
           <button type="button" className="pixel-button pixel-button-gold" disabled={isBusy} onClick={() => void run(() => handOverHost(board.id))}>
             มอบตำแหน่ง
+          </button>
+        ) : null}
+        {isAdmin && hasHandedOver && onAdvancePhase ? (
+          <button type="button" className="pixel-button pixel-button-gold" onClick={onAdvancePhase}>
+            ไปสรุป ›
           </button>
         ) : null}
         {isAdmin && game && phase === "fishing" && timeLeft === 0 ? (
@@ -555,7 +561,7 @@ function FestivalStyles() {
 }
 
 const STYLES = `
-.ff-root { display: grid; gap: 0.9rem; width: 100%; min-width: 0; color: #493521; }
+.ff-root { position: fixed; inset: 0; z-index: 100; overflow-y: auto; display: grid; align-content: start; gap: 0.9rem; width: 100%; min-width: 0; color: #493521; padding: 0.5rem 1rem 2rem; background: var(--ff-bg, #f7edd8); }
 .ff-banner { justify-self: center; font-size: clamp(1.15rem, 3vw, 2rem); }
 .ff-banner-sub { font-size: 0.75em; white-space: nowrap; }
 .ff-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.6rem; }

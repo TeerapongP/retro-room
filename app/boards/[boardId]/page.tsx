@@ -547,7 +547,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       ) : null}
 
       {board.phase === 5 && !isCompleted ? (
-        <FishingFestival board={board} members={members} user={user} isAdmin={isAdmin} />
+        <FishingFestival board={board} members={members} user={user} isAdmin={isAdmin} onAdvancePhase={isAdmin ? () => void runAction(() => setPhase(board.id, 6)) : undefined} />
       ) : isRatingStep ? (
         <RatingPanel ratings={ratings} members={members} uid={uid} onRate={(score) => void handleRate(score)} />
       ) : cards === null && !liveError ? (
