@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   autoAssignedField,
   candidateUidsOf,
+  currentHostUid,
+  excludedHostUids,
   farmDeadlineMillis,
   fnv1a32,
   formatScore,
@@ -84,7 +86,7 @@ describe("revealFarmGame", () => {
       uid,
       field: index === 0 ? "strawberry" : "carrot",
     }));
-    const reveal = revealFarmGame(GAME_ID, uids, choices);
+    const reveal = revealFarmGame(GAME_ID, uids, choices, []);
     expect(reveal.outcome).toEqual({ kind: "direct", winnerUid: uids[0] });
     expect(tallyOf(reveal, "strawberry").playerCount).toBe(1);
     expect(tallyOf(reveal, "carrot").playerCount).toBe(count - 1);
@@ -92,7 +94,7 @@ describe("revealFarmGame", () => {
 
   it.each([2, 3, 10, 11, 20, 50])("should tie everyone when all %i players choose the same field", (count) => {
     const uids = players(count);
-    const reveal = revealFarmGame(GAME_ID, uids, everyoneChooses(uids, "corn"));
+    const reveal = revealFarmGame(GAME_ID, uids, everyoneChooses(uids, "corn"), []);
     expect(reveal.outcome).toEqual({ kind: "tie-wheel", candidateUids: uids });
     expect(tallyOf(reveal, "corn").scoreHundredths).toBe(scoreHundredths(7, count));
     expect(tallyOf(reveal, "corn").isBest).toBe(true);
@@ -108,7 +110,7 @@ describe("revealFarmGame", () => {
       { uid: uids[4], field: "corn" },
       { uid: uids[5], field: "carrot" },
     ];
-    const reveal = revealFarmGame(GAME_ID, uids, choices);
+    const reveal = revealFarmGame(GAME_ID, uids, choices, []);
     expect(tallyOf(reveal, "carrot").isBest).toBe(true);
     expect(reveal.outcome).toEqual({ kind: "direct", winnerUid: uids[5] });
   });
@@ -116,7 +118,7 @@ describe("revealFarmGame", () => {
   it("should tie two fields whose exact scores are equal and put both groups in the wheel", () => {
     const uids = players(7);
     const choices: FarmChoice[] = uids.map((uid, index) => ({ uid, field: index < 3 ? "carrot" : "strawberry" }));
-    const reveal = revealFarmGame(GAME_ID, uids, choices);
+    const reveal = revealFarmGame(GAME_ID, uids, choices, []);
     expect(tallyOf(reveal, "carrot").isBest).toBe(true);
     expect(tallyOf(reveal, "strawberry").isBest).toBe(true);
     expect(reveal.outcome).toEqual({ kind: "tie-wheel", candidateUids: uids });
@@ -128,7 +130,7 @@ describe("revealFarmGame", () => {
       uid,
       field: index < 6 ? "carrot" : index < 13 ? "corn" : "strawberry",
     }));
-    const reveal = revealFarmGame(GAME_ID, uids, choices);
+    const reveal = revealFarmGame(GAME_ID, uids, choices, []);
     expect(tallyOf(reveal, "carrot").isBest).toBe(true);
     expect(tallyOf(reveal, "corn").isBest).toBe(true);
     expect(tallyOf(reveal, "strawberry").isBest).toBe(false);
@@ -138,7 +140,7 @@ describe("revealFarmGame", () => {
   it("should give players who did not choose their assigned field and keep them in the count and the wheel", () => {
     const uids = players(5);
     const explicit: FarmChoice[] = [{ uid: uids[0], field: "strawberry" }];
-    const reveal = revealFarmGame(GAME_ID, uids, explicit);
+    const reveal = revealFarmGame(GAME_ID, uids, explicit, []);
     expect(reveal.hasExplicitChoice).toBe(true);
     const total = reveal.tallies.reduce((sum, tally) => sum + tally.playerCount, 0);
     expect(total).toBe(5);
@@ -148,7 +150,7 @@ describe("revealFarmGame", () => {
 
   it("should use the wheel for every player and ignore automatic assignments when nobody chose", () => {
     const uids = players(4);
-    const reveal = revealFarmGame(GAME_ID, uids, []);
+    const reveal = revealFarmGame(GAME_ID, uids, [], []);
     expect(reveal.hasExplicitChoice).toBe(false);
     expect(reveal.outcome).toEqual({ kind: "all-wheel", candidateUids: uids });
     expect(reveal.tallies.every((tally) => tally.playerCount === 0 && !tally.isBest)).toBe(true);
@@ -159,7 +161,7 @@ describe("revealFarmGame", () => {
     const reveal = revealFarmGame(GAME_ID, uids, [
       { uid: "stranger", field: "strawberry" },
       { uid: uids[0], field: "wheat" as FarmFieldId },
-    ]);
+    ], []);
     expect(reveal.hasExplicitChoice).toBe(false);
     expect(reveal.outcome.kind).toBe("all-wheel");
   });
@@ -170,8 +172,8 @@ describe("revealFarmGame", () => {
       uid,
       field: (["carrot", "corn", "strawberry"] as const)[index % 3],
     }));
-    const forward = revealFarmGame(GAME_ID, uids, choices);
-    const backward = revealFarmGame(GAME_ID, [...uids].reverse(), [...choices].reverse());
+    const forward = revealFarmGame(GAME_ID, uids, choices, []);
+    const backward = revealFarmGame(GAME_ID, [...uids].reverse(), [...choices].reverse(), []);
     expect(backward).toEqual(forward);
   });
 
@@ -181,8 +183,96 @@ describe("revealFarmGame", () => {
       { uid: uids[0], field: "carrot" },
       { uid: uids[0], field: "strawberry" },
       { uid: uids[1], field: "carrot" },
-    ]);
+    ], []);
     expect(tallyOf(reveal, "strawberry").playerCount).toBe(1);
+  });
+});
+
+describe("host eligibility (D163 to D166)", () => {
+  // Eight players as in the design example: A current Host, B and C previous Hosts, D to H eligible.
+  const [a, b, c, d, e, f, g, h] = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const excluded = [a, b, c];
+  const all = [a, b, c, d, e, f, g, h];
+  const pick = (entries: [string, FarmFieldId][]): FarmChoice[] => entries.map(([uid, field]) => ({ uid, field }));
+  const designChoices = pick([[a, "carrot"], [b, "carrot"], [c, "corn"], [d, "carrot"], [e, "corn"], [f, "corn"], [g, "strawberry"], [h, "strawberry"]]);
+
+  it("should count every player, excluded Hosts included, in populations and scores", () => {
+    const reveal = revealFarmGame(GAME_ID, all, designChoices, excluded);
+    expect(tallyOf(reveal, "carrot").playerCount).toBe(3);
+    expect(tallyOf(reveal, "corn").playerCount).toBe(3);
+    expect(tallyOf(reveal, "strawberry").playerCount).toBe(2);
+    expect(tallyOf(reveal, "strawberry").scoreHundredths).toBe(400);
+    expect(reveal.excludedUids).toEqual([a, b, c]);
+    expect(reveal.eligibleUids).toEqual([d, e, f, g, h]);
+    expect(reveal.fieldByUid[a]).toBe("carrot");
+  });
+
+  it("should give the same field counts and scores with and without excluded players", () => {
+    const withNobodyExcluded = revealFarmGame(GAME_ID, all, designChoices, []);
+    const withExcluded = revealFarmGame(GAME_ID, all, designChoices, excluded);
+    expect(withExcluded.tallies.map((tally) => [tally.playerCount, tally.scoreHundredths])).toEqual(
+      withNobodyExcluded.tallies.map((tally) => [tally.playerCount, tally.scoreHundredths]),
+    );
+  });
+
+  it("should move down to the best group that holds an eligible player and make that player win directly", () => {
+    // Strawberry (8 / 2 = 4.00) is best and eligible: G and H tie.
+    expect(revealFarmGame(GAME_ID, all, designChoices, excluded).outcome).toEqual({ kind: "tie-wheel", candidateUids: [g, h] });
+    // Best group is strawberry (8 / 3) with A (current Host), B (previous Host) and eligible D: D wins directly, no wheel.
+    const choices = pick([[a, "strawberry"], [b, "strawberry"], [c, "corn"], [d, "strawberry"], [e, "corn"], [f, "corn"], [g, "corn"], [h, "corn"]]);
+    const reveal = revealFarmGame(GAME_ID, all, choices, [a, b, c]);
+    expect(tallyOf(reveal, "strawberry").isBest).toBe(true);
+    expect(reveal.outcome).toEqual({ kind: "direct", winnerUid: d });
+    expect(tallyOf(reveal, "strawberry").isBestEligible).toBe(true);
+  });
+
+  it("should pick the next score group when the best group has only excluded players", () => {
+    const choices = pick([[a, "strawberry"], [b, "corn"], [c, "corn"], [d, "corn"], [e, "carrot"]]);
+    const reveal = revealFarmGame(GAME_ID, [a, b, c, d, e], choices, [a, b]);
+    expect(tallyOf(reveal, "strawberry").isBest).toBe(true);
+    expect(tallyOf(reveal, "strawberry").isBestEligible).toBe(false);
+    // strawberry 8.00 holds only the excluded A, so the next group, carrot 6.00 with E, wins ahead of corn 2.33.
+    expect(tallyOf(reveal, "carrot").isBestEligible).toBe(true);
+    expect(reveal.outcome).toEqual({ kind: "direct", winnerUid: e });
+  });
+
+  it("should remove excluded players from a tie and keep the eligible ones", () => {
+    const choices = pick([[a, "corn"], [b, "corn"], [c, "corn"], [d, "corn"]]);
+    expect(revealFarmGame(GAME_ID, [a, b, c, d], choices, [a, b]).outcome).toEqual({ kind: "tie-wheel", candidateUids: [c, d] });
+    expect(revealFarmGame(GAME_ID, [a, b, c, d], choices, [a, b, c]).outcome).toEqual({ kind: "direct", winnerUid: d });
+  });
+
+  it("should use only eligible players in the all-wheel when nobody chose", () => {
+    const reveal = revealFarmGame(GAME_ID, all, [], excluded);
+    expect(reveal.outcome).toEqual({ kind: "all-wheel", candidateUids: [d, e, f, g, h] });
+    expect(reveal.hasExplicitChoice).toBe(false);
+  });
+
+  it("should never select an excluded player when nobody is eligible", () => {
+    expect(revealFarmGame(GAME_ID, [a, b], [], [a, b]).outcome).toEqual({ kind: "none" });
+    const choices = pick([[a, "corn"], [b, "carrot"]]);
+    const reveal = revealFarmGame(GAME_ID, [a, b], choices, [a, b]);
+    expect(reveal.outcome).toEqual({ kind: "none" });
+    expect(candidateUidsOf(reveal.outcome)).toEqual([]);
+    expect(isPersistedWinnerConsistent(reveal.outcome, a)).toBe(false);
+  });
+
+  it("should count automatic assignments in populations and keep excluded players out of the candidates", () => {
+    const reveal = revealFarmGame(GAME_ID, all, pick([[d, "carrot"]]), excluded);
+    expect(reveal.tallies.reduce((sum, tally) => sum + tally.playerCount, 0)).toBe(8);
+    for (const uid of candidateUidsOf(reveal.outcome)) expect(excluded).not.toContain(uid);
+  });
+
+  it("should not depend on the order of players, choices or excluded uids", () => {
+    const forward = revealFarmGame(GAME_ID, all, designChoices, excluded);
+    const backward = revealFarmGame(GAME_ID, [...all].reverse(), [...designChoices].reverse(), [...excluded].reverse());
+    expect(backward).toEqual(forward);
+  });
+
+  it("should treat the owner as the Host until a Host is handed over, and list the past Hosts as excluded", () => {
+    expect(currentHostUid({ ownerId: "owner", hostUid: null, pastHostUids: [] })).toBe("owner");
+    expect(excludedHostUids({ ownerId: "owner", hostUid: null, pastHostUids: [] })).toEqual(["owner"]);
+    expect(excludedHostUids({ ownerId: "owner", hostUid: "x", pastHostUids: ["owner", "y", "x"] })).toEqual(["owner", "x", "y"]);
   });
 });
 

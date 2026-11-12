@@ -8,6 +8,8 @@ import {
   FARM_REVEAL_DELAY_MS,
   FARM_SELECTION_SECONDS,
   candidateUidsOf,
+  currentHostUid,
+  excludedHostUids,
   farmDeadlineMillis,
   formatScore,
   isFarmError,
@@ -22,6 +24,7 @@ import {
   cancelFarmGame,
   chooseFarmField,
   finishFarmGame,
+  handOverHost,
   newFarmGameId,
   startFarmGame,
   storeCancelledFarmFallback,
@@ -128,14 +131,14 @@ function StartButton({ boardId, playerCount, runAction, label }: StartButtonProp
 function FarmIdle({ boardId, playerCount, isAdmin, runAction }: Pick<CrowdedFarmProps, "isAdmin" | "runAction"> & { boardId: string; playerCount: number }) {
   return (
     <section className="farm-panel pixel-panel" aria-label="เกมเลือกแปลง">
-      <h2 className="farm-title">เลือกแปลงให้ดี</h2>
+      <h2 className="farm-title farm-sign farm-sign-title">Crowded Farm · เลือกแปลงให้ดี</h2>
       <FarmIntro />
       <div className="farm-fields">
         {FARM_FIELDS.map((field) => (
           <div key={field.id} className="farm-field farm-field-preview">
             <FarmCrop field={field.id} className="farm-crop" />
             <span className="farm-field-name">{field.label}</span>
-            <span className="farm-field-base">ฐาน {field.baseYield} แต้ม</span>
+            <span className="farm-field-base">{field.baseYield} แต้ม</span>
           </div>
         ))}
       </div>
@@ -208,7 +211,19 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
   }
 
   const playerUids = members.filter((member) => isFarmPlayer(member.joinedAt, startedAt)).map((member) => member.uid);
-  const reveal = choices !== null && playerUids.length > 0 ? revealFarmGame(gameId, playerUids, choices) : null;
+  // Everyone plays and scores. Only the current Host and the previous Hosts are left out of the next-Host choice (D163, D164).
+  // Once the stored result of this round was handed over, the new Host is the winner: the round still shows the set of
+  // players that applied when it was played (the past Hosts now include the Host of that time).
+  const isStoredOnBoardNow = board.nextHostGameId === gameId;
+  const hasHandedOver = isStoredOnBoardNow && board.nextHostUid !== null && board.hostUid === board.nextHostUid;
+  const excludedUids = hasHandedOver ? [...new Set(board.pastHostUids)].sort() : excludedHostUids(board);
+  const eligiblePlayerUids = playerUids.filter((playerUid) => !excludedUids.includes(playerUid));
+  const reveal = choices !== null && playerUids.length > 0 ? revealFarmGame(gameId, playerUids, choices, excludedUids) : null;
+  const hostLabelOf = (memberUid: string): string | null => {
+    if (!excludedUids.includes(memberUid)) return null;
+    const hostOfTheRound = hasHandedOver ? board.pastHostUids[board.pastHostUids.length - 1] : currentHostUid(board);
+    return memberUid === hostOfTheRound ? "Host ปัจจุบัน" : "เคยเป็น Host";
+  };
   const directWinnerUid = reveal?.outcome.kind === "direct" ? reveal.outcome.winnerUid : null;
   const nameOf = (memberUid: string) => members.find((member) => member.uid === memberUid)?.displayName ?? "ไม่ทราบชื่อ";
 
@@ -247,6 +262,8 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
     if (winnerUid) void ignoreAlreadyResolved(runAction, () => persist(winnerUid));
   }
 
+  const canHandOver =
+    isAdmin && isResolved && isStoredOnBoard && board.nextHostUid !== null && !hasHandedOver && !excludedUids.includes(board.nextHostUid);
   const wheelCandidates = (candidateUids: string[]) => candidateUids.map((candidateUid) => ({ uid: candidateUid, name: nameOf(candidateUid) }));
   const hasWheelResult = isStoredOnBoard && board.nextHostSpunAt !== null && board.nextHostUid !== null;
 
@@ -254,8 +271,9 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
   if (status === "selecting" && isBeforeDeadline) {
     body = (
       <>
+        <p className="farm-sign farm-sign-wide">เลือกแปลงของคุณภายใน {FARM_SELECTION_SECONDS} วินาที!</p>
         <p className="farm-countdown" role="timer" aria-live="off">
-          {secondsLeft}
+          <span className="farm-clock" aria-hidden="true">⏱</span> {secondsLeft}
         </p>
         <FarmIntro />
         <div className="farm-fields">
@@ -270,7 +288,7 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
             >
               <FarmCrop field={field.id} className="farm-crop" />
               <span className="farm-field-name">{field.label}</span>
-              <span className="farm-field-base">ฐาน {field.baseYield} แต้ม</span>
+              <span className="farm-field-base">{field.baseYield} แต้ม</span>
               {myField === field.id ? <span className="farm-picked">เลือกแล้ว</span> : null}
             </button>
           ))}
@@ -285,26 +303,30 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
       </>
     );
   } else if (status === "cancelled" && !isStoredOnBoard) {
-    body = (
-      <>
-        <p className="farm-hint">ยกเลิกเกมแล้ว หมุนวงล้อเลือกโฮสต์จากผู้เล่นทุกคนแทน</p>
-        <HostWheel
-          candidates={wheelCandidates(playerUids)}
-          winnerUid={null}
-          spunAt={null}
-          canSpin={isAdmin}
-          hint="รอผู้ดำเนินรายการหมุนวงล้อ"
-          onSpin={() => spinWheel(playerUids, (winnerUid) => storeCancelledFarmFallback(board.id, gameId, winnerUid))}
-        />
-      </>
-    );
+    body =
+      eligiblePlayerUids.length === 0 ? (
+        <NoEligibleNotice />
+      ) : (
+        <>
+          <p className="farm-hint">ยกเลิกเกมแล้ว หมุนวงล้อเลือกโฮสต์จากผู้ที่มีสิทธิ์แทน</p>
+          <FarmRoster playerUids={playerUids} excludedUids={excludedUids} nameOf={nameOf} hostLabelOf={hostLabelOf} />
+          <HostWheel
+            candidates={wheelCandidates(eligiblePlayerUids)}
+            winnerUid={null}
+            spunAt={null}
+            canSpin={isAdmin}
+            hint="รอผู้ดำเนินรายการหมุนวงล้อ"
+            onSpin={() => spinWheel(eligiblePlayerUids, (winnerUid) => storeCancelledFarmFallback(board.id, gameId, winnerUid))}
+          />
+        </>
+      );
   } else if (status === "cancelled") {
     body = (
       <>
         <p className="farm-hint">เกมถูกยกเลิก ผลมาจากวงล้อสำรอง</p>
         <HostWheel
           key={`${gameId}:${board.nextHostSpunAt?.getTime() ?? "none"}`}
-          candidates={wheelCandidates(playerUids)}
+          candidates={wheelCandidates(eligiblePlayerUids)}
           winnerUid={hasWheelResult ? board.nextHostUid : null}
           spunAt={hasWheelResult ? board.nextHostSpunAt : null}
           canSpin={false}
@@ -331,25 +353,45 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
       persistedWinnerUid !== null &&
       (!isPersistedWinnerConsistent(reveal.outcome, persistedWinnerUid) ||
         (isStoredOnBoard && board.nextHostUid !== persistedWinnerUid));
-    const shouldShowWheel = reveal.outcome.kind !== "direct";
+    const shouldShowWheel = reveal.outcome.kind === "tie-wheel" || reveal.outcome.kind === "all-wheel";
     const wheelCandidateUids = candidateUidsOf(reveal.outcome);
+    const isBestFieldExcludedOnly = reveal.tallies.some((tally) => tally.isBest && !tally.isBestEligible);
     body = (
       <>
+        <p className="farm-sign farm-sign-wide">หมดเวลาแล้ว! มาดูผลกันเลย</p>
         <div className="farm-fields">
           {reveal.tallies.map((tally) => (
-            <div key={tally.field.id} className={`farm-field farm-field-result${tally.isBest ? " farm-field-best" : ""}`}>
+            <div
+              key={tally.field.id}
+              className={`farm-field farm-field-result${tally.isBest ? " farm-field-best" : ""}${tally.isBestEligible ? " farm-field-winning" : ""}`}
+            >
               <FarmCrop field={tally.field.id} className="farm-crop" />
               <span className="farm-field-name">{tally.field.label}</span>
               <span className="farm-count">{tally.playerCount} คน</span>
               <span className="farm-score">{tally.playerCount > 0 ? `${formatScore(tally.scoreHundredths)} แต้ม/คน` : "ไม่มีใครเลือก"}</span>
+              {tally.isBestEligible ? <span className="farm-badge">แต้มสูงสุดของผู้มีสิทธิ์</span> : null}
+              <ul className="farm-people" aria-label={`ผู้เล่นในแปลง${tally.field.label}`}>
+                {playerUids
+                  .filter((playerUid) => reveal.fieldByUid[playerUid] === tally.field.id)
+                  .map((playerUid) => (
+                    <li key={playerUid} className={excludedUids.includes(playerUid) ? "farm-person farm-person-out" : "farm-person"}>
+                      {nameOf(playerUid)}
+                    </li>
+                  ))}
+              </ul>
             </div>
           ))}
         </div>
+        {isBestFieldExcludedOnly ? (
+          <p className="farm-hint">แปลงที่ได้แต้มสูงสุดมีแต่ผู้ที่ไม่มีสิทธิ์เป็น Next Host จึงดูแปลงที่แต้มรองลงมา</p>
+        ) : null}
+        <FarmRoster playerUids={playerUids} excludedUids={excludedUids} nameOf={nameOf} hostLabelOf={hostLabelOf} />
         {isInconsistent ? (
           <p className="farm-warning" role="alert">
             คำเตือน: ผู้ชนะที่บันทึกไว้ไม่ตรงกับผลที่คำนวณจากตัวเลือก กรุณาแจ้งผู้ดำเนินรายการ
           </p>
         ) : null}
+        {reveal.outcome.kind === "none" ? <NoEligibleNotice /> : null}
         {shouldShowWheel ? (
           <HostWheel
             key={`${gameId}:${board.nextHostSpunAt?.getTime() ?? "none"}`}
@@ -365,7 +407,7 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
             }
           />
         ) : null}
-        {!shouldShowWheel && directWinnerUid !== null ? (
+        {directWinnerUid !== null ? (
           <FarmWinner
             name={nameOf(status === "finished" && persistedWinnerUid ? persistedWinnerUid : directWinnerUid)}
             isStored={status === "finished"}
@@ -373,20 +415,27 @@ function FarmRound({ gameId, board, members, uid, isAdmin, runAction }: FarmRoun
             onConfirm={() => void ignoreAlreadyResolved(runAction, () => finishFarmGame(board.id, gameId, directWinnerUid, "direct"))}
           />
         ) : null}
-        {!reveal.hasExplicitChoice ? <p className="farm-hint">ไม่มีใครเลือกเอง จึงหมุนวงล้อจากผู้เล่นทุกคน</p> : null}
+        {!reveal.hasExplicitChoice && reveal.outcome.kind !== "none" ? (
+          <p className="farm-hint">ไม่มีใครเลือกเอง จึงหมุนวงล้อจากผู้ที่มีสิทธิ์ทุกคน</p>
+        ) : null}
       </>
     );
   }
 
   return (
     <section className="farm-panel pixel-panel" aria-label="เกมเลือกแปลง">
-      <h2 className="farm-title">เลือกแปลงให้ดี</h2>
+      <h2 className="farm-title farm-sign farm-sign-title">Crowded Farm · เลือกแปลงให้ดี</h2>
       {body}
       {isAdmin ? (
         <div className="farm-admin">
           {status === "selecting" ? (
             <button type="button" className="pixel-button" onClick={() => void ignoreAlreadyResolved(runAction, () => cancelFarmGame(board.id, gameId))}>
               ยกเลิกเกม
+            </button>
+          ) : null}
+          {canHandOver ? (
+            <button type="button" className="pixel-button pixel-button-gold" onClick={() => void runAction(() => handOverHost(board.id))}>
+              ส่งต่อบทบาทโฮสต์ให้ {nameOf(board.nextHostUid ?? "")}
             </button>
           ) : null}
           {isResolved ? <StartButton boardId={board.id} playerCount={members.length} runAction={runAction} label="เล่นอีกรอบ" /> : null}
@@ -409,7 +458,11 @@ type FarmWinnerProps = { name: string; isStored: boolean; isAdmin: boolean; onCo
 function FarmWinner({ name, isStored, isAdmin, onConfirm }: FarmWinnerProps) {
   return (
     <div className="farm-winner" role="status">
-      <p className="farm-winner-line">โฮสต์คนถัดไป: {name}</p>
+      <p className="farm-winner-crown" aria-hidden="true">
+        ♛
+      </p>
+      <p className="farm-winner-label">โฮสต์คนถัดไปคือ…</p>
+      <p className="farm-winner-line">{name}!</p>
       {isStored ? null : (
         <>
           <p className="farm-hint">ยังไม่ใช่ผลทางการ รอผู้ดำเนินรายการยืนยัน</p>
@@ -421,5 +474,44 @@ function FarmWinner({ name, isStored, isAdmin, onConfirm }: FarmWinnerProps) {
         </>
       )}
     </div>
+  );
+}
+
+type FarmRosterProps = {
+  playerUids: string[];
+  excludedUids: string[];
+  nameOf: (uid: string) => string;
+  hostLabelOf: (uid: string) => string | null;
+};
+
+/** Who may become the next Host. Everybody plays; the current and the previous Hosts are only left out of this list. */
+function FarmRoster({ playerUids, excludedUids, nameOf, hostLabelOf }: FarmRosterProps) {
+  return (
+    <div className="farm-roster">
+      <p className="farm-sign">รายชื่อผู้มีสิทธิ์เป็น Next Host</p>
+      <ul className="farm-roster-list">
+        {playerUids.map((playerUid) => {
+          const isOut = excludedUids.includes(playerUid);
+          return (
+            <li key={playerUid} className={`farm-roster-item ${isOut ? "farm-roster-out" : "farm-roster-in"}`}>
+              <span className="farm-roster-mark" aria-hidden="true">
+                {isOut ? "✕" : "✓"}
+              </span>
+              <span className="farm-roster-name">{nameOf(playerUid)}</span>
+              <span className="farm-roster-tag">{isOut ? (hostLabelOf(playerUid) ?? "ไม่มีสิทธิ์") : "มีสิทธิ์"}</span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="farm-hint">ทุกคนยังเล่นและทำคะแนนได้เหมือนเดิม แต่ Host ปัจจุบันและคนที่เคยเป็น Host ไม่มีสิทธิ์เป็น Next Host อีก</p>
+    </div>
+  );
+}
+
+function NoEligibleNotice() {
+  return (
+    <p className="farm-warning" role="alert">
+      ไม่มีผู้มีสิทธิ์เป็น Next Host เหลือแล้ว (ทุกคนเป็น Host ปัจจุบันหรือเคยเป็น Host) ระบบจะไม่เลือกคนเหล่านี้แทน ผู้ดำเนินรายการต้องตัดสินใจเอง
+    </p>
   );
 }

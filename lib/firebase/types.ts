@@ -41,6 +41,12 @@ export type Board = {
   /** Crowded Farm (F30): the round in play, and the round the stored next host came from (D153, D157). */
   farmActiveGameId: string | null;
   nextHostGameId: string | null;
+  /**
+   * Host of this session (F30, D163): null until a Host is handed over, and then the owner hosts. `pastHostUids` lists
+   * everyone who handed the role over. Both only change when the admin hands the role to the stored next Host.
+   */
+  hostUid: string | null;
+  pastHostUids: string[];
 };
 
 export type BoardMember = {

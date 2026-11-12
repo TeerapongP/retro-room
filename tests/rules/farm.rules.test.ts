@@ -392,7 +392,7 @@ describe("finishing a round (D156, D157, D158)", () => {
     await assertSucceeds(finishRound(admin(), "closed", "carol", "tie-wheel"));
     expect((await getDoc(boardRef(admin()))).data()?.nextHostSpunAt).toBeDefined();
     await closedRound();
-    await assertSucceeds(finishRound(admin(), "closed", "alice", "all-wheel"));
+    await assertSucceeds(finishRound(admin(), "closed", "bob", "all-wheel"));
   });
 
   it("should reject finishing before the deadline", async () => {
@@ -561,6 +561,111 @@ describe("legacy next-host wheel (D150)", () => {
 
   it("should refuse the old spin once a farm round exists, so a repeated or stale game id cannot overwrite a result", async () => {
     await seed({ board: { farmActiveGameId: "open" }, games: { open: openGame() } });
+    await assertFails(
+      updateDoc(boardRef(admin()), { nextHostUid: "bob", nextHostSpunAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+});
+
+describe("host eligibility (D163 to D166)", () => {
+  // alice owns the board and therefore is the Host until a Host is handed over; carol is a past Host here.
+  const closedRound = (board: Record<string, unknown> = {}) =>
+    seed({ board: { farmActiveGameId: "closed", ...board }, games: { closed: closedGame() } });
+  const cancelledRound = (board: Record<string, unknown> = {}) =>
+    seed({ board: { farmActiveGameId: "cancelled", ...board }, games: { cancelled: cancelledGame() } });
+  const handOver = (client: ReturnType<typeof admin>, data: Record<string, unknown>) =>
+    updateDoc(boardRef(client), { updatedAt: serverTimestamp(), ...data });
+
+  it("should reject the owner as next Host while nobody has been handed the role, for every resolution", async () => {
+    await closedRound();
+    for (const resolution of ["direct", "tie-wheel", "all-wheel"]) {
+      await assertFails(finishRound(admin(), "closed", "alice", resolution));
+    }
+    await assertSucceeds(finishRound(admin(), "closed", "bob", "direct"));
+  });
+
+  it("should reject the stored current Host and every previous Host in every resolution, and accept an eligible winner", async () => {
+    await closedRound({ hostUid: "bob", pastHostUids: ["alice", "carol"] });
+    for (const resolution of ["direct", "tie-wheel", "all-wheel"]) {
+      for (const excluded of ["bob", "alice", "carol"]) {
+        await assertFails(finishRound(admin(), "closed", excluded, resolution));
+      }
+    }
+    await closedRound({ hostUid: "bob", pastHostUids: ["alice"] });
+    await assertSucceeds(finishRound(admin(), "closed", "carol", "tie-wheel"));
+  });
+
+  it("should reject a cancelled fallback result for the current or a previous Host and accept an eligible player", async () => {
+    await cancelledRound({ hostUid: "bob", pastHostUids: ["alice"] });
+    await assertFails(storeFallback(admin(), "cancelled", "bob"));
+    await assertFails(storeFallback(admin(), "cancelled", "alice"));
+    await assertSucceeds(storeFallback(admin(), "cancelled", "carol"));
+  });
+
+  it("should not treat a person who was only selected as next Host as a previous Host", async () => {
+    // bob was stored as next Host (round "old") but never handed the role: a later round may select bob again.
+    await seed({
+      board: { farmActiveGameId: "closed", nextHostUid: "bob", nextHostGameId: "old" },
+      games: { closed: closedGame() },
+    });
+    await assertSucceeds(finishRound(admin(), "closed", "bob", "direct"));
+  });
+
+  it("should reject a write that edits the Host lists together with a result", async () => {
+    await closedRound();
+    await assertFails(finishRound(admin(), "closed", "bob", "direct", { hostUid: "carol" }));
+    await closedRound();
+    await assertFails(finishRound(admin(), "closed", "bob", "direct", { pastHostUids: [] }));
+  });
+
+  it("should let the admin hand the Host role to the stored next Host and move the old Host to the past Hosts", async () => {
+    await seed({ board: { farmActiveGameId: "done", nextHostGameId: "done", nextHostUid: "bob" }, games: { done: finishedGame("bob") } });
+    await assertSucceeds(handOver(admin(), { hostUid: "bob", pastHostUids: ["alice"] }));
+    expect((await getDoc(boardRef(admin()))).data()).toMatchObject({ hostUid: "bob", pastHostUids: ["alice"] });
+    await seed({
+      board: { farmActiveGameId: "done", nextHostGameId: "done", nextHostUid: "carol", hostUid: "bob", pastHostUids: ["alice"] },
+      games: { done: finishedGame("carol") },
+    });
+    await assertSucceeds(handOver(admin(), { hostUid: "carol", pastHostUids: ["alice", "bob"] }));
+  });
+
+  it("should reject a hand-over that is not exactly the next Host plus the old Host appended once", async () => {
+    await seed({ board: { farmActiveGameId: "done", nextHostGameId: "done", nextHostUid: "bob" }, games: { done: finishedGame("bob") } });
+    await assertFails(handOver(admin(), { hostUid: "carol", pastHostUids: ["alice"] }));
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: [] }));
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: ["alice", "alice"] }));
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: ["carol"] }));
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: ["alice"], phase: 1 }));
+    await assertFails(updateDoc(boardRef(admin()), { hostUid: "bob", pastHostUids: ["alice"], updatedAt: Timestamp.now() }));
+    await assertFails(updateDoc(boardRef(admin()), { hostUid: "bob", updatedAt: serverTimestamp() }));
+  });
+
+  it("should reject a hand-over to the current Host, to a previous Host, or with no stored next Host", async () => {
+    await seed({ board: { nextHostUid: "alice" } });
+    await assertFails(handOver(admin(), { hostUid: "alice", pastHostUids: ["alice"] }));
+    await seed({ board: { nextHostUid: "alice", hostUid: "bob", pastHostUids: ["alice"] } });
+    await assertFails(handOver(admin(), { hostUid: "alice", pastHostUids: ["alice", "bob"] }));
+    await seed({});
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: ["alice"] }));
+  });
+
+  it("should reject a hand-over while the active round has no stored result, outside step 5 and by anyone but the admin", async () => {
+    await seed({ board: { farmActiveGameId: "open", nextHostGameId: "older", nextHostUid: "bob" }, games: { open: openGame() } });
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: ["alice"] }));
+    await seed({ board: { nextHostUid: "bob", phase: 4 } });
+    await assertFails(handOver(admin(), { hostUid: "bob", pastHostUids: ["alice"] }));
+    await seed({ board: { nextHostUid: "bob" } });
+    for (const client of [alice(), bob(), stranger(), ...Object.values(impostors).map((make) => make())]) {
+      await assertFails(handOver(client, { hostUid: "bob", pastHostUids: ["alice"] }));
+    }
+  });
+
+  it("should keep the legacy spin on a board that never ran a round, and refuse it once a round exists", async () => {
+    await seed({ board: { hostUid: "bob", pastHostUids: ["alice"] } });
+    await assertSucceeds(
+      updateDoc(boardRef(admin()), { nextHostUid: "carol", nextHostSpunAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+    await seed({ board: { farmActiveGameId: "done", nextHostGameId: "done", nextHostUid: "carol" }, games: { done: finishedGame("carol") } });
     await assertFails(
       updateDoc(boardRef(admin()), { nextHostUid: "bob", nextHostSpunAt: serverTimestamp(), updatedAt: serverTimestamp() }),
     );

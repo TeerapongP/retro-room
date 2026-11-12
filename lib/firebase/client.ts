@@ -102,6 +102,10 @@ export function describeFirebaseError(error: unknown): string {
       return "รอบนี้ไม่ใช่รอบปัจจุบัน หรือบอร์ดไม่ได้อยู่ขั้นที่ 5";
     case "not-eligible":
       return "ผู้ที่ถูกเลือกไม่ได้เล่นรอบนี้";
+    case "host-excluded":
+      return "โฮสต์ปัจจุบันและคนที่เคยเป็นโฮสต์เป็นโฮสต์คนถัดไปไม่ได้";
+    case "no-next-host":
+      return "ยังไม่มีโฮสต์คนถัดไปที่บันทึกไว้สำหรับรอบนี้";
     case "unauthenticated":
       return "กรุณาเข้าสู่ระบบอีกครั้ง (unauthenticated)";
     case "auth/popup-blocked":

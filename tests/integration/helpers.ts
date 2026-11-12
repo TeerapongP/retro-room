@@ -18,6 +18,8 @@ export type TestUser = {
   user: User;
   uid: string;
   name: string;
+  sub: string;
+  email: string;
 };
 
 let appCounter = 0;
@@ -38,10 +40,11 @@ export async function createTestUser(
   connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
   const db = getFirestore(app);
   connectFirestoreEmulator(db, "127.0.0.1", 8080);
+  const email = options.email ?? `${sub}@example.test`;
   const credential = GoogleAuthProvider.credential(
     JSON.stringify({
       sub,
-      email: options.email ?? `${sub}@example.test`,
+      email,
       email_verified: options.emailVerified ?? true,
       name: displayName,
     }),
@@ -50,7 +53,20 @@ export async function createTestUser(
   if (options.withPlayerName ?? true) {
     await savePlayerName(user, displayName, db);
   }
-  return { app, db, user, uid: user.uid, name: displayName };
+  return { app, db, user, uid: user.uid, name: displayName, sub, email };
+}
+
+/**
+ * A new client (new app, new Firestore connection) for an existing test user: the same uid, no profile write.
+ * The Rules emulator evaluates `request.time` for reads once per connection, so a client that stays connected
+ * across a real-time wait keeps seeing the time of its first read. A reconnect is also what a refresh does.
+ */
+export function reconnectTestUser(existing: TestUser): Promise<TestUser> {
+  const isAdminEmail = existing.email !== `${existing.sub}@example.test`;
+  return createTestUser(existing.sub, existing.name, {
+    withPlayerName: false,
+    ...(isAdminEmail ? { email: existing.email } : {}),
+  });
 }
 
 export async function resetEmulators(): Promise<void> {

@@ -3,6 +3,7 @@ import { clampPhase } from "../phases";
 import {
   FARM_SELECTION_SECONDS,
   FarmError,
+  excludedHostUids,
   isFarmFieldId,
   type FarmChoice,
   type FarmFieldId,
@@ -60,6 +61,8 @@ type StoredBoard = {
   nextHostSpunAt?: string | null;
   farmActiveGameId?: string | null;
   nextHostGameId?: string | null;
+  hostUid?: string | null;
+  pastHostUids?: string[];
   createdAt: string;
 };
 type StoredMember = Omit<BoardMember, "joinedAt"> & { joinedAt: string };
@@ -239,6 +242,8 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       nextHostSpunAt: stored.nextHostSpunAt ? new Date(stored.nextHostSpunAt) : null,
       farmActiveGameId: stored.farmActiveGameId ?? null,
       nextHostGameId: stored.nextHostGameId ?? null,
+      hostUid: stored.hostUid ?? null,
+      pastHostUids: [...(stored.pastHostUids ?? [])],
     };
   }
 
@@ -275,6 +280,10 @@ export function createMockBackend(options: MockBackendOptions = {}) {
   function isFarmPlayerOf(boardId: string, uid: string, game: StoredFarmGame): boolean {
     const member = state.members[boardId]?.[uid];
     return member !== undefined && Date.parse(member.joinedAt) < Date.parse(game.startedAt);
+  }
+
+  function isHostExcluded(board: StoredBoard, uid: string): boolean {
+    return excludedHostUids({ ownerId: board.ownerId, hostUid: board.hostUid ?? null, pastHostUids: board.pastHostUids ?? [] }).includes(uid);
   }
 
   /** The board in step 5 and in progress, as the Rules require for every farm write. */
@@ -509,6 +518,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       }
       if (game.status !== "selecting") throw new FarmError("not-active", "This round was cancelled");
       if (!isFarmPlayerOf(boardId, winnerUid, game)) throw new FarmError("not-eligible", "The winner did not play this round");
+      if (isHostExcluded(board, winnerUid)) throw new FarmError("host-excluded", "The current or a previous Host cannot be next Host");
       if (now().getTime() < farmDeadline(game)) throw denied("The selection time has not ended");
       game.status = "finished";
       game.resolution = resolution;
@@ -516,6 +526,18 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       board.nextHostUid = winnerUid;
       board.nextHostGameId = gameId;
       if (resolution !== "direct") board.nextHostSpunAt = now().toISOString();
+      changed();
+    },
+
+    async handOverHost(boardId: string): Promise<void> {
+      const board = farmBoardOrThrow(boardId);
+      const nextHostUid = board.nextHostUid;
+      if (!nextHostUid || (board.farmActiveGameId && board.nextHostGameId !== board.farmActiveGameId)) {
+        throw new FarmError("no-next-host", "There is no stored next Host to hand over to");
+      }
+      if (isHostExcluded(board, nextHostUid)) throw new FarmError("host-excluded", "This person already is or was the Host");
+      board.pastHostUids = [...(board.pastHostUids ?? []), board.hostUid ?? board.ownerId];
+      board.hostUid = nextHostUid;
       changed();
     },
 
@@ -536,6 +558,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       }
       if (board.nextHostGameId === gameId) throw new FarmError("already-resolved", "The fallback result is already stored");
       if (!isFarmPlayerOf(boardId, winnerUid, game)) throw new FarmError("not-eligible", "The winner did not play this round");
+      if (isHostExcluded(board, winnerUid)) throw new FarmError("host-excluded", "The current or a previous Host cannot be next Host");
       board.nextHostUid = winnerUid;
       board.nextHostGameId = gameId;
       board.nextHostSpunAt = now().toISOString();
