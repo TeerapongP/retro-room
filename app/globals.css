@@ -1094,6 +1094,7 @@ body {
 .board-scene .dashboard-logout { padding-inline: max(0.75rem, calc(14 * var(--u))); }
 .board-content { display: flex; flex-direction: column; gap: max(0.75rem, calc(15 * var(--u))); width: clamp(min(100%, 22rem), calc(1548 * var(--u)), 100%); margin: max(1rem, calc(29 * var(--u))) auto 0; }
 .board-scene .board-content { width: 100%; }
+.board-scene .board-account { width: 100%; }
 .board-scene .pixel-panel { background: #fff3df; border: 4px solid #4d2c12; box-shadow: inset 0 0 0 3px #e6bf82, 4px 5px 0 rgb(48 30 15 / 0.4); }
 .board-scene .pixel-button { border-color: #493521; box-shadow: inset 0 0 0 2px #ffe08a, 0 3px 0 #493521; background: #f5bd4f; }
 .board-scene .pixel-button-danger { background: #e98a8a; box-shadow: inset 0 0 0 2px #f6b7b7, 0 3px 0 #493521; }
