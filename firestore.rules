@@ -429,6 +429,11 @@ service cloud.firestore {
                  .hasOnly(['status', 'completedAt', 'updatedAt'])
             && request.resource.data.completedAt == request.time)
         ))
+        // admin resets a completed board back to waiting
+        || (isAdmin()
+          && resource.data.get('status', 'in-progress') == 'completed'
+          && request.resource.data.status == 'waiting'
+          && request.resource.data.updatedAt == request.time)
         // admin starts or stops the shared timer (F22, D112)
         || validTimerUpdate(boardId)
         // admin moves the session step (F23, D121)

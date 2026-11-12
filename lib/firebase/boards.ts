@@ -3,6 +3,7 @@ import {
   Timestamp,
   collection,
   collectionGroup,
+  deleteField,
   doc,
   getDoc,
   onSnapshot,
@@ -127,6 +128,28 @@ export async function completeSession(
     status: "completed",
     completedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  });
+}
+
+export async function resetBoard(
+  boardId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().resetBoard(boardId);
+  await updateDoc(doc(db, "boards", boardId), {
+    status: "waiting",
+    updatedAt: serverTimestamp(),
+    completedAt: deleteField(),
+    startedAt: deleteField(),
+    phase: deleteField(),
+    timerEndsAt: deleteField(),
+    timerDurationSec: deleteField(),
+    nextHostUid: deleteField(),
+    nextHostSpunAt: deleteField(),
+    farmActiveGameId: deleteField(),
+    nextHostGameId: deleteField(),
+    hostUid: deleteField(),
+    pastHostUids: deleteField(),
   });
 }
 

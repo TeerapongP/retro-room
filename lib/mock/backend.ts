@@ -584,6 +584,21 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       changed();
     },
 
+    async resetBoard(boardId: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      board.status = "waiting";
+      board.phase = 1;
+      board.timerEndsAt = null;
+      board.timerDurationSec = null;
+      board.nextHostUid = null;
+      board.nextHostSpunAt = null;
+      board.farmActiveGameId = null;
+      board.nextHostGameId = null;
+      board.hostUid = null;
+      board.pastHostUids = [];
+      changed();
+    },
+
     async joinBoard(boardId: string, uid: string, playerName: string): Promise<void> {
       boardOrThrow(boardId);
       (state.members[boardId] ??= {})[uid] = {

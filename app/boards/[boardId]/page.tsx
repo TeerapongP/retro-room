@@ -26,6 +26,7 @@ import { rememberLastBoard } from "@/lib/last-board";
 import { usePlayerName, useRequireSignedIn } from "@/lib/firebase/auth";
 import {
   completeSession,
+  resetBoard,
   getOwnMembership,
   joinBoard,
   setPhase,
@@ -208,6 +209,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
+  const [isConfirmingReset, setIsConfirmingReset] = useState(false);
   const isWaiting = board.status === "waiting";
   const isCompleted = board.status === "completed";
   const isAdmin = isAdminUser(user);
@@ -366,6 +368,11 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
                 จบเซสชัน
               </button>
             ) : null}
+            {isAdmin && isCompleted ? (
+              <button type="button" className="board-button" onClick={() => setIsConfirmingReset(true)}>
+                เริ่มใหม่
+              </button>
+            ) : null}
           </>
         }
       />
@@ -398,6 +405,37 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
           }
         >
           <p>เมื่อจบแล้ว บอร์ดจะเป็นแบบอ่านอย่างเดียวและเริ่มใหม่ไม่ได้</p>
+        </ModalDialog>
+      ) : null}
+
+      {isConfirmingReset ? (
+        <ModalDialog
+          title="เริ่มเซสชันใหม่?"
+          onClose={() => setIsConfirmingReset(false)}
+          actions={
+            <>
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={async () => {
+                  if (await runAction(() => resetBoard(board.id))) {
+                    setIsConfirmingReset(false);
+                  }
+                }}
+              >
+                เริ่มใหม่
+              </button>
+              <button
+                type="button"
+                className="pixel-button pixel-button-gold"
+                onClick={() => setIsConfirmingReset(false)}
+              >
+                ยกเลิก
+              </button>
+            </>
+          }
+        >
+          <p>บอร์ดจะกลับไปสถานะก่อนเริ่ม การ์ด โหวต และคะแนนทั้งหมดยังอยู่</p>
         </ModalDialog>
       ) : null}
 
