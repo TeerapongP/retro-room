@@ -361,7 +361,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
                   ? "คัดลอกไม่สำเร็จ"
                   : "คัดลอกลิงก์แชร์"}
             </button>
-            {isOwner && !isCompleted ? (
+            {isAdmin && !isCompleted ? (
               <button type="button" className="board-button board-button-danger" onClick={() => setIsConfirmingComplete(true)}>
                 จบเซสชัน
               </button>
