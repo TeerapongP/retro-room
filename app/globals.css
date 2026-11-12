@@ -1081,7 +1081,7 @@ body {
 
 /* Board screen (F18, D83 to D88): same scene and navbar look as the Dashboard, sized from docs/references/retro-room-board-reference.png
    (1672 x 941), so --u is one pixel of that 1672 px wide reference here. */
-.board-scene { --u: min(calc(100vw / 1672), 1.6px); padding-top: max(0.75rem, calc(14 * var(--u))); }
+.board-scene { --u: min(calc(100vw / 1672), 0.6px); padding-top: max(0.75rem, calc(14 * var(--u))); }
 .board-scene .dashboard-header {
   width: clamp(min(100%, 62rem), calc(1307 * var(--u)), 100%);
   left: 0;
