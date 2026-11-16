@@ -21,6 +21,11 @@ function makeState(overrides: Partial<TreasurePlayerState> = {}): TreasurePlayer
     score: 0,
     lastActionAt: null,
     updatedAt: null,
+    tcSpentOnItems: 0,
+    attacksSent: 0,
+    attacksBlocked: 0,
+    tcLostToAttacks: 0,
+    frozenUntilMs: null,
     ...overrides,
   };
 }

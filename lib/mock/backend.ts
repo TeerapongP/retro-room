@@ -16,6 +16,12 @@ import { VOTES_PER_MEMBER, type Voter } from "../votes";
 import {
   isValidPlayerName,
   normalizePlayerName,
+  type AchievementResult,
+  type AttackDocument,
+  type AttackStatus,
+  type BattleFeedEvent,
+  type BattleFeedEventType,
+  type BattleItemType,
   type Board,
   type BoardCard,
   type BoardMember,
@@ -26,13 +32,17 @@ import {
   type FishCatch,
   type FishingGame,
   type FishingGameStatus,
+  type InventoryState,
   type MoveTargetBoard,
   type PowerAction,
   type PowerActionType,
   type PowerPoints,
+  type Reaction,
+  type ReactionType,
   type ResolvedState,
   type TreasureChest,
   type TreasureGame,
+  type TreasureGameStatus,
   type TreasureModifier,
   type TreasurePlayerState,
   type TreasurePowerAction,
@@ -40,7 +50,19 @@ import {
   type TreasureResolvedState,
   type WheelSegment,
 } from "../firebase/types";
-import { POWER_ACTION_COSTS } from "../firebase/types";
+import {
+  ATTACK_WARNING_MS,
+  BATTLE_ITEM_COSTS,
+  BOMB_GIFT_DAMAGE,
+  FINAL_RUSH_ATTACK_SHUTDOWN_MS,
+  GOLDEN_PICK_BONUS,
+  ICE_TRAP_DURATION_MS,
+  POWER_ACTION_COSTS,
+  RECOVERY_POTION_RESTORE,
+  SNEAKY_THIEF_MAX_STEAL,
+  TREASURE_MAX_RESPINS,
+  TREASURE_POWER_ACTION_COSTS,
+} from "../firebase/types";
 
 /**
  * In-memory stand-in for Firebase Auth and Firestore (F19, D89 to D92). It does NOT run Security Rules:
@@ -124,6 +146,52 @@ type StoredFishCatch = {
   updatedAt: string | null;
 };
 
+type StoredTreasureGame = {
+  id: string;
+  status: TreasureGameStatus;
+  startedAt: string;
+  durationSec: 60 | 90 | 120 | 180;
+  endsAt: string | null;
+  activityModifier: TreasureModifier | null;
+  ignoredUids: string[];
+  reSpinCount: number;
+  resolvedState: (Omit<TreasureResolvedState, "resolvedAt"> & { resolvedAt: string | null }) | null;
+  resolution: "wheel" | null;
+  winnerUid: string | null;
+  resolvedAt: string | null;
+  achievements: AchievementResult[] | null;
+};
+
+type StoredTreasurePlayerState = Omit<TreasurePlayerState, "lastActionAt" | "updatedAt"> & {
+  lastActionAt: string | null;
+  updatedAt: string | null;
+};
+
+type StoredTreasurePowerAction = { type: TreasurePowerActionType; cost: number; submittedAt: string };
+
+type StoredAttack = {
+  id: string;
+  attackerUid: string;
+  targetUid: string;
+  itemType: BattleItemType;
+  status: AttackStatus;
+  tcDelta: number;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+type StoredBattleFeedEvent = {
+  id: string;
+  type: BattleFeedEventType;
+  actorUid: string;
+  targetUid: string | null;
+  itemType: BattleItemType | null;
+  tcDelta: number | null;
+  createdAt: string;
+};
+
+type StoredReaction = { id: string; uid: string; type: ReactionType; createdAt: string };
+
 type MockState = {
   session: string | null;
   profiles: Record<string, string>;
@@ -142,6 +210,16 @@ type MockState = {
   fishCatches?: Record<string, Record<string, Record<string, StoredFishCatch>>>;
   fishPowerPoints?: Record<string, Record<string, Record<string, StoredPowerPoints>>>;
   fishPowerActions?: Record<string, Record<string, Record<string, StoredPowerAction>>>;
+  /** Treasure Rush Chaos Battle; absent in states saved before this feature existed. */
+  treasureGames?: Record<string, Record<string, StoredTreasureGame>>;
+  treasurePlayerStates?: Record<string, Record<string, Record<string, StoredTreasurePlayerState>>>;
+  treasureChestBoards?: Record<string, Record<string, Record<string, TreasureChest[]>>>;
+  treasurePowerPoints?: Record<string, Record<string, Record<string, StoredPowerPoints>>>;
+  treasurePowerActions?: Record<string, Record<string, Record<string, StoredTreasurePowerAction>>>;
+  battleInventories?: Record<string, Record<string, Record<string, BattleItemType[]>>>;
+  battleAttacks?: Record<string, Record<string, Record<string, StoredAttack>>>;
+  battleFeed?: Record<string, Record<string, StoredBattleFeedEvent[]>>;
+  battleReactions?: Record<string, Record<string, StoredReaction[]>>;
   counter: number;
 };
 
@@ -406,6 +484,99 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     const board = state.boards[boardId];
     if (!board) throw new Error(`Mock board not found: ${boardId}`);
     return board;
+  }
+
+  function treasureGamesOf(boardId: string): Record<string, StoredTreasureGame> {
+    return ((state.treasureGames ??= {})[boardId] ??= {});
+  }
+
+  function treasurePlayerStatesOf(boardId: string, gameId: string): Record<string, StoredTreasurePlayerState> {
+    return (((state.treasurePlayerStates ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function treasureChestBoardsOf(boardId: string, gameId: string): Record<string, TreasureChest[]> {
+    return (((state.treasureChestBoards ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function treasurePowerPointsOf(boardId: string, gameId: string): Record<string, StoredPowerPoints> {
+    return (((state.treasurePowerPoints ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function treasurePowerActionsOf(boardId: string, gameId: string): Record<string, StoredTreasurePowerAction> {
+    return (((state.treasurePowerActions ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function battleInventoriesOf(boardId: string, gameId: string): Record<string, BattleItemType[]> {
+    return (((state.battleInventories ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function battleAttacksOf(boardId: string, gameId: string): Record<string, StoredAttack> {
+    return (((state.battleAttacks ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function battleFeedOf(boardId: string, gameId: string): StoredBattleFeedEvent[] {
+    return (((state.battleFeed ??= {})[boardId] ??= {})[gameId] ??= []);
+  }
+
+  function battleReactionsOf(boardId: string, gameId: string): StoredReaction[] {
+    return (((state.battleReactions ??= {})[boardId] ??= {})[gameId] ??= []);
+  }
+
+  function emptyPlayerState(uid: string): StoredTreasurePlayerState {
+    const t = now().toISOString();
+    return {
+      uid, openedCount: 0, currentRunPoints: 0, currentRunGem: 0, currentRunCoin: 0,
+      currentRunCrown: 0, bankedPoints: 0, gemBanked: 0, coinBanked: 0, crownBanked: 0,
+      bankCount: 0, trapHit: false, maxSingleReward: 0, score: 0,
+      tcSpentOnItems: 0, attacksSent: 0, attacksBlocked: 0, tcLostToAttacks: 0, frozenUntilMs: null,
+      lastActionAt: t, updatedAt: t,
+    };
+  }
+
+  function toTreasurePlayerState(stored: StoredTreasurePlayerState): TreasurePlayerState {
+    return {
+      uid: stored.uid,
+      openedCount: stored.openedCount,
+      currentRunPoints: stored.currentRunPoints,
+      currentRunGem: stored.currentRunGem,
+      currentRunCoin: stored.currentRunCoin,
+      currentRunCrown: stored.currentRunCrown,
+      bankedPoints: stored.bankedPoints,
+      gemBanked: stored.gemBanked,
+      coinBanked: stored.coinBanked,
+      crownBanked: stored.crownBanked,
+      bankCount: stored.bankCount,
+      trapHit: stored.trapHit,
+      maxSingleReward: stored.maxSingleReward,
+      score: stored.score,
+      lastActionAt: stored.lastActionAt ? new Date(stored.lastActionAt) : null,
+      updatedAt: stored.updatedAt ? new Date(stored.updatedAt) : null,
+      tcSpentOnItems: stored.tcSpentOnItems ?? 0,
+      attacksSent: stored.attacksSent ?? 0,
+      attacksBlocked: stored.attacksBlocked ?? 0,
+      tcLostToAttacks: stored.tcLostToAttacks ?? 0,
+      frozenUntilMs: stored.frozenUntilMs ?? null,
+    };
+  }
+
+  function toTreasureGame(gameId: string, stored: StoredTreasureGame): TreasureGame {
+    const rs = stored.resolvedState;
+    return {
+      id: gameId,
+      gameType: "treasure",
+      status: stored.status,
+      startedAt: stored.startedAt ? new Date(stored.startedAt) : null,
+      durationSec: stored.durationSec,
+      endsAt: stored.endsAt ? new Date(stored.endsAt) : null,
+      activityModifier: stored.activityModifier,
+      ignoredUids: [...stored.ignoredUids],
+      reSpinCount: stored.reSpinCount,
+      resolvedState: rs ? { ...rs, resolvedAt: rs.resolvedAt ? new Date(rs.resolvedAt) : null } : null,
+      resolution: stored.resolution,
+      winnerUid: stored.winnerUid,
+      resolvedAt: stored.resolvedAt ? new Date(stored.resolvedAt) : null,
+      achievements: stored.achievements ? [...stored.achievements] : null,
+    };
   }
 
   /** All non-hidden cards are readable regardless of phase; phase restriction was moved to the UI layer (D126 updated). */
@@ -1043,91 +1214,310 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       changed();
     },
 
-    // ---- Treasure Rush stubs (full implementation is a separate task) ----
+    // ---- Treasure Rush Chaos Battle ----
 
-    async startTreasureRush(_boardId: string, _durationSec: 60 | 90 | 120 | 180): Promise<string> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async startTreasureRush(boardId: string, durationSec: 60 | 90 | 120 | 180): Promise<string> {
+      const board = boardOrThrow(boardId);
+      const gameId = nextId("tgame");
+      treasureGamesOf(boardId)[gameId] = {
+        id: gameId, status: "preparation", startedAt: now().toISOString(), durationSec,
+        endsAt: null, activityModifier: null, ignoredUids: [], reSpinCount: 0,
+        resolvedState: null, resolution: null, winnerUid: null, resolvedAt: null, achievements: null,
+      };
+      board.farmActiveGameId = gameId;
+      changed();
+      return gameId;
     },
 
-    async spinTreasureWheel(_boardId: string, _gameId: string, _modifier: TreasureModifier): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async spinTreasureWheel(boardId: string, gameId: string, modifier: TreasureModifier): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game) throw denied("Treasure game not found");
+      if (game.status !== "preparation") throw denied("Game not in preparation");
+      game.activityModifier = modifier;
+      game.status = "playing";
+      game.endsAt = new Date(now().getTime() + game.durationSec * 1000).toISOString();
+      changed();
     },
 
-    async writeChestBoards(_boardId: string, _gameId: string, _boards: { uid: string; chests: TreasureChest[] }[]): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async writeChestBoards(boardId: string, gameId: string, boards: { uid: string; chests: TreasureChest[] }[]): Promise<void> {
+      const cb = treasureChestBoardsOf(boardId, gameId);
+      for (const { uid, chests } of boards) cb[uid] = [...chests];
+      changed();
     },
 
-    subscribeToMyChestBoard(
-      _boardId: string,
-      _gameId: string,
-      _uid: string,
-      _cb: (chests: TreasureChest[] | null) => void,
-      _onError: (error: unknown) => void,
-    ): Unsubscribe {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    subscribeToMyChestBoard(boardId: string, gameId: string, uid: string, cb: (chests: TreasureChest[] | null) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => treasureChestBoardsOf(boardId, gameId)[uid] ?? null, cb, onError);
     },
 
-    async openChest(_boardId: string, _gameId: string, _uid: string, _chestIndex: number): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async openChest(boardId: string, gameId: string, uid: string, chestIndex: number): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game || game.status !== "playing") throw denied("Game not in playing state");
+      if (game.endsAt && now().getTime() >= new Date(game.endsAt).getTime()) throw denied("Game has ended");
+      const chests = treasureChestBoardsOf(boardId, gameId)[uid];
+      if (!chests || chestIndex < 0 || chestIndex >= chests.length) throw denied("Invalid chest index");
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      const existing = ps[uid] ?? emptyPlayerState(uid);
+      if (chestIndex !== existing.openedCount) throw denied("Chests must be opened sequentially");
+      const chest = chests[chestIndex];
+      const isTrap = chest.type === "trap";
+      const newRunPoints = Math.max(0, existing.currentRunPoints + chest.basePoints);
+      ps[uid] = {
+        ...existing,
+        openedCount: existing.openedCount + 1,
+        currentRunPoints: newRunPoints,
+        currentRunGem: existing.currentRunGem + (chest.type === "gem" ? chest.basePoints : 0),
+        currentRunCoin: existing.currentRunCoin + (chest.type === "coins" ? chest.basePoints : 0),
+        currentRunCrown: existing.currentRunCrown + (chest.type === "crown" ? chest.basePoints : 0),
+        trapHit: existing.trapHit || isTrap,
+        maxSingleReward: Math.max(existing.maxSingleReward, Math.max(0, chest.basePoints)),
+        lastActionAt: now().toISOString(),
+        updatedAt: now().toISOString(),
+      };
+      changed();
     },
 
-    async bankTreasure(_boardId: string, _gameId: string, _uid: string): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async bankTreasure(boardId: string, gameId: string, uid: string): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game || game.status !== "playing") throw denied("Game not in playing state");
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      const existing = ps[uid] ?? emptyPlayerState(uid);
+      if (existing.currentRunPoints === 0) return;
+      ps[uid] = {
+        ...existing,
+        bankedPoints: existing.bankedPoints + existing.currentRunPoints,
+        gemBanked: existing.gemBanked + existing.currentRunGem,
+        coinBanked: existing.coinBanked + existing.currentRunCoin,
+        crownBanked: existing.crownBanked + existing.currentRunCrown,
+        currentRunPoints: 0, currentRunGem: 0, currentRunCoin: 0, currentRunCrown: 0,
+        bankCount: existing.bankCount + 1,
+        updatedAt: now().toISOString(),
+      };
+      changed();
     },
 
-    async endTreasureRush(_boardId: string, _gameId: string): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async endTreasureRush(boardId: string, gameId: string): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game) throw denied("Treasure game not found");
+      game.status = "settlement";
+      changed();
     },
 
-    subscribeToTreasureGame(
-      _boardId: string,
-      _gameId: string,
-      _cb: (game: TreasureGame | null) => void,
-      _onError: (error: unknown) => void,
-    ): Unsubscribe {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    subscribeToTreasureGame(boardId: string, gameId: string, cb: (game: TreasureGame | null) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => {
+        const stored = treasureGamesOf(boardId)[gameId];
+        return stored ? toTreasureGame(gameId, stored) : null;
+      }, cb, onError);
     },
 
-    subscribeToTreasurePlayerStates(
-      _boardId: string,
-      _gameId: string,
-      _cb: (states: TreasurePlayerState[]) => void,
-      _onError: (error: unknown) => void,
-    ): Unsubscribe {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    subscribeToTreasurePlayerStates(boardId: string, gameId: string, cb: (states: TreasurePlayerState[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => Object.values(treasurePlayerStatesOf(boardId, gameId)).map(toTreasurePlayerState), cb, onError);
     },
 
-    async lockTreasureScores(_boardId: string, _gameId: string, _scores: { uid: string; score: number }[]): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async lockTreasureScores(boardId: string, gameId: string, scores: { uid: string; score: number }[]): Promise<void> {
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      for (const { uid, score } of scores) {
+        const existing = ps[uid] ?? emptyPlayerState(uid);
+        ps[uid] = { ...existing, score, updatedAt: now().toISOString() };
+      }
+      changed();
     },
 
-    async submitTreasurePowerAction(_boardId: string, _gameId: string, _uid: string, _type: TreasurePowerActionType): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async submitTreasurePowerAction(boardId: string, gameId: string, uid: string, type: TreasurePowerActionType): Promise<void> {
+      const pp = treasurePowerPointsOf(boardId, gameId);
+      const pa = treasurePowerActionsOf(boardId, gameId);
+      if (pa[uid]) throw denied("A Power Action was already submitted this round");
+      const cost = TREASURE_POWER_ACTION_COSTS[type];
+      const balance = pp[uid]?.balance ?? 0;
+      if (balance < cost) throw denied("Insufficient Power Points");
+      pa[uid] = { type, cost, submittedAt: now().toISOString() };
+      if (pp[uid]) pp[uid].balance = balance - cost;
+      changed();
     },
 
-    subscribeToTreasurePowerActions(
-      _boardId: string,
-      _gameId: string,
-      _cb: (actions: TreasurePowerAction[]) => void,
-      _onError: (error: unknown) => void,
-    ): Unsubscribe {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    subscribeToTreasurePowerActions(boardId: string, gameId: string, cb: (actions: TreasurePowerAction[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => Object.entries(treasurePowerActionsOf(boardId, gameId)).map(([uid, stored]) => ({
+        uid, type: stored.type, cost: stored.cost, submittedAt: new Date(stored.submittedAt), updatedAt: null,
+      })), cb, onError);
     },
 
-    async resolveAndTransitionTreasureToWheel(
-      _boardId: string,
-      _gameId: string,
-      _resolvedState: Omit<TreasureResolvedState, "resolvedAt">,
-    ): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async resolveAndTransitionTreasureToWheel(boardId: string, gameId: string, resolvedState: Omit<TreasureResolvedState, "resolvedAt">): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game) throw denied("Treasure game not found");
+      game.status = "host_selection";
+      game.resolvedState = { ...resolvedState, resolvedAt: now().toISOString() };
+      changed();
     },
 
-    async spinTreasureHostWheel(_boardId: string, _gameId: string, _winnerUid: string): Promise<void> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async spinTreasureHostWheel(boardId: string, gameId: string, winnerUid: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game) throw denied("Treasure game not found");
+      game.status = "finished";
+      game.resolution = "wheel";
+      game.winnerUid = winnerUid;
+      game.resolvedAt = now().toISOString();
+      board.nextHostUid = winnerUid;
+      board.nextHostGameId = gameId;
+      board.nextHostSpunAt = now().toISOString();
+      changed();
     },
 
-    async reSpinTreasureHostWheel(_boardId: string, _gameId: string): Promise<number> {
-      throw new Error("Treasure Rush not yet implemented in mock");
+    async reSpinTreasureHostWheel(boardId: string, gameId: string): Promise<number> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game) throw denied("Treasure game not found");
+      if (game.reSpinCount >= TREASURE_MAX_RESPINS) throw denied("Re-spin limit reached");
+      game.reSpinCount += 1;
+      changed();
+      return game.reSpinCount;
+    },
+
+    async buyBattleItem(boardId: string, gameId: string, uid: string, itemType: BattleItemType): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game || game.status !== "playing") throw denied("Game not in playing state");
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      const existing = ps[uid] ?? emptyPlayerState(uid);
+      if (existing.frozenUntilMs !== null && existing.frozenUntilMs > now().getTime()) throw denied("Player is frozen");
+      const cost = BATTLE_ITEM_COSTS[itemType];
+      if (existing.currentRunPoints < cost) throw denied("Insufficient TC");
+      const isInstant = itemType === "recovery-potion" || itemType === "golden-pick";
+      const inv = battleInventoriesOf(boardId, gameId);
+      const slots = inv[uid] ?? [];
+      if (!isInstant && slots.length >= 3) throw denied("Inventory is full");
+      let newRunPoints = existing.currentRunPoints - cost;
+      if (itemType === "recovery-potion") newRunPoints += RECOVERY_POTION_RESTORE;
+      if (itemType === "golden-pick") newRunPoints += GOLDEN_PICK_BONUS;
+      ps[uid] = { ...existing, currentRunPoints: Math.max(0, newRunPoints), tcSpentOnItems: existing.tcSpentOnItems + cost, updatedAt: now().toISOString() };
+      if (!isInstant) inv[uid] = [...slots, itemType];
+      battleFeedOf(boardId, gameId).push({ id: nextId("bf"), type: "item-bought", actorUid: uid, targetUid: null, itemType, tcDelta: -cost, createdAt: now().toISOString() });
+      changed();
+    },
+
+    async useOffensiveItem(boardId: string, gameId: string, attackerUid: string, targetUid: string, itemType: BattleItemType): Promise<string> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game || game.status !== "playing") throw denied("Game not in playing state");
+      if (game.endsAt) {
+        const timeLeft = new Date(game.endsAt).getTime() - now().getTime();
+        if (timeLeft <= FINAL_RUSH_ATTACK_SHUTDOWN_MS) throw denied("Attacks shut down");
+      }
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      const attacker = ps[attackerUid] ?? emptyPlayerState(attackerUid);
+      if (attacker.frozenUntilMs !== null && attacker.frozenUntilMs > now().getTime()) throw denied("Player is frozen");
+      const inv = battleInventoriesOf(boardId, gameId);
+      const slots = inv[attackerUid] ?? [];
+      const idx = slots.indexOf(itemType);
+      if (idx === -1) throw denied("Item not in inventory");
+      inv[attackerUid] = slots.filter((_, i) => i !== idx);
+      ps[attackerUid] = { ...attacker, attacksSent: attacker.attacksSent + 1, updatedAt: now().toISOString() };
+      const attackId = nextId("atk");
+      battleAttacksOf(boardId, gameId)[attackId] = { id: attackId, attackerUid, targetUid, itemType, status: "warning", tcDelta: 0, createdAt: now().toISOString(), resolvedAt: null };
+      battleFeedOf(boardId, gameId).push({ id: nextId("bf"), type: "attack-sent", actorUid: attackerUid, targetUid, itemType, tcDelta: null, createdAt: now().toISOString() });
+      changed();
+      return attackId;
+    },
+
+    async resolveAttack(boardId: string, gameId: string, attackId: string): Promise<void> {
+      const attacks = battleAttacksOf(boardId, gameId);
+      const attack = attacks[attackId];
+      if (!attack) throw denied("Attack not found");
+      if (attack.status !== "warning") throw denied("Attack already resolved");
+      if (now().getTime() < new Date(attack.createdAt).getTime() + ATTACK_WARNING_MS) throw denied("Warning window still open");
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      const target = ps[attack.targetUid] ?? emptyPlayerState(attack.targetUid);
+      const attacker = ps[attack.attackerUid] ?? emptyPlayerState(attack.attackerUid);
+      let tcDelta = 0;
+      if (attack.itemType === "bomb-gift") {
+        tcDelta = -Math.min(target.currentRunPoints, BOMB_GIFT_DAMAGE);
+        ps[attack.targetUid] = { ...target, currentRunPoints: Math.max(0, target.currentRunPoints + tcDelta), tcLostToAttacks: target.tcLostToAttacks + Math.abs(tcDelta), updatedAt: now().toISOString() };
+      } else if (attack.itemType === "sneaky-thief") {
+        const steal = Math.min(target.currentRunPoints, SNEAKY_THIEF_MAX_STEAL);
+        tcDelta = -steal;
+        ps[attack.targetUid] = { ...target, currentRunPoints: Math.max(0, target.currentRunPoints - steal), tcLostToAttacks: target.tcLostToAttacks + steal, updatedAt: now().toISOString() };
+        ps[attack.attackerUid] = { ...attacker, currentRunPoints: attacker.currentRunPoints + steal, updatedAt: now().toISOString() };
+      } else if (attack.itemType === "ice-trap") {
+        ps[attack.targetUid] = { ...target, frozenUntilMs: now().getTime() + ICE_TRAP_DURATION_MS, updatedAt: now().toISOString() };
+      } else if (attack.itemType === "chaos-swap") {
+        tcDelta = target.currentRunPoints - attacker.currentRunPoints;
+        ps[attack.targetUid] = { ...target, currentRunPoints: attacker.currentRunPoints, updatedAt: now().toISOString() };
+        ps[attack.attackerUid] = { ...attacker, currentRunPoints: target.currentRunPoints, updatedAt: now().toISOString() };
+      }
+      attacks[attackId] = { ...attack, status: "resolved", tcDelta, resolvedAt: now().toISOString() };
+      battleFeedOf(boardId, gameId).push({ id: nextId("bf"), type: "attack-resolved", actorUid: attack.attackerUid, targetUid: attack.targetUid, itemType: attack.itemType, tcDelta, createdAt: now().toISOString() });
+      changed();
+    },
+
+    async useDefensiveItemAgainstAttack(boardId: string, gameId: string, uid: string, attackId: string, defenseItemType: BattleItemType): Promise<void> {
+      const attacks = battleAttacksOf(boardId, gameId);
+      const attack = attacks[attackId];
+      if (!attack) throw denied("Attack not found");
+      if (attack.status !== "warning") throw denied("Warning window closed");
+      if (attack.targetUid !== uid) throw denied("Not the attack target");
+      const inv = battleInventoriesOf(boardId, gameId);
+      const slots = inv[uid] ?? [];
+      const idx = slots.indexOf(defenseItemType);
+      if (idx === -1) throw denied("Defense item not in inventory");
+      inv[uid] = slots.filter((_, i) => i !== idx);
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      const defender = ps[uid] ?? emptyPlayerState(uid);
+      ps[uid] = { ...defender, attacksBlocked: defender.attacksBlocked + 1, updatedAt: now().toISOString() };
+      const isReflect = defenseItemType === "mirror-shield";
+      attacks[attackId] = { ...attack, status: isReflect ? "reflected" : "blocked", resolvedAt: now().toISOString() };
+      battleFeedOf(boardId, gameId).push({ id: nextId("bf"), type: isReflect ? "attack-reflected" : "attack-blocked", actorUid: uid, targetUid: attack.attackerUid, itemType: defenseItemType, tcDelta: null, createdAt: now().toISOString() });
+      if (isReflect) {
+        const attackerPs = ps[attack.attackerUid] ?? emptyPlayerState(attack.attackerUid);
+        if (attack.itemType === "bomb-gift") {
+          const dmg = Math.min(attackerPs.currentRunPoints, BOMB_GIFT_DAMAGE);
+          ps[attack.attackerUid] = { ...attackerPs, currentRunPoints: Math.max(0, attackerPs.currentRunPoints - dmg), tcLostToAttacks: attackerPs.tcLostToAttacks + dmg, updatedAt: now().toISOString() };
+        } else if (attack.itemType === "ice-trap") {
+          ps[attack.attackerUid] = { ...attackerPs, frozenUntilMs: now().getTime() + ICE_TRAP_DURATION_MS, updatedAt: now().toISOString() };
+        }
+      }
+      changed();
+    },
+
+    async sendReaction(boardId: string, gameId: string, uid: string, type: ReactionType): Promise<void> {
+      battleReactionsOf(boardId, gameId).push({ id: nextId("rxn"), uid, type, createdAt: now().toISOString() });
+      changed();
+    },
+
+    async lockSettlement(boardId: string, gameId: string, achievements: AchievementResult[], scores: { uid: string; score: number }[], resolvedState: Omit<TreasureResolvedState, "resolvedAt">): Promise<void> {
+      const game = treasureGamesOf(boardId)[gameId];
+      if (!game) throw denied("Treasure game not found");
+      game.status = "host_selection";
+      game.achievements = [...achievements];
+      game.resolvedState = { ...resolvedState, resolvedAt: now().toISOString() };
+      const ps = treasurePlayerStatesOf(boardId, gameId);
+      for (const { uid, score } of scores) {
+        const existing = ps[uid] ?? emptyPlayerState(uid);
+        ps[uid] = { ...existing, score, updatedAt: now().toISOString() };
+      }
+      changed();
+    },
+
+    subscribeToInventory(boardId: string, gameId: string, uid: string, cb: (inventory: InventoryState | null) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => {
+        const slots = battleInventoriesOf(boardId, gameId)[uid] ?? [];
+        return { uid, slots: slots.map((itemType) => ({ itemType, boughtAt: null })), updatedAt: null };
+      }, cb, onError);
+    },
+
+    subscribeToAttacks(boardId: string, gameId: string, cb: (attacks: AttackDocument[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => Object.values(battleAttacksOf(boardId, gameId)).map((a) => ({
+        id: a.id, attackerUid: a.attackerUid, targetUid: a.targetUid, itemType: a.itemType,
+        status: a.status, tcDelta: a.tcDelta, createdAt: new Date(a.createdAt), resolvedAt: a.resolvedAt ? new Date(a.resolvedAt) : null,
+      })), cb, onError);
+    },
+
+    subscribeToBattleFeed(boardId: string, gameId: string, cb: (events: BattleFeedEvent[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => battleFeedOf(boardId, gameId).map((e) => ({
+        id: e.id, type: e.type, actorUid: e.actorUid, targetUid: e.targetUid,
+        itemType: e.itemType, tcDelta: e.tcDelta, createdAt: new Date(e.createdAt),
+      })), cb, onError);
+    },
+
+    subscribeToReactions(boardId: string, gameId: string, cb: (reactions: Reaction[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => battleReactionsOf(boardId, gameId).map((r) => ({
+        id: r.id, uid: r.uid, type: r.type, createdAt: new Date(r.createdAt),
+      })), cb, onError);
     },
   };
 }

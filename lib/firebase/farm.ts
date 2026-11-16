@@ -26,13 +26,23 @@ import {
 import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
 import type {
+  AchievementResult,
+  AttackDocument,
+  AttackStatus,
+  BattleFeedEvent,
+  BattleFeedEventType,
+  BattleItemType,
   ChestType,
   FishCatch,
   FishingGame,
   FishingGameStatus,
+  InventorySlot,
+  InventoryState,
   PowerAction,
   PowerActionType,
   PowerPoints,
+  Reaction,
+  ReactionType,
   ResolvedState,
   TreasureChest,
   TreasureGame,
@@ -44,7 +54,20 @@ import type {
   TreasureResolvedState,
   WheelSegment,
 } from "./types";
-import { MAX_RESPINS, POWER_ACTION_COSTS, TREASURE_MAX_RESPINS, TREASURE_POWER_ACTION_COSTS } from "./types";
+import {
+  ATTACK_WARNING_MS,
+  BATTLE_ITEM_COSTS,
+  BOMB_GIFT_DAMAGE,
+  FINAL_RUSH_ATTACK_SHUTDOWN_MS,
+  GOLDEN_PICK_BONUS,
+  ICE_TRAP_DURATION_MS,
+  MAX_RESPINS,
+  POWER_ACTION_COSTS,
+  RECOVERY_POTION_RESTORE,
+  SNEAKY_THIEF_MAX_STEAL,
+  TREASURE_MAX_RESPINS,
+  TREASURE_POWER_ACTION_COSTS,
+} from "./types";
 
 /**
  * Crowded Farm services (F30). Starting, finishing, cancelling and storing a fallback result are transactions:
@@ -749,9 +772,10 @@ export function subscribeToFishingPowerActions(
 
 const TREASURE_GAME_STATUSES: ReadonlySet<string> = new Set<TreasureGameStatus>([
   "idle",
+  "preparation",
   "playing",
-  "scoring",
-  "wheel",
+  "settlement",
+  "host_selection",
   "finished",
 ]);
 
@@ -801,6 +825,19 @@ function toTreasureGame(gameId: string, data: DocumentData): TreasureGame | null
       resolvedAt: toDate(rawRS.resolvedAt),
     };
   }
+  const rawAchievements = data.achievements;
+  let achievements: AchievementResult[] | null = null;
+  if (Array.isArray(rawAchievements)) {
+    achievements = (rawAchievements as unknown[]).flatMap((a) => {
+      if (
+        typeof a !== "object" || a === null ||
+        typeof (a as Record<string, unknown>).type !== "string" ||
+        typeof (a as Record<string, unknown>).winnerUid !== "string"
+      ) return [];
+      return [{ type: (a as Record<string, unknown>).type as AchievementResult["type"], winnerUid: (a as Record<string, unknown>).winnerUid as string }];
+    });
+  }
+
   return {
     id: gameId,
     gameType: "treasure",
@@ -817,6 +854,7 @@ function toTreasureGame(gameId: string, data: DocumentData): TreasureGame | null
     resolution: data.resolution === "wheel" ? "wheel" : null,
     winnerUid: typeof data.winnerUid === "string" ? data.winnerUid : null,
     resolvedAt: toDate(data.resolvedAt),
+    achievements,
   };
 }
 
@@ -838,6 +876,11 @@ function toTreasurePlayerState(uid: string, data: DocumentData): TreasurePlayerS
     score: typeof data.score === "number" ? data.score : 0,
     lastActionAt: toDate(data.lastActionAt),
     updatedAt: toDate(data.updatedAt),
+    tcSpentOnItems: typeof data.tcSpentOnItems === "number" ? data.tcSpentOnItems : 0,
+    attacksSent: typeof data.attacksSent === "number" ? data.attacksSent : 0,
+    attacksBlocked: typeof data.attacksBlocked === "number" ? data.attacksBlocked : 0,
+    tcLostToAttacks: typeof data.tcLostToAttacks === "number" ? data.tcLostToAttacks : 0,
+    frozenUntilMs: typeof data.frozenUntilMs === "number" ? data.frozenUntilMs : null,
   };
 }
 
@@ -864,7 +907,7 @@ export async function startTreasureRush(
   const batch = writeBatch(db);
   batch.set(doc(db, "boards", boardId, "farmGames", gameId), {
     gameType: "treasure",
-    status: "idle",
+    status: "preparation",
     startedAt: serverTimestamp(),
     durationSec,
     endsAt: null,
@@ -875,6 +918,7 @@ export async function startTreasureRush(
     resolution: null,
     winnerUid: null,
     resolvedAt: null,
+    achievements: null,
   });
   batch.update(doc(db, "boards", boardId), {
     farmActiveGameId: gameId,
@@ -901,7 +945,7 @@ export async function spinTreasureWheel(
       if (!snap.exists() || data?.gameType !== "treasure") {
         throw new FarmError("not-active", "Not a Treasure Rush game");
       }
-      if (data.status !== "idle") throw new FarmError("not-active", "Game is not in idle state");
+      if (data.status !== "preparation") throw new FarmError("not-active", "Game is not in preparation state");
       const duration: number = typeof data.durationSec === "number" ? data.durationSec : 60;
       transaction.update(gameRef, {
         activityModifier: modifier,
@@ -1124,7 +1168,7 @@ export async function bankTreasure(
   );
 }
 
-/** Admin ends the playing phase and transitions to scoring. */
+/** Admin ends the playing phase and transitions to settlement. */
 export async function endTreasureRush(
   boardId: string,
   gameId: string,
@@ -1132,7 +1176,7 @@ export async function endTreasureRush(
 ): Promise<void> {
   if (isMockMode()) return getMockBackend().endTreasureRush(boardId, gameId);
   await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
-    status: "scoring",
+    status: "settlement",
     updatedAt: serverTimestamp(),
   });
 }
@@ -1244,7 +1288,7 @@ export function subscribeToTreasurePowerActions(
   );
 }
 
-/** Admin closes the scoring phase, writes the resolved state, and transitions to the wheel phase. */
+/** Admin closes the settlement phase, writes the resolved state, and transitions to host_selection. */
 export async function resolveAndTransitionTreasureToWheel(
   boardId: string,
   gameId: string,
@@ -1253,7 +1297,7 @@ export async function resolveAndTransitionTreasureToWheel(
 ): Promise<void> {
   if (isMockMode()) return getMockBackend().resolveAndTransitionTreasureToWheel(boardId, gameId, resolvedState);
   await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
-    status: "wheel",
+    status: "host_selection",
     resolvedState: { ...resolvedState, resolvedAt: serverTimestamp() },
     updatedAt: serverTimestamp(),
   });
@@ -1305,6 +1349,442 @@ export async function reSpinTreasureHostWheel(
     TRANSACTION_OPTIONS,
   );
   return newCount;
+}
+
+// ---- Chaos Battle functions ----
+
+const BATTLE_ITEM_TYPE_SET: ReadonlySet<string> = new Set([
+  "magic-shield", "treasure-lock", "recovery-potion", "mirror-shield",
+  "bomb-gift", "sneaky-thief", "ice-trap", "chaos-swap",
+  "lucky-key", "treasure-radar", "golden-pick",
+]);
+
+const ATTACK_STATUS_SET: ReadonlySet<string> = new Set([
+  "warning", "resolved", "blocked", "reflected", "cancelled",
+]);
+
+const BATTLE_FEED_EVENT_TYPE_SET: ReadonlySet<string> = new Set([
+  "chest-opened", "bank", "attack-sent", "attack-resolved",
+  "attack-blocked", "attack-reflected", "item-bought", "final-rush", "achievement",
+]);
+
+const REACTION_TYPE_SET: ReadonlySet<string> = new Set([
+  "laugh", "shock", "fire", "clap", "skull", "heart",
+]);
+
+const INSTANT_BATTLE_ITEMS: ReadonlySet<BattleItemType> = new Set(["recovery-potion", "golden-pick"]);
+
+function toAttackDocument(attackId: string, data: DocumentData): AttackDocument | null {
+  const rawItemType = data.itemType;
+  if (typeof rawItemType !== "string" || !BATTLE_ITEM_TYPE_SET.has(rawItemType)) return null;
+  const rawStatus = data.status;
+  const status: AttackStatus =
+    typeof rawStatus === "string" && ATTACK_STATUS_SET.has(rawStatus)
+      ? (rawStatus as AttackStatus) : "warning";
+  return {
+    id: attackId,
+    attackerUid: typeof data.attackerUid === "string" ? data.attackerUid : "",
+    targetUid: typeof data.targetUid === "string" ? data.targetUid : "",
+    itemType: rawItemType as BattleItemType,
+    status,
+    tcDelta: typeof data.tcDelta === "number" ? data.tcDelta : 0,
+    createdAt: toDate(data.createdAt),
+    resolvedAt: toDate(data.resolvedAt),
+  };
+}
+
+function toBattleFeedEvent(eventId: string, data: DocumentData): BattleFeedEvent | null {
+  const rawType = data.type;
+  if (typeof rawType !== "string" || !BATTLE_FEED_EVENT_TYPE_SET.has(rawType)) return null;
+  const rawItemType = data.itemType;
+  const itemType: BattleItemType | null =
+    typeof rawItemType === "string" && BATTLE_ITEM_TYPE_SET.has(rawItemType)
+      ? (rawItemType as BattleItemType) : null;
+  return {
+    id: eventId,
+    type: rawType as BattleFeedEventType,
+    actorUid: typeof data.actorUid === "string" ? data.actorUid : "",
+    targetUid: typeof data.targetUid === "string" ? data.targetUid : null,
+    itemType,
+    tcDelta: typeof data.tcDelta === "number" ? data.tcDelta : null,
+    createdAt: toDate(data.createdAt),
+  };
+}
+
+function toReaction(reactionId: string, data: DocumentData): Reaction | null {
+  const rawType = data.type;
+  if (typeof rawType !== "string" || !REACTION_TYPE_SET.has(rawType)) return null;
+  return {
+    id: reactionId,
+    uid: typeof data.uid === "string" ? data.uid : "",
+    type: rawType as ReactionType,
+    createdAt: toDate(data.createdAt),
+  };
+}
+
+function toInventoryState(uid: string, data: DocumentData): InventoryState {
+  const rawSlots = data.slots;
+  const slots: InventorySlot[] = Array.isArray(rawSlots)
+    ? (rawSlots as unknown[]).flatMap((s) => {
+        if (typeof s !== "object" || s === null) return [];
+        const itemType = (s as Record<string, unknown>).itemType;
+        if (typeof itemType !== "string" || !BATTLE_ITEM_TYPE_SET.has(itemType)) return [];
+        return [{ itemType: itemType as BattleItemType, boughtAt: toDate((s as Record<string, unknown>).boughtAt) }];
+      })
+    : [];
+  return { uid, slots, updatedAt: toDate(data.updatedAt) };
+}
+
+/** Player buys a battle item. Instant items (recovery-potion, golden-pick) apply TC immediately without occupying a slot. */
+export async function buyBattleItem(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  itemType: BattleItemType,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().buyBattleItem(boardId, gameId, uid, itemType);
+  const cost = BATTLE_ITEM_COSTS[itemType];
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  const psRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", uid);
+  const invRef = doc(db, "boards", boardId, "farmGames", gameId, "inventory", uid);
+  const feedRef = doc(collection(db, "boards", boardId, "farmGames", gameId, "battleFeed"));
+  await runTransaction(db, async (transaction) => {
+    const [gameSnap, psSnap, invSnap] = await Promise.all([
+      transaction.get(gameRef),
+      transaction.get(psRef),
+      transaction.get(invRef),
+    ]);
+    const gameData = gameSnap.data({ serverTimestamps: "estimate" });
+    if (!gameSnap.exists() || gameData?.status !== "playing") throw new FarmError("not-active", "Game is not in playing state");
+    const psData = psSnap.data() ?? {};
+    const frozenUntilMs: number | null = typeof psData.frozenUntilMs === "number" ? psData.frozenUntilMs : null;
+    if (frozenUntilMs !== null && frozenUntilMs > Timestamp.now().toMillis()) throw new FarmError("not-active", "Player is frozen");
+    const currentRunPoints: number = typeof psData.currentRunPoints === "number" ? psData.currentRunPoints : 0;
+    if (currentRunPoints < cost) throw new FarmError("not-active", "Insufficient TC");
+    const isInstant = INSTANT_BATTLE_ITEMS.has(itemType);
+    const invData = invSnap.data() ?? {};
+    const slots: unknown[] = Array.isArray(invData.slots) ? (invData.slots as unknown[]) : [];
+    if (!isInstant && slots.length >= 3) throw new FarmError("not-active", "Inventory is full");
+    const tcSpentOnItems: number = typeof psData.tcSpentOnItems === "number" ? psData.tcSpentOnItems : 0;
+    let newRunPoints = currentRunPoints - cost;
+    if (itemType === "recovery-potion") newRunPoints += RECOVERY_POTION_RESTORE;
+    if (itemType === "golden-pick") newRunPoints += GOLDEN_PICK_BONUS;
+    const psUpdate: Record<string, unknown> = {
+      currentRunPoints: Math.max(0, newRunPoints),
+      tcSpentOnItems: tcSpentOnItems + cost,
+      updatedAt: serverTimestamp(),
+    };
+    if (!isInstant) {
+      const newSlots = [...slots, { itemType, boughtAt: serverTimestamp() }];
+      transaction.set(invRef, { slots: newSlots, updatedAt: serverTimestamp() }, { merge: true });
+    }
+    if (psSnap.exists()) {
+      transaction.update(psRef, psUpdate);
+    } else {
+      transaction.set(psRef, { openedCount: 0, bankedPoints: 0, gemBanked: 0, coinBanked: 0, crownBanked: 0, bankCount: 0, trapHit: false, maxSingleReward: 0, score: 0, lastActionAt: serverTimestamp(), currentRunGem: 0, currentRunCoin: 0, currentRunCrown: 0, attacksSent: 0, attacksBlocked: 0, tcLostToAttacks: 0, frozenUntilMs: null, ...psUpdate });
+    }
+    transaction.set(feedRef, { type: "item-bought", actorUid: uid, targetUid: null, itemType, tcDelta: -cost, createdAt: serverTimestamp() });
+  }, TRANSACTION_OPTIONS);
+}
+
+/** Attacker uses an offensive item, creating an attack document with a 3-second warning window. Returns the attackId. */
+export async function useOffensiveItem(
+  boardId: string,
+  gameId: string,
+  attackerUid: string,
+  targetUid: string,
+  itemType: BattleItemType,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<string> {
+  if (isMockMode()) return getMockBackend().useOffensiveItem(boardId, gameId, attackerUid, targetUid, itemType);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  const psRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", attackerUid);
+  const invRef = doc(db, "boards", boardId, "farmGames", gameId, "inventory", attackerUid);
+  const attackRef = doc(collection(db, "boards", boardId, "farmGames", gameId, "attacks"));
+  const feedRef = doc(collection(db, "boards", boardId, "farmGames", gameId, "battleFeed"));
+  const attackId = attackRef.id;
+  await runTransaction(db, async (transaction) => {
+    const [gameSnap, psSnap, invSnap] = await Promise.all([
+      transaction.get(gameRef),
+      transaction.get(psRef),
+      transaction.get(invRef),
+    ]);
+    const gameData = gameSnap.data({ serverTimestamps: "estimate" });
+    if (!gameSnap.exists() || gameData?.status !== "playing") throw new FarmError("not-active", "Game is not in playing state");
+    const endsAt: unknown = gameData.endsAt;
+    if (endsAt instanceof Timestamp && endsAt.toMillis() - Timestamp.now().toMillis() <= FINAL_RUSH_ATTACK_SHUTDOWN_MS) {
+      throw new FarmError("not-active", "Attacks shut down in final 5 seconds");
+    }
+    const psData = psSnap.data() ?? {};
+    const frozenUntilMs: number | null = typeof psData.frozenUntilMs === "number" ? psData.frozenUntilMs : null;
+    if (frozenUntilMs !== null && frozenUntilMs > Timestamp.now().toMillis()) throw new FarmError("not-active", "Player is frozen");
+    const invData = invSnap.data() ?? {};
+    const slots: unknown[] = Array.isArray(invData.slots) ? (invData.slots as unknown[]) : [];
+    const itemIdx = slots.findIndex((s) => typeof s === "object" && s !== null && (s as Record<string, unknown>).itemType === itemType);
+    if (itemIdx === -1) throw new FarmError("not-active", "Item not in inventory");
+    const newSlots = slots.filter((_, i) => i !== itemIdx);
+    const attacksSent: number = typeof psData.attacksSent === "number" ? psData.attacksSent : 0;
+    transaction.set(attackRef, { attackerUid, targetUid, itemType, status: "warning", tcDelta: 0, createdAt: serverTimestamp(), resolvedAt: null });
+    transaction.set(invRef, { slots: newSlots, updatedAt: serverTimestamp() }, { merge: true });
+    if (psSnap.exists()) {
+      transaction.update(psRef, { attacksSent: attacksSent + 1, updatedAt: serverTimestamp() });
+    }
+    transaction.set(feedRef, { type: "attack-sent", actorUid: attackerUid, targetUid, itemType, tcDelta: null, createdAt: serverTimestamp() });
+  }, TRANSACTION_OPTIONS);
+  return attackId;
+}
+
+/** Attacker calls this after ATTACK_WARNING_MS ms to apply the attack effect to the target. */
+export async function resolveAttack(
+  boardId: string,
+  gameId: string,
+  attackId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().resolveAttack(boardId, gameId, attackId);
+  const attackRef = doc(db, "boards", boardId, "farmGames", gameId, "attacks", attackId);
+  const feedRef = doc(collection(db, "boards", boardId, "farmGames", gameId, "battleFeed"));
+  await runTransaction(db, async (transaction) => {
+    const attackSnap = await transaction.get(attackRef);
+    if (!attackSnap.exists()) throw new FarmError("not-active", "Attack not found");
+    const attackData = attackSnap.data() ?? {};
+    if (attackData.status !== "warning") throw new FarmError("already-resolved", "Attack already resolved");
+    const createdAtTs = attackData.createdAt;
+    if (createdAtTs instanceof Timestamp && Timestamp.now().toMillis() < createdAtTs.toMillis() + ATTACK_WARNING_MS) {
+      throw new FarmError("not-active", "Warning window still open");
+    }
+    const { attackerUid, targetUid, itemType } = attackData as { attackerUid: string; targetUid: string; itemType: BattleItemType };
+    const targetPsRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", targetUid);
+    const attackerPsRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", attackerUid);
+    const [targetPsSnap, attackerPsSnap] = await Promise.all([transaction.get(targetPsRef), transaction.get(attackerPsRef)]);
+    const targetData = targetPsSnap.data() ?? {};
+    const attackerData = attackerPsSnap.data() ?? {};
+    const targetRunPts: number = typeof targetData.currentRunPoints === "number" ? targetData.currentRunPoints : 0;
+    const attackerRunPts: number = typeof attackerData.currentRunPoints === "number" ? attackerData.currentRunPoints : 0;
+    let tcDelta = 0;
+    const targetUpdate: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    const attackerUpdate: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    let applyAttackerUpdate = false;
+    if (itemType === "bomb-gift") {
+      tcDelta = -Math.min(targetRunPts, BOMB_GIFT_DAMAGE);
+      targetUpdate.currentRunPoints = Math.max(0, targetRunPts + tcDelta);
+      targetUpdate.tcLostToAttacks = (typeof targetData.tcLostToAttacks === "number" ? targetData.tcLostToAttacks : 0) + Math.abs(tcDelta);
+    } else if (itemType === "sneaky-thief") {
+      const steal = Math.min(targetRunPts, SNEAKY_THIEF_MAX_STEAL);
+      tcDelta = -steal;
+      targetUpdate.currentRunPoints = Math.max(0, targetRunPts - steal);
+      targetUpdate.tcLostToAttacks = (typeof targetData.tcLostToAttacks === "number" ? targetData.tcLostToAttacks : 0) + steal;
+      attackerUpdate.currentRunPoints = attackerRunPts + steal;
+      applyAttackerUpdate = true;
+    } else if (itemType === "ice-trap") {
+      tcDelta = 0;
+      targetUpdate.frozenUntilMs = Timestamp.now().toMillis() + ICE_TRAP_DURATION_MS;
+    } else if (itemType === "chaos-swap") {
+      tcDelta = targetRunPts - attackerRunPts;
+      targetUpdate.currentRunPoints = attackerRunPts;
+      attackerUpdate.currentRunPoints = targetRunPts;
+      applyAttackerUpdate = true;
+    }
+    transaction.update(attackRef, { status: "resolved", tcDelta, resolvedAt: serverTimestamp() });
+    if (targetPsSnap.exists()) {
+      transaction.update(targetPsRef, targetUpdate);
+    } else {
+      transaction.set(targetPsRef, { openedCount: 0, currentRunPoints: 0, bankedPoints: 0, gemBanked: 0, coinBanked: 0, crownBanked: 0, bankCount: 0, trapHit: false, maxSingleReward: 0, score: 0, currentRunGem: 0, currentRunCoin: 0, currentRunCrown: 0, lastActionAt: serverTimestamp(), ...targetUpdate });
+    }
+    if (applyAttackerUpdate) {
+      if (attackerPsSnap.exists()) {
+        transaction.update(attackerPsRef, attackerUpdate);
+      } else {
+        transaction.set(attackerPsRef, { openedCount: 0, currentRunPoints: 0, bankedPoints: 0, gemBanked: 0, coinBanked: 0, crownBanked: 0, bankCount: 0, trapHit: false, maxSingleReward: 0, score: 0, currentRunGem: 0, currentRunCoin: 0, currentRunCrown: 0, lastActionAt: serverTimestamp(), ...attackerUpdate });
+      }
+    }
+    transaction.set(feedRef, { type: "attack-resolved", actorUid: attackerUid, targetUid, itemType, tcDelta, createdAt: serverTimestamp() });
+  }, TRANSACTION_OPTIONS);
+}
+
+/** Target uses a defensive item during the warning window to block or reflect an incoming attack. */
+export async function useDefensiveItemAgainstAttack(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  attackId: string,
+  defenseItemType: BattleItemType,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().useDefensiveItemAgainstAttack(boardId, gameId, uid, attackId, defenseItemType);
+  const attackRef = doc(db, "boards", boardId, "farmGames", gameId, "attacks", attackId);
+  const invRef = doc(db, "boards", boardId, "farmGames", gameId, "inventory", uid);
+  const psRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", uid);
+  const feedRef = doc(collection(db, "boards", boardId, "farmGames", gameId, "battleFeed"));
+  await runTransaction(db, async (transaction) => {
+    const [attackSnap, invSnap, psSnap] = await Promise.all([
+      transaction.get(attackRef),
+      transaction.get(invRef),
+      transaction.get(psRef),
+    ]);
+    if (!attackSnap.exists()) throw new FarmError("not-active", "Attack not found");
+    const attackData = attackSnap.data() ?? {};
+    if (attackData.status !== "warning") throw new FarmError("already-resolved", "Warning window closed");
+    if (attackData.targetUid !== uid) throw new FarmError("not-active", "Not the attack target");
+    const invData = invSnap.data() ?? {};
+    const slots: unknown[] = Array.isArray(invData.slots) ? (invData.slots as unknown[]) : [];
+    const itemIdx = slots.findIndex((s) => typeof s === "object" && s !== null && (s as Record<string, unknown>).itemType === defenseItemType);
+    if (itemIdx === -1) throw new FarmError("not-active", "Defense item not in inventory");
+    const newSlots = slots.filter((_, i) => i !== itemIdx);
+    const psData = psSnap.data() ?? {};
+    const attacksBlocked: number = typeof psData.attacksBlocked === "number" ? psData.attacksBlocked : 0;
+    const isReflect = defenseItemType === "mirror-shield";
+    const newStatus: AttackStatus = isReflect ? "reflected" : "blocked";
+    const feedType: BattleFeedEventType = isReflect ? "attack-reflected" : "attack-blocked";
+    transaction.update(attackRef, { status: newStatus, resolvedAt: serverTimestamp() });
+    transaction.set(invRef, { slots: newSlots, updatedAt: serverTimestamp() }, { merge: true });
+    transaction.update(psRef, { attacksBlocked: attacksBlocked + 1, updatedAt: serverTimestamp() });
+    transaction.set(feedRef, { type: feedType, actorUid: uid, targetUid: attackData.attackerUid as string, itemType: defenseItemType, tcDelta: null, createdAt: serverTimestamp() });
+    if (isReflect) {
+      const attackerUid = attackData.attackerUid as string;
+      const incomingItemType = attackData.itemType as BattleItemType;
+      const attackerPsRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", attackerUid);
+      const attackerPsSnap = await transaction.get(attackerPsRef);
+      const attackerData = attackerPsSnap.data() ?? {};
+      const attackerRunPts: number = typeof attackerData.currentRunPoints === "number" ? attackerData.currentRunPoints : 0;
+      const reflectUpdate: Record<string, unknown> = { updatedAt: serverTimestamp() };
+      if (incomingItemType === "bomb-gift") {
+        const dmg = Math.min(attackerRunPts, BOMB_GIFT_DAMAGE);
+        reflectUpdate.currentRunPoints = Math.max(0, attackerRunPts - dmg);
+        reflectUpdate.tcLostToAttacks = (typeof attackerData.tcLostToAttacks === "number" ? attackerData.tcLostToAttacks : 0) + dmg;
+      } else if (incomingItemType === "sneaky-thief") {
+        const steal = Math.min(attackerRunPts, SNEAKY_THIEF_MAX_STEAL);
+        reflectUpdate.currentRunPoints = Math.max(0, attackerRunPts - steal);
+        reflectUpdate.tcLostToAttacks = (typeof attackerData.tcLostToAttacks === "number" ? attackerData.tcLostToAttacks : 0) + steal;
+      } else if (incomingItemType === "ice-trap") {
+        reflectUpdate.frozenUntilMs = Timestamp.now().toMillis() + ICE_TRAP_DURATION_MS;
+      }
+      if (attackerPsSnap.exists()) {
+        transaction.update(attackerPsRef, reflectUpdate);
+      } else {
+        transaction.set(attackerPsRef, { openedCount: 0, currentRunPoints: 0, bankedPoints: 0, gemBanked: 0, coinBanked: 0, crownBanked: 0, bankCount: 0, trapHit: false, maxSingleReward: 0, score: 0, currentRunGem: 0, currentRunCoin: 0, currentRunCrown: 0, lastActionAt: serverTimestamp(), ...reflectUpdate });
+      }
+    }
+  }, TRANSACTION_OPTIONS);
+}
+
+/** Player sends an emoji reaction. Rate limiting is enforced by Firestore Rules. */
+export async function sendReaction(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  type: ReactionType,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().sendReaction(boardId, gameId, uid, type);
+  const reactionRef = doc(collection(db, "boards", boardId, "farmGames", gameId, "reactions"));
+  await setDoc(reactionRef, { uid, type, createdAt: serverTimestamp() });
+}
+
+/** Admin locks the settlement phase: writes scores, achievements, resolved state, and transitions to host_selection. */
+export async function lockSettlement(
+  boardId: string,
+  gameId: string,
+  achievements: AchievementResult[],
+  scores: { uid: string; score: number }[],
+  resolvedState: Omit<TreasureResolvedState, "resolvedAt">,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().lockSettlement(boardId, gameId, achievements, scores, resolvedState);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "host_selection",
+    achievements,
+    resolvedState: { ...resolvedState, resolvedAt: serverTimestamp() },
+    updatedAt: serverTimestamp(),
+  });
+  for (const { uid, score } of scores) {
+    batch.update(doc(db, "boards", boardId, "farmGames", gameId, "playerState", uid), {
+      score,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+export function subscribeToInventory(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  cb: (inventory: InventoryState | null) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToInventory(boardId, gameId, uid, cb, onError);
+  return onSnapshot(
+    doc(db, "boards", boardId, "farmGames", gameId, "inventory", uid),
+    (snapshot) => {
+      const data = snapshot.data({ serverTimestamps: "estimate" });
+      cb(snapshot.exists() && data ? toInventoryState(snapshot.id, data) : null);
+    },
+    onError,
+  );
+}
+
+export function subscribeToAttacks(
+  boardId: string,
+  gameId: string,
+  cb: (attacks: AttackDocument[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToAttacks(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "attacks"),
+    (snapshot) => {
+      cb(snapshot.docs.flatMap((d) => {
+        const attack = toAttackDocument(d.id, d.data({ serverTimestamps: "estimate" }));
+        return attack ? [attack] : [];
+      }));
+    },
+    onError,
+  );
+}
+
+export function subscribeToBattleFeed(
+  boardId: string,
+  gameId: string,
+  cb: (events: BattleFeedEvent[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToBattleFeed(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "battleFeed"),
+    (snapshot) => {
+      cb(snapshot.docs.flatMap((d) => {
+        const event = toBattleFeedEvent(d.id, d.data({ serverTimestamps: "estimate" }));
+        return event ? [event] : [];
+      }));
+    },
+    onError,
+  );
+}
+
+export function subscribeToReactions(
+  boardId: string,
+  gameId: string,
+  cb: (reactions: Reaction[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToReactions(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "reactions"),
+    (snapshot) => {
+      cb(snapshot.docs.flatMap((d) => {
+        const reaction = toReaction(d.id, d.data({ serverTimestamps: "estimate" }));
+        return reaction ? [reaction] : [];
+      }));
+    },
+    onError,
+  );
 }
 
 /**

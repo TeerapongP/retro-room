@@ -1,5 +1,9 @@
-/** Treasure Rush mini-game (pure logic, no Firebase imports). */
+/** Treasure Rush: Chaos Battle mini-game (pure logic, no Firebase imports). */
 import type {
+  AchievementResult,
+  AchievementType,
+  AttackDocument,
+  BattleItemType,
   BoardMember,
   ChestType,
   TreasureChest,
@@ -9,6 +13,8 @@ import type {
 } from "./firebase/types";
 import {
   CHEST_BASE_POINTS,
+  FINAL_RUSH_TC_MULTIPLIER,
+  FINAL_RUSH_THRESHOLD_MS,
   GEM_BONUS_POINTS,
   MYSTERY_POOL,
   ROYAL_BONUS_POINTS,
@@ -212,4 +218,126 @@ export function resolveTreasureActions(input: {
 
 export function earnedPP(bankedPoints: number): number {
   return Math.max(0, Math.floor(bankedPoints / 100) * TREASURE_PP_PER_100);
+}
+
+// ---------------------------------------------------------------------------
+// Chaos Battle logic
+// ---------------------------------------------------------------------------
+
+/** Weighted host wheel: players with higher score are more likely to be next host. */
+export function chaosWheelWeight(finalScore: number): number {
+  return Math.min(3, 1 + Math.max(0, finalScore) / 500);
+}
+
+/** Expand weighted candidates into repeated entries for pickWinnerUid compatibility. */
+export function buildWeightedCandidates(
+  members: BoardMember[],
+  ignoredUids: string[],
+  excludedUids: string[],
+  scores: { uid: string; score: number }[],
+): WheelCandidate[] {
+  const ignoredSet = new Set(ignoredUids);
+  const excludedSet = new Set(excludedUids);
+  const scoreMap = new Map(scores.map((s) => [s.uid, s.score]));
+  if (members.length === 0) return [];
+  const candidates: WheelCandidate[] = [];
+  for (const m of members) {
+    if (ignoredSet.has(m.uid) || excludedSet.has(m.uid)) continue;
+    const score = scoreMap.get(m.uid) ?? 0;
+    const weight = chaosWheelWeight(score);
+    const slots = Math.round(weight * 10);
+    for (let i = 0; i < slots; i++) {
+      candidates.push({ uid: m.uid, name: m.displayName });
+    }
+  }
+  return sortCandidates(candidates);
+}
+
+/** Returns true when the game is in Final Rush (last 15 seconds). */
+export function isFinalRush(endsAtMs: number, nowMs: number): boolean {
+  return endsAtMs - nowMs <= FINAL_RUSH_THRESHOLD_MS && endsAtMs > nowMs;
+}
+
+/** Points multiplier based on Final Rush state. */
+export function tcMultiplier(endsAtMs: number, nowMs: number): number {
+  return isFinalRush(endsAtMs, nowMs) ? FINAL_RUSH_TC_MULTIPLIER : 1;
+}
+
+/** Calculate all achievements from final player states and attacks. */
+export function calcAchievements(
+  states: TreasurePlayerState[],
+  attacks: AttackDocument[],
+): AchievementResult[] {
+  if (states.length === 0) return [];
+
+  const results: AchievementResult[] = [];
+
+  function winner(type: AchievementType, uid: string | null): void {
+    if (uid !== null) results.push({ type, winnerUid: uid });
+  }
+
+  function topUid(values: { uid: string; v: number }[]): string | null {
+    if (values.length === 0) return null;
+    const max = Math.max(...values.map((x) => x.v));
+    if (max <= 0) return null;
+    const tops = values.filter((x) => x.v === max);
+    return tops.length === 1 ? tops[0].uid : null;
+  }
+
+  winner(
+    "treasure-hunter",
+    topUid(states.map((s) => ({ uid: s.uid, v: s.openedCount }))),
+  );
+
+  winner(
+    "crown-collector",
+    topUid(states.map((s) => ({ uid: s.uid, v: s.crownBanked }))),
+  );
+
+  winner(
+    "chaos-maker",
+    topUid(states.map((s) => ({ uid: s.uid, v: s.attacksSent ?? 0 }))),
+  );
+
+  winner(
+    "master-defender",
+    topUid(states.map((s) => ({ uid: s.uid, v: s.attacksBlocked ?? 0 }))),
+  );
+
+  // Smart banker: highest ratio of bankedPoints to openedCount (efficiency)
+  const bankerValues = states
+    .filter((s) => s.openedCount > 0)
+    .map((s) => ({ uid: s.uid, v: Math.floor(s.bankedPoints / s.openedCount) }));
+  winner("smart-banker", topUid(bankerValues));
+
+  return results;
+}
+
+/** Compute TC delta for a Bomb Gift attack on the target's current run. */
+export function bombGiftDamage(targetCurrentRunPoints: number, damage: number): number {
+  return -Math.min(targetCurrentRunPoints, damage);
+}
+
+/** Compute TC delta for a Sneaky Thief (steals up to max from target). */
+export function sneakyThiefSteal(targetCurrentRunPoints: number, maxSteal: number): number {
+  return Math.min(targetCurrentRunPoints, maxSteal);
+}
+
+/** Compute TC delta for a Chaos Swap — returns the delta from the attacker's perspective. */
+export function chaosSwapDelta(attackerRunPts: number, targetRunPts: number): { attackerDelta: number; targetDelta: number } {
+  return { attackerDelta: targetRunPts - attackerRunPts, targetDelta: attackerRunPts - targetRunPts };
+}
+
+/** Determine if offensive item can be used (attacks shut down in final 5 seconds). */
+export function canSendAttack(
+  itemType: BattleItemType,
+  endsAtMs: number,
+  nowMs: number,
+): boolean {
+  const timeLeft = endsAtMs - nowMs;
+  if (timeLeft <= 5000) return false;
+  const offensiveItems: ReadonlySet<BattleItemType> = new Set([
+    "bomb-gift", "sneaky-thief", "ice-trap", "chaos-swap",
+  ]);
+  return offensiveItems.has(itemType);
 }

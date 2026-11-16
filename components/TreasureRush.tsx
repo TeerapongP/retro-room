@@ -275,12 +275,17 @@ function TreasureRound({
           score: 0,
           lastActionAt: null,
           updatedAt: null,
+          tcSpentOnItems: 0,
+          attacksSent: 0,
+          attacksBlocked: 0,
+          tcLostToAttacks: 0,
+          frozenUntilMs: null,
         }
       );
     }),
     members,
     game?.activityModifier ?? null,
-    phase === "scoring" || phase === "wheel" || phase === "finished" ? powerActions : [],
+    phase === "settlement" || phase === "host_selection" || phase === "finished" ? powerActions : [],
   );
 
   const candidates = buildTreasureCandidates(members, ignoredUids, excludedUids);
@@ -591,8 +596,8 @@ function TreasureRound({
         </div>
       )}
 
-      {/* ── SCORING ───────────────────────────────────── */}
-      {phase === "scoring" && (
+      {/* ── SETTLEMENT ───────────────────────────────────── */}
+      {phase === "settlement" && (
         <div className="tr-panel">
           <h3 className="tr-section-title">📊 ผลคะแนน &amp; Power Shop</h3>
           <Leaderboard scored={scored} myUid={user.uid} phase={phase} nameOf={nameOf} />
@@ -648,20 +653,20 @@ function TreasureRound({
         </div>
       )}
 
-      {/* ── WHEEL ─────────────────────────────────────── */}
-      {(phase === "wheel" || phase === "finished") && (
+      {/* ── HOST SELECTION ─────────────────────────────── */}
+      {(phase === "host_selection" || phase === "finished") && (
         <div className="tr-panel">
           <h3 className="tr-section-title">🎡 เลือก Host คนถัดไป</h3>
           <Leaderboard scored={scored} myUid={user.uid} phase={phase} nameOf={nameOf} />
           {wheelCandidates.length > 0 ? (
             <HostWheel
-              key={`${game?.id ?? "none"}:${phase === "wheel" ? reSpinCount : (game?.resolvedAt?.getTime() ?? "none")}`}
-              candidates={phase === "wheel" ? wheelCandidates : candidates}
+              key={`${game?.id ?? "none"}:${phase === "host_selection" ? reSpinCount : (game?.resolvedAt?.getTime() ?? "none")}`}
+              candidates={phase === "host_selection" ? wheelCandidates : candidates}
               winnerUid={phase === "finished" ? winnerUid : null}
               spunAt={phase === "finished" ? (game?.resolvedAt ?? null) : null}
-              canSpin={isAdmin && phase === "wheel" && !isBusy}
+              canSpin={isAdmin && phase === "host_selection" && !isBusy}
               hint={reSpinsRemaining > 0 ? `หมุนใหม่ได้อีก ${reSpinsRemaining} ครั้ง` : null}
-              onSpin={phase === "wheel" ? handleSpinWheel : () => {}}
+              onSpin={phase === "host_selection" ? handleSpinWheel : () => {}}
             />
           ) : (
             <p className="farm-warning">ไม่มีผู้เล่นที่มีสิทธิ์ในวงล้อ</p>
@@ -723,7 +728,7 @@ function Leaderboard({
               {nameOf(p.uid).charAt(0).toUpperCase()}
             </span>
             <span className="tr-lb-name">{nameOf(p.uid)}</span>
-            <span className="tr-lb-score">{phase === "scoring" || phase === "wheel" || phase === "finished" ? p.score : (scored.find(s => s.uid === p.uid)?.score ?? 0)} แต้ม</span>
+            <span className="tr-lb-score">{phase === "settlement" || phase === "host_selection" || phase === "finished" ? p.score : (scored.find(s => s.uid === p.uid)?.score ?? 0)} แต้ม</span>
           </li>
         ))}
       </ol>

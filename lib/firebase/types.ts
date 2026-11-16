@@ -170,7 +170,13 @@ export type FishCatch = {
 // Treasure Rush types
 // ---------------------------------------------------------------------------
 
-export type TreasureGameStatus = "idle" | "playing" | "scoring" | "wheel" | "finished";
+export type TreasureGameStatus =
+  | "idle"
+  | "preparation"
+  | "playing"
+  | "settlement"
+  | "host_selection"
+  | "finished";
 
 export type TreasureModifier =
   | "gem-fever"
@@ -247,12 +253,145 @@ export type TreasurePlayerState = {
   score: number;
   lastActionAt: Date | null;
   updatedAt: Date | null;
+  /** Chaos Battle: total TC spent on battle items */
+  tcSpentOnItems: number;
+  /** Chaos Battle: number of offensive items used */
+  attacksSent: number;
+  /** Chaos Battle: number of incoming attacks successfully blocked/reflected */
+  attacksBlocked: number;
+  /** Chaos Battle: total TC received from attacks */
+  tcLostToAttacks: number;
+  /** Chaos Battle: timestamp until which the player is frozen (Ice Trap), epoch ms */
+  frozenUntilMs: number | null;
 };
 
 export type TreasureResolvedState = {
   finalCandidateUids: string[];
   reSpinGrantCount: number;
   resolvedAt: Date | null;
+};
+
+// ---------------------------------------------------------------------------
+// Chaos Battle types
+// ---------------------------------------------------------------------------
+
+export type BattleItemType =
+  | "magic-shield"
+  | "treasure-lock"
+  | "recovery-potion"
+  | "mirror-shield"
+  | "bomb-gift"
+  | "sneaky-thief"
+  | "ice-trap"
+  | "chaos-swap"
+  | "lucky-key"
+  | "treasure-radar"
+  | "golden-pick";
+
+export type BattleItemCategory = "defensive" | "offensive" | "lucky";
+
+export const BATTLE_ITEM_COSTS: Readonly<Record<BattleItemType, number>> = {
+  "magic-shield": 80,
+  "treasure-lock": 100,
+  "recovery-potion": 70,
+  "mirror-shield": 150,
+  "bomb-gift": 100,
+  "sneaky-thief": 130,
+  "ice-trap": 90,
+  "chaos-swap": 180,
+  "lucky-key": 90,
+  "treasure-radar": 70,
+  "golden-pick": 110,
+};
+
+export const BATTLE_ITEM_CATEGORIES: Readonly<Record<BattleItemType, BattleItemCategory>> = {
+  "magic-shield": "defensive",
+  "treasure-lock": "defensive",
+  "recovery-potion": "defensive",
+  "mirror-shield": "defensive",
+  "bomb-gift": "offensive",
+  "sneaky-thief": "offensive",
+  "ice-trap": "offensive",
+  "chaos-swap": "offensive",
+  "lucky-key": "lucky",
+  "treasure-radar": "lucky",
+  "golden-pick": "lucky",
+};
+
+export const BOMB_GIFT_DAMAGE = 60;
+export const SNEAKY_THIEF_MAX_STEAL = 50;
+export const ICE_TRAP_DURATION_MS = 5000;
+export const RECOVERY_POTION_RESTORE = 50;
+export const GOLDEN_PICK_BONUS = 50;
+export const FINAL_RUSH_THRESHOLD_MS = 15000;
+export const FINAL_RUSH_ATTACK_SHUTDOWN_MS = 5000;
+export const FINAL_RUSH_TC_MULTIPLIER = 2;
+export const ATTACK_WARNING_MS = 3000;
+
+export type InventorySlot = {
+  itemType: BattleItemType;
+  boughtAt: Date | null;
+};
+
+export type InventoryState = {
+  uid: string;
+  slots: InventorySlot[];
+  updatedAt: Date | null;
+};
+
+export type AttackStatus = "warning" | "resolved" | "blocked" | "reflected" | "cancelled";
+
+export type AttackDocument = {
+  id: string;
+  attackerUid: string;
+  targetUid: string;
+  itemType: BattleItemType;
+  status: AttackStatus;
+  tcDelta: number;
+  createdAt: Date | null;
+  resolvedAt: Date | null;
+};
+
+export type BattleFeedEventType =
+  | "chest-opened"
+  | "bank"
+  | "attack-sent"
+  | "attack-resolved"
+  | "attack-blocked"
+  | "attack-reflected"
+  | "item-bought"
+  | "final-rush"
+  | "achievement";
+
+export type BattleFeedEvent = {
+  id: string;
+  type: BattleFeedEventType;
+  actorUid: string;
+  targetUid: string | null;
+  itemType: BattleItemType | null;
+  tcDelta: number | null;
+  createdAt: Date | null;
+};
+
+export type ReactionType = "laugh" | "shock" | "fire" | "clap" | "skull" | "heart";
+
+export type Reaction = {
+  id: string;
+  uid: string;
+  type: ReactionType;
+  createdAt: Date | null;
+};
+
+export type AchievementType =
+  | "treasure-hunter"
+  | "master-defender"
+  | "chaos-maker"
+  | "crown-collector"
+  | "smart-banker";
+
+export type AchievementResult = {
+  type: AchievementType;
+  winnerUid: string;
 };
 
 export type TreasureGame = {
@@ -269,4 +408,5 @@ export type TreasureGame = {
   resolution: "wheel" | null;
   winnerUid: string | null;
   resolvedAt: Date | null;
+  achievements: AchievementResult[] | null;
 };
