@@ -621,7 +621,7 @@ function TreasureRound({
                   </button>
                 ))}
               </div>
-              <button className="tr-btn tr-btn-primary" onClick={handleStart} disabled={isBusy}>
+              <button className="tr-btn tr-btn-primary" onClick={handleStart} disabled={isBusy} data-testid="btn-create-game">
                 🚀 สร้างรอบเกม
               </button>
             </div>
@@ -654,7 +654,7 @@ function TreasureRound({
                   );
                 })}
               </div>
-              <button className="tr-btn tr-btn-primary" onClick={() => void handleSpinAndStart()} disabled={isBusy}>
+              <button className="tr-btn tr-btn-primary" onClick={() => void handleSpinAndStart()} disabled={isBusy} data-testid="btn-spin-start">
                 🎰 Spin Activity & เริ่มรอบ
               </button>
             </div>
@@ -735,6 +735,7 @@ function TreasureRound({
                 className="tr-btn tr-btn-primary"
                 onClick={() => void handleOpenChest(myState?.openedCount ?? 0)}
                 disabled={isBusy || (myState?.openedCount ?? 0) >= 12}
+                data-testid="btn-open-chest"
               >
                 🔓 เปิดกล่อง
               </button>
@@ -742,6 +743,7 @@ function TreasureRound({
                 className="tr-btn tr-btn-bank"
                 onClick={() => void handleBank()}
                 disabled={isBusy || (myState?.currentRunPoints ?? 0) === 0}
+                data-testid="btn-bank"
               >
                 🏦 เก็บแต้ม ({myState?.currentRunPoints ?? 0})
               </button>
@@ -800,6 +802,7 @@ function TreasureRound({
               className={`tr-btn ${shopOpen ? "tr-btn-active" : "tr-btn-primary"}`}
               onClick={() => setShopOpen(!shopOpen)}
               disabled={isBusy}
+              data-testid="btn-battle-shop"
             >
               🛒 Battle Shop
             </button>
@@ -826,7 +829,7 @@ function TreasureRound({
           {/* Admin end-game */}
           {isAdmin && (
             <div className="tr-admin-row">
-              <button className="tr-btn tr-btn-danger" onClick={() => void handleEndGame()} disabled={isBusy}>
+              <button className="tr-btn tr-btn-danger" onClick={() => void handleEndGame()} disabled={isBusy} data-testid="btn-end-game">
                 ⏹ จบรอบ
               </button>
             </div>
@@ -928,6 +931,7 @@ function TreasureRound({
                       className="tr-btn tr-btn-primary"
                       onClick={() => void handleHandOver()}
                       disabled={isBusy}
+                      data-testid="btn-handover-host"
                     >
                       🤝 มอบตำแหน่ง Host
                     </button>
@@ -954,7 +958,7 @@ function FinalRushBanner({ endsAtMs, nowMs, shutdownMs }: { endsAtMs: number; no
   const timeLeft = endsAtMs - nowMs;
   const isShutdown = timeLeft <= shutdownMs;
   return (
-    <div className={`tr-final-rush ${isShutdown ? "tr-final-rush-shutdown" : ""}`} role="alert">
+    <div className={`tr-final-rush ${isShutdown ? "tr-final-rush-shutdown" : ""}`} role="alert" data-testid="final-rush-banner">
       <span className="tr-final-rush-icon">⚡</span>
       <span className="tr-final-rush-label">FINAL RUSH — 2× TC</span>
       {isShutdown && <span className="tr-final-rush-lock">🔒 ล็อกโจมตี</span>}
@@ -1024,7 +1028,7 @@ function InventoryBar({
   const slots = inventory?.slots ?? [];
   const isFrozen = frozenUntilMs !== null && frozenUntilMs > nowMs;
   return (
-    <div className="tr-inventory">
+    <div className="tr-inventory" data-testid="inventory-bar">
       <span className="tr-inventory-label">🎒 ฉาก ({slots.length}/3)</span>
       {isFrozen && <span className="tr-frozen-badge">🧊 แช่แข็ง</span>}
       <div className="tr-inventory-slots">
@@ -1125,7 +1129,7 @@ function BattleShop({
   const catLabels = ["🛡️ Defensive", "⚔️ Offensive", "🍀 Lucky"];
   const isInstant = (item: BattleItemType) => item === "recovery-potion" || item === "golden-pick";
   return (
-    <div className="tr-shop">
+    <div className="tr-shop" data-testid="battle-shop">
       <div className="tr-shop-tc-row">
         <span className="tr-shop-tc">💰 TC: {currentRunPoints}</span>
         {isFrozen && <span className="tr-frozen-badge">🧊 แช่แข็ง</span>}
@@ -1183,7 +1187,7 @@ function BattleFeedPanel({ events, nameOf }: { events: BattleFeedEvent[]; nameOf
     }
   }
   return (
-    <div className="tr-feed">
+    <div className="tr-feed" data-testid="battle-feed">
       <div className="tr-feed-title">📋 Battle Feed</div>
       <ul className="tr-feed-list">
         {sorted.map((e) => (
@@ -1202,7 +1206,7 @@ function ReactionsBar({
   onReact: (type: ReactionType) => void;
 }) {
   return (
-    <div className="tr-reactions">
+    <div className="tr-reactions" data-testid="reactions-bar">
       <div className="tr-reaction-floats" aria-hidden>
         {floatingReactions.map((r) => (
           <span key={r.id} className="tr-float-emoji" style={{ left: `${r.x}%` }}>{r.emoji}</span>
@@ -1248,7 +1252,7 @@ function Leaderboard({
   nameOf: (uid: string) => string;
 }) {
   return (
-    <div className="tr-leaderboard">
+    <div className="tr-leaderboard" data-testid="leaderboard">
       <h4 className="tr-lb-title">🏆 ตารางคะแนน</h4>
       <ol className="tr-lb-list">
         {scored.map((p) => (
