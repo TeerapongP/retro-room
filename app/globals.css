@@ -706,7 +706,7 @@ body {
   position: fixed;
   top: 0.25rem;
   right: 0.25rem;
-  z-index: 60;
+  z-index: 110;
   width: 1.75rem;
   height: 1.75rem;
   min-height: 0;

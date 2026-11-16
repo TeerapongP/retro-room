@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "retro-room-mock",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"],
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set NEXT_PUBLIC_MOCK_MODE=true && pnpm exec next dev"],
       "port": 3000
     }
   ]

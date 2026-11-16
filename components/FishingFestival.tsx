@@ -926,7 +926,7 @@ const STYLES = `
   overflow-y: auto; overflow-x: hidden;
   display: grid; align-content: start; gap: 0.5rem;
   width: 100%; min-width: 0; box-sizing: border-box;
-  padding: 0.5rem 0.6rem 2rem;
+  padding: 0.5rem 1rem 2.5rem;
   color: #3d2208;
   background: linear-gradient(180deg, #6bbf4a 0%, #55a83b 100%) fixed;
 }
@@ -985,7 +985,7 @@ const STYLES = `
   background: linear-gradient(180deg, #fff8e7 0%, #ffe8a0 100%);
   border-left: 5px solid #3d1e06;
   border-right: 5px solid #3d1e06;
-  min-width: clamp(8rem, 16vw, 11rem);
+  min-width: clamp(5.5rem, 16vw, 11rem);
 }
 .ff-pp-badge-idle { opacity: 0.45; }
 .ff-pp-label { font-size: 0.72rem; font-weight: 800; color: #6b4423; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -1037,6 +1037,8 @@ const STYLES = `
 .ff-row { display: grid; gap: 0.5rem; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
 @media (min-width: 48rem) {
   .ff-row-top { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
+@media (min-width: 64rem) {
   .ff-row-bottom { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr); }
 }
 
@@ -1325,6 +1327,13 @@ const STYLES = `
 @keyframes ff-miss-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
 @keyframes ff-miss-bounce { 0% { transform: translateY(0.5rem); } 40% { transform: translateY(-0.3rem); } 70% { transform: translateY(0.1rem); } 100% { transform: translateY(0); } }
 @keyframes ff-splash { 0% { transform: scale(0.5); opacity: 1; } 50% { transform: scale(1.5) scaleY(0.6); opacity: 0.6; } 100% { transform: scale(2.5) scaleY(0.3); opacity: 0; } }
+
+/* ── Narrow-screen (mobile portrait) overrides ── */
+@media (max-width: 30rem) {
+  .ff-title { white-space: normal; font-size: clamp(1.1rem, 4vw, 1.5rem); }
+  .ff-pp-badge { padding: 0.5rem 0.75rem; }
+  .ff-header-status { padding: 0.5rem 0.5rem; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .ff-root, .ff-root * { animation: none !important; transition: none !important; }
