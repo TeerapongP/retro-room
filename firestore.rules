@@ -17,10 +17,10 @@ service cloud.firestore {
       return signedIn() && exists(memberPath(boardId, request.auth.uid));
     }
 
-    // Verified admin account (D74). Rules enforce it; the client check only hides buttons.
+    // Verified admin accounts (D74). Rules enforce it; the client check only hides buttons.
     function isAdmin() {
       return signedIn()
-        && request.auth.token.get('email', null) == 'thirapong.pin@ascendcorp.com'
+        && request.auth.token.get('email', null) in ['thirapong.pin@ascendcorp.com', 'thitika.42@gmail.com']
         && request.auth.token.get('email_verified', false) == true;
     }
 
