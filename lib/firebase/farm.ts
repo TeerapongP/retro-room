@@ -26,6 +26,7 @@ import {
 import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
 import type {
+  ChestType,
   FishCatch,
   FishingGame,
   FishingGameStatus,
@@ -33,9 +34,17 @@ import type {
   PowerActionType,
   PowerPoints,
   ResolvedState,
+  TreasureChest,
+  TreasureGame,
+  TreasureGameStatus,
+  TreasureModifier,
+  TreasurePlayerState,
+  TreasurePowerAction,
+  TreasurePowerActionType,
+  TreasureResolvedState,
   WheelSegment,
 } from "./types";
-import { MAX_RESPINS, POWER_ACTION_COSTS } from "./types";
+import { MAX_RESPINS, POWER_ACTION_COSTS, TREASURE_MAX_RESPINS, TREASURE_POWER_ACTION_COSTS } from "./types";
 
 /**
  * Crowded Farm services (F30). Starting, finishing, cancelling and storing a fallback result are transactions:
@@ -734,6 +743,568 @@ export function subscribeToFishingPowerActions(
     },
     onError,
   );
+}
+
+// ---- Treasure Rush functions ----
+
+const TREASURE_GAME_STATUSES: ReadonlySet<string> = new Set<TreasureGameStatus>([
+  "idle",
+  "playing",
+  "scoring",
+  "wheel",
+  "finished",
+]);
+
+const TREASURE_MODIFIER_SET: ReadonlySet<string> = new Set<TreasureModifier>([
+  "gem-fever",
+  "coin-rain",
+  "safe-expedition",
+  "royal-treasure",
+  "lucky-explorer",
+  "double-treasure",
+]);
+
+const TREASURE_POWER_ACTION_TYPE_SET: ReadonlySet<string> = new Set<TreasurePowerActionType>([
+  "trap-shield",
+  "gem-bonus",
+  "double-loot",
+  "lucky-reroll",
+  "royal-bonus",
+]);
+
+function toTreasureGame(gameId: string, data: DocumentData): TreasureGame | null {
+  if (data.gameType !== "treasure") return null;
+  const rawStatus: unknown = data.status;
+  const status: TreasureGameStatus =
+    typeof rawStatus === "string" && TREASURE_GAME_STATUSES.has(rawStatus)
+      ? (rawStatus as TreasureGameStatus)
+      : "idle";
+  const rawModifier: unknown = data.activityModifier;
+  const activityModifier: TreasureModifier | null =
+    typeof rawModifier === "string" && TREASURE_MODIFIER_SET.has(rawModifier)
+      ? (rawModifier as TreasureModifier)
+      : null;
+  const rawDuration = data.durationSec;
+  const durationSec: 60 | 90 | 120 | 180 =
+    rawDuration === 90 ? 90
+    : rawDuration === 120 ? 120
+    : rawDuration === 180 ? 180
+    : 60;
+  const rawRS = data.resolvedState;
+  let resolvedState: TreasureGame["resolvedState"] = null;
+  if (rawRS && typeof rawRS === "object") {
+    resolvedState = {
+      finalCandidateUids: Array.isArray(rawRS.finalCandidateUids)
+        ? (rawRS.finalCandidateUids as unknown[]).filter((u): u is string => typeof u === "string")
+        : [],
+      reSpinGrantCount: typeof rawRS.reSpinGrantCount === "number" ? rawRS.reSpinGrantCount : 0,
+      resolvedAt: toDate(rawRS.resolvedAt),
+    };
+  }
+  return {
+    id: gameId,
+    gameType: "treasure",
+    status,
+    startedAt: toDate(data.startedAt),
+    durationSec,
+    endsAt: toDate(data.endsAt),
+    activityModifier,
+    ignoredUids: Array.isArray(data.ignoredUids)
+      ? (data.ignoredUids as unknown[]).filter((uid): uid is string => typeof uid === "string")
+      : [],
+    reSpinCount: typeof data.reSpinCount === "number" ? data.reSpinCount : 0,
+    resolvedState,
+    resolution: data.resolution === "wheel" ? "wheel" : null,
+    winnerUid: typeof data.winnerUid === "string" ? data.winnerUid : null,
+    resolvedAt: toDate(data.resolvedAt),
+  };
+}
+
+function toTreasurePlayerState(uid: string, data: DocumentData): TreasurePlayerState {
+  return {
+    uid,
+    openedCount: typeof data.openedCount === "number" ? data.openedCount : 0,
+    currentRunPoints: typeof data.currentRunPoints === "number" ? data.currentRunPoints : 0,
+    currentRunGem: typeof data.currentRunGem === "number" ? data.currentRunGem : 0,
+    currentRunCoin: typeof data.currentRunCoin === "number" ? data.currentRunCoin : 0,
+    currentRunCrown: typeof data.currentRunCrown === "number" ? data.currentRunCrown : 0,
+    bankedPoints: typeof data.bankedPoints === "number" ? data.bankedPoints : 0,
+    gemBanked: typeof data.gemBanked === "number" ? data.gemBanked : 0,
+    coinBanked: typeof data.coinBanked === "number" ? data.coinBanked : 0,
+    crownBanked: typeof data.crownBanked === "number" ? data.crownBanked : 0,
+    bankCount: typeof data.bankCount === "number" ? data.bankCount : 0,
+    trapHit: data.trapHit === true,
+    maxSingleReward: typeof data.maxSingleReward === "number" ? data.maxSingleReward : 0,
+    score: typeof data.score === "number" ? data.score : 0,
+    lastActionAt: toDate(data.lastActionAt),
+    updatedAt: toDate(data.updatedAt),
+  };
+}
+
+function toTreasurePowerAction(uid: string, data: DocumentData): TreasurePowerAction | null {
+  const rawType: unknown = data.type;
+  if (typeof rawType !== "string" || !TREASURE_POWER_ACTION_TYPE_SET.has(rawType)) return null;
+  return {
+    uid,
+    type: rawType as TreasurePowerActionType,
+    cost: typeof data.cost === "number" ? data.cost : 0,
+    submittedAt: toDate(data.submittedAt),
+    updatedAt: toDate(data.updatedAt),
+  };
+}
+
+/** Admin creates a Treasure Rush game and updates the board pointer. Returns the new gameId. */
+export async function startTreasureRush(
+  boardId: string,
+  durationSec: 60 | 90 | 120 | 180,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<string> {
+  if (isMockMode()) return getMockBackend().startTreasureRush(boardId, durationSec);
+  const gameId = newFarmGameId(boardId, db);
+  const batch = writeBatch(db);
+  batch.set(doc(db, "boards", boardId, "farmGames", gameId), {
+    gameType: "treasure",
+    status: "idle",
+    startedAt: serverTimestamp(),
+    durationSec,
+    endsAt: null,
+    activityModifier: null,
+    ignoredUids: [],
+    reSpinCount: 0,
+    resolvedState: null,
+    resolution: null,
+    winnerUid: null,
+    resolvedAt: null,
+  });
+  batch.update(doc(db, "boards", boardId), {
+    farmActiveGameId: gameId,
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+  return gameId;
+}
+
+/** Admin spins the Activity Wheel, sets the modifier, and transitions the game to "playing". */
+export async function spinTreasureWheel(
+  boardId: string,
+  gameId: string,
+  modifier: TreasureModifier,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().spinTreasureWheel(boardId, gameId, modifier);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const snap = await transaction.get(gameRef);
+      const data = snap.data({ serverTimestamps: "estimate" });
+      if (!snap.exists() || data?.gameType !== "treasure") {
+        throw new FarmError("not-active", "Not a Treasure Rush game");
+      }
+      if (data.status !== "idle") throw new FarmError("not-active", "Game is not in idle state");
+      const duration: number = typeof data.durationSec === "number" ? data.durationSec : 60;
+      transaction.update(gameRef, {
+        activityModifier: modifier,
+        status: "playing",
+        endsAt: Timestamp.fromMillis(Timestamp.now().toMillis() + duration * 1000),
+        updatedAt: serverTimestamp(),
+      });
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+/** Admin writes chest boards for all players before or at the "playing" transition. */
+export async function writeChestBoards(
+  boardId: string,
+  gameId: string,
+  boards: { uid: string; chests: TreasureChest[] }[],
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().writeChestBoards(boardId, gameId, boards);
+  const batch = writeBatch(db);
+  for (const { uid, chests } of boards) {
+    batch.set(doc(db, "boards", boardId, "farmGames", gameId, "chestBoards", uid), {
+      chests,
+      seededAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+/** Subscribe to the chest board for one player. */
+export function subscribeToMyChestBoard(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  cb: (chests: TreasureChest[] | null) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToMyChestBoard(boardId, gameId, uid, cb, onError);
+  return onSnapshot(
+    doc(db, "boards", boardId, "farmGames", gameId, "chestBoards", uid),
+    (snapshot) => {
+      const data = snapshot.data({ serverTimestamps: "estimate" });
+      if (!snapshot.exists() || !data) { cb(null); return; }
+      const rawChests: unknown = data.chests;
+      if (!Array.isArray(rawChests)) { cb(null); return; }
+      const chests: TreasureChest[] = (rawChests as unknown[]).flatMap((raw) => {
+        if (
+          typeof raw !== "object" ||
+          raw === null ||
+          typeof (raw as Record<string, unknown>).type !== "string" ||
+          typeof (raw as Record<string, unknown>).basePoints !== "number"
+        ) return [];
+        return [{ type: (raw as Record<string, unknown>).type as ChestType, basePoints: (raw as Record<string, unknown>).basePoints as number }];
+      });
+      cb(chests);
+    },
+    onError,
+  );
+}
+
+/**
+ * Player opens the next chest in sequence. Reads the chest data authoritatively from chestBoards in the transaction
+ * to prevent spoofing. Updates openedCount, currentRunPoints, currentRun gem/coin/crown counters, and trapHit.
+ */
+export async function openChest(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  chestIndex: number,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().openChest(boardId, gameId, uid, chestIndex);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  const chestBoardRef = doc(db, "boards", boardId, "farmGames", gameId, "chestBoards", uid);
+  const playerStateRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", uid);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const [gameSnap, cbSnap, psSnap] = await Promise.all([
+        transaction.get(gameRef),
+        transaction.get(chestBoardRef),
+        transaction.get(playerStateRef),
+      ]);
+      const gameData = gameSnap.data({ serverTimestamps: "estimate" });
+      if (!gameSnap.exists() || gameData?.status !== "playing") {
+        throw new FarmError("not-active", "Game is not in playing state");
+      }
+      const endsAt: unknown = gameData.endsAt;
+      if (endsAt instanceof Timestamp && endsAt.toMillis() <= Timestamp.now().toMillis()) {
+        throw new FarmError("not-active", "Game has ended");
+      }
+      const cbData = cbSnap.data();
+      if (!cbSnap.exists() || !cbData) throw new FarmError("not-active", "Chest board not found");
+      const rawChests: unknown = cbData.chests;
+      if (!Array.isArray(rawChests) || chestIndex < 0 || chestIndex >= rawChests.length) {
+        throw new FarmError("not-active", "Invalid chest index");
+      }
+      const psData = psSnap.data() ?? {};
+      const openedCount: number = typeof psData.openedCount === "number" ? psData.openedCount : 0;
+      if (chestIndex !== openedCount) {
+        throw new FarmError("not-active", "Chests must be opened sequentially");
+      }
+      const rawChest = rawChests[chestIndex];
+      if (
+        typeof rawChest !== "object" ||
+        rawChest === null ||
+        typeof (rawChest as Record<string, unknown>).type !== "string" ||
+        typeof (rawChest as Record<string, unknown>).basePoints !== "number"
+      ) {
+        throw new FarmError("not-active", "Invalid chest data");
+      }
+      const chestType = (rawChest as Record<string, unknown>).type as ChestType;
+      const basePoints = (rawChest as Record<string, unknown>).basePoints as number;
+      const isTrap = chestType === "trap";
+      const currentRunPoints: number = typeof psData.currentRunPoints === "number" ? psData.currentRunPoints : 0;
+      const newRunPoints = Math.max(0, currentRunPoints + basePoints);
+      const currentRunGem: number = typeof psData.currentRunGem === "number" ? psData.currentRunGem : 0;
+      const currentRunCoin: number = typeof psData.currentRunCoin === "number" ? psData.currentRunCoin : 0;
+      const currentRunCrown: number = typeof psData.currentRunCrown === "number" ? psData.currentRunCrown : 0;
+      const prevMaxSingleReward: number = typeof psData.maxSingleReward === "number" ? psData.maxSingleReward : 0;
+      const gemAdd = chestType === "gem" ? basePoints : 0;
+      const coinAdd = chestType === "coins" ? basePoints : 0;
+      const crownAdd = chestType === "crown" ? basePoints : 0;
+      const newMaxSingleReward = Math.max(prevMaxSingleReward, Math.max(0, basePoints));
+      if (psSnap.exists()) {
+        transaction.update(playerStateRef, {
+          openedCount: openedCount + 1,
+          currentRunPoints: newRunPoints,
+          currentRunGem: currentRunGem + gemAdd,
+          currentRunCoin: currentRunCoin + coinAdd,
+          currentRunCrown: currentRunCrown + crownAdd,
+          maxSingleReward: newMaxSingleReward,
+          ...(isTrap ? { trapHit: true } : {}),
+          lastActionAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        transaction.set(playerStateRef, {
+          openedCount: 1,
+          currentRunPoints: newRunPoints,
+          currentRunGem: gemAdd,
+          currentRunCoin: coinAdd,
+          currentRunCrown: crownAdd,
+          bankedPoints: 0,
+          gemBanked: 0,
+          coinBanked: 0,
+          crownBanked: 0,
+          bankCount: 0,
+          trapHit: isTrap,
+          maxSingleReward: newMaxSingleReward,
+          score: 0,
+          lastActionAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+/** Player banks their current run, adding currentRunPoints to bankedPoints and resetting run state. Idempotent when currentRunPoints is 0. */
+export async function bankTreasure(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().bankTreasure(boardId, gameId, uid);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  const playerStateRef = doc(db, "boards", boardId, "farmGames", gameId, "playerState", uid);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const [gameSnap, psSnap] = await Promise.all([
+        transaction.get(gameRef),
+        transaction.get(playerStateRef),
+      ]);
+      const gameData = gameSnap.data({ serverTimestamps: "estimate" });
+      if (!gameSnap.exists() || gameData?.status !== "playing") {
+        throw new FarmError("not-active", "Game is not in playing state");
+      }
+      const psData = psSnap.data() ?? {};
+      const currentRunPoints: number = typeof psData.currentRunPoints === "number" ? psData.currentRunPoints : 0;
+      if (currentRunPoints === 0) return;
+      const bankedPoints: number = typeof psData.bankedPoints === "number" ? psData.bankedPoints : 0;
+      const currentRunGem: number = typeof psData.currentRunGem === "number" ? psData.currentRunGem : 0;
+      const currentRunCoin: number = typeof psData.currentRunCoin === "number" ? psData.currentRunCoin : 0;
+      const currentRunCrown: number = typeof psData.currentRunCrown === "number" ? psData.currentRunCrown : 0;
+      const gemBanked: number = typeof psData.gemBanked === "number" ? psData.gemBanked : 0;
+      const coinBanked: number = typeof psData.coinBanked === "number" ? psData.coinBanked : 0;
+      const crownBanked: number = typeof psData.crownBanked === "number" ? psData.crownBanked : 0;
+      const bankCount: number = typeof psData.bankCount === "number" ? psData.bankCount : 0;
+      const bankFields = {
+        bankedPoints: bankedPoints + currentRunPoints,
+        gemBanked: gemBanked + currentRunGem,
+        coinBanked: coinBanked + currentRunCoin,
+        crownBanked: crownBanked + currentRunCrown,
+        currentRunPoints: 0,
+        currentRunGem: 0,
+        currentRunCoin: 0,
+        currentRunCrown: 0,
+        bankCount: bankCount + 1,
+        updatedAt: serverTimestamp(),
+      };
+      if (psSnap.exists()) {
+        transaction.update(playerStateRef, bankFields);
+      } else {
+        transaction.set(playerStateRef, {
+          openedCount: 0,
+          ...bankFields,
+          trapHit: false,
+          score: 0,
+          lastActionAt: serverTimestamp(),
+        });
+      }
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+/** Admin ends the playing phase and transitions to scoring. */
+export async function endTreasureRush(
+  boardId: string,
+  gameId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().endTreasureRush(boardId, gameId);
+  await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "scoring",
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function subscribeToTreasureGame(
+  boardId: string,
+  gameId: string,
+  cb: (game: TreasureGame | null) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToTreasureGame(boardId, gameId, cb, onError);
+  return onSnapshot(
+    doc(db, "boards", boardId, "farmGames", gameId),
+    (snapshot) => {
+      const data = snapshot.data({ serverTimestamps: "estimate" });
+      cb(snapshot.exists() && data ? toTreasureGame(snapshot.id, data) : null);
+    },
+    onError,
+  );
+}
+
+export function subscribeToTreasurePlayerStates(
+  boardId: string,
+  gameId: string,
+  cb: (states: TreasurePlayerState[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToTreasurePlayerStates(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "playerState"),
+    (snapshot) => {
+      cb(snapshot.docs.map((d) => toTreasurePlayerState(d.id, d.data({ serverTimestamps: "estimate" }))));
+    },
+    onError,
+  );
+}
+
+/** Admin writes final scores for each player at the scoring phase. */
+export async function lockTreasureScores(
+  boardId: string,
+  gameId: string,
+  scores: { uid: string; score: number }[],
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().lockTreasureScores(boardId, gameId, scores);
+  const batch = writeBatch(db);
+  for (const { uid, score } of scores) {
+    batch.update(doc(db, "boards", boardId, "farmGames", gameId, "playerState", uid), {
+      score,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+/** Player submits a Treasure Power Action. Atomically deducts balance from their powerPoints doc. */
+export async function submitTreasurePowerAction(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  type: TreasurePowerActionType,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().submitTreasurePowerAction(boardId, gameId, uid, type);
+  const cost = TREASURE_POWER_ACTION_COSTS[type];
+  const ppRef = powerPointsPath(boardId, gameId, uid, db);
+  const paRef = powerActionPath(boardId, gameId, uid, db);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const ppSnap = await transaction.get(ppRef);
+      const paSnap = await transaction.get(paRef);
+      if (paSnap.exists()) throw new FarmError("already-resolved", "A Power Action was already submitted this round");
+      const balance: number = ppSnap.exists() ? (ppSnap.data()?.balance ?? 0) : 0;
+      if (balance < cost) throw new FarmError("not-active", "Insufficient Power Points");
+      transaction.set(paRef, {
+        type,
+        cost,
+        submittedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      transaction.update(ppRef, { balance: balance - cost, updatedAt: serverTimestamp() });
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+export function subscribeToTreasurePowerActions(
+  boardId: string,
+  gameId: string,
+  cb: (actions: TreasurePowerAction[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToTreasurePowerActions(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "powerActions"),
+    (snapshot) => {
+      cb(
+        snapshot.docs.flatMap((d) => {
+          const action = toTreasurePowerAction(d.id, d.data({ serverTimestamps: "estimate" }));
+          return action ? [action] : [];
+        }),
+      );
+    },
+    onError,
+  );
+}
+
+/** Admin closes the scoring phase, writes the resolved state, and transitions to the wheel phase. */
+export async function resolveAndTransitionTreasureToWheel(
+  boardId: string,
+  gameId: string,
+  resolvedState: Omit<TreasureResolvedState, "resolvedAt">,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().resolveAndTransitionTreasureToWheel(boardId, gameId, resolvedState);
+  await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "wheel",
+    resolvedState: { ...resolvedState, resolvedAt: serverTimestamp() },
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Admin spins the Next Host Wheel during the Treasure Rush wheel phase. */
+export async function spinTreasureHostWheel(
+  boardId: string,
+  gameId: string,
+  winnerUid: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().spinTreasureHostWheel(boardId, gameId, winnerUid);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "finished",
+    resolution: "wheel",
+    winnerUid,
+    resolvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(db, "boards", boardId), {
+    nextHostUid: winnerUid,
+    nextHostGameId: gameId,
+    nextHostSpunAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/** Admin re-spins the host wheel (Lucky Re-roll). Increments reSpinCount before picking the new winner. */
+export async function reSpinTreasureHostWheel(
+  boardId: string,
+  gameId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<number> {
+  if (isMockMode()) return getMockBackend().reSpinTreasureHostWheel(boardId, gameId);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  let newCount = 0;
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const snap = await transaction.get(gameRef);
+      const current: number = snap.data()?.reSpinCount ?? 0;
+      if (current >= TREASURE_MAX_RESPINS) throw new FarmError("not-active", "Re-spin limit reached");
+      newCount = current + 1;
+      transaction.update(gameRef, { reSpinCount: newCount, updatedAt: serverTimestamp() });
+    },
+    TRANSACTION_OPTIONS,
+  );
+  return newCount;
 }
 
 /**

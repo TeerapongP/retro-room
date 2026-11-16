@@ -165,3 +165,108 @@ export type FishCatch = {
   lastCatchAt: Date | null;
   updatedAt: Date | null;
 };
+
+// ---------------------------------------------------------------------------
+// Treasure Rush types
+// ---------------------------------------------------------------------------
+
+export type TreasureGameStatus = "idle" | "playing" | "scoring" | "wheel" | "finished";
+
+export type TreasureModifier =
+  | "gem-fever"
+  | "coin-rain"
+  | "safe-expedition"
+  | "royal-treasure"
+  | "lucky-explorer"
+  | "double-treasure";
+
+export type ChestType = "coins" | "gem" | "crown" | "trap" | "mystery";
+
+export const CHEST_BASE_POINTS: Readonly<Record<ChestType, number>> = {
+  coins: 30,
+  gem: 100,
+  crown: 150,
+  trap: -50,
+  mystery: 0,
+};
+
+export const MYSTERY_POOL: readonly number[] = [20, 40, 60, 80, 120];
+
+export type TreasurePowerActionType =
+  | "trap-shield"
+  | "gem-bonus"
+  | "double-loot"
+  | "lucky-reroll"
+  | "royal-bonus";
+
+export const TREASURE_POWER_ACTION_COSTS: Readonly<Record<TreasurePowerActionType, number>> = {
+  "trap-shield": 20,
+  "gem-bonus": 20,
+  "double-loot": 30,
+  "lucky-reroll": 30,
+  "royal-bonus": 50,
+};
+
+/** Points restored by Treasure Shield (trap-shield) ability. */
+export const TRAP_SHIELD_RESTORE = 50;
+/** Flat bonus from Gem Bonus ability (gem-bonus). */
+export const GEM_BONUS_POINTS = 50;
+/** Flat bonus from Royal Bonus ability (royal-bonus). */
+export const ROYAL_BONUS_POINTS = 100;
+export const TREASURE_MAX_RESPINS = 2;
+export const TREASURE_PP_PER_100 = 10;
+
+export type TreasurePowerAction = {
+  uid: string;
+  type: TreasurePowerActionType;
+  cost: number;
+  submittedAt: Date | null;
+  updatedAt: Date | null;
+};
+
+export type TreasureChest = {
+  type: ChestType;
+  basePoints: number;
+};
+
+export type TreasurePlayerState = {
+  uid: string;
+  openedCount: number;
+  currentRunPoints: number;
+  currentRunGem: number;
+  currentRunCoin: number;
+  currentRunCrown: number;
+  bankedPoints: number;
+  gemBanked: number;
+  coinBanked: number;
+  crownBanked: number;
+  bankCount: number;
+  trapHit: boolean;
+  /** Highest single positive chest reward opened across all runs (for double-loot ability). */
+  maxSingleReward: number;
+  score: number;
+  lastActionAt: Date | null;
+  updatedAt: Date | null;
+};
+
+export type TreasureResolvedState = {
+  finalCandidateUids: string[];
+  reSpinGrantCount: number;
+  resolvedAt: Date | null;
+};
+
+export type TreasureGame = {
+  id: string;
+  gameType: "treasure";
+  status: TreasureGameStatus;
+  startedAt: Date | null;
+  durationSec: 60 | 90 | 120 | 180;
+  endsAt: Date | null;
+  activityModifier: TreasureModifier | null;
+  ignoredUids: string[];
+  reSpinCount: number;
+  resolvedState: TreasureResolvedState | null;
+  resolution: "wheel" | null;
+  winnerUid: string | null;
+  resolvedAt: Date | null;
+};

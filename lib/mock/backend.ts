@@ -31,6 +31,13 @@ import {
   type PowerActionType,
   type PowerPoints,
   type ResolvedState,
+  type TreasureChest,
+  type TreasureGame,
+  type TreasureModifier,
+  type TreasurePlayerState,
+  type TreasurePowerAction,
+  type TreasurePowerActionType,
+  type TreasureResolvedState,
   type WheelSegment,
 } from "../firebase/types";
 import { POWER_ACTION_COSTS } from "../firebase/types";
@@ -1034,6 +1041,93 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       };
       delete cardsOf(sourceBoardId)[card.id];
       changed();
+    },
+
+    // ---- Treasure Rush stubs (full implementation is a separate task) ----
+
+    async startTreasureRush(_boardId: string, _durationSec: 60 | 90 | 120 | 180): Promise<string> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async spinTreasureWheel(_boardId: string, _gameId: string, _modifier: TreasureModifier): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async writeChestBoards(_boardId: string, _gameId: string, _boards: { uid: string; chests: TreasureChest[] }[]): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    subscribeToMyChestBoard(
+      _boardId: string,
+      _gameId: string,
+      _uid: string,
+      _cb: (chests: TreasureChest[] | null) => void,
+      _onError: (error: unknown) => void,
+    ): Unsubscribe {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async openChest(_boardId: string, _gameId: string, _uid: string, _chestIndex: number): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async bankTreasure(_boardId: string, _gameId: string, _uid: string): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async endTreasureRush(_boardId: string, _gameId: string): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    subscribeToTreasureGame(
+      _boardId: string,
+      _gameId: string,
+      _cb: (game: TreasureGame | null) => void,
+      _onError: (error: unknown) => void,
+    ): Unsubscribe {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    subscribeToTreasurePlayerStates(
+      _boardId: string,
+      _gameId: string,
+      _cb: (states: TreasurePlayerState[]) => void,
+      _onError: (error: unknown) => void,
+    ): Unsubscribe {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async lockTreasureScores(_boardId: string, _gameId: string, _scores: { uid: string; score: number }[]): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async submitTreasurePowerAction(_boardId: string, _gameId: string, _uid: string, _type: TreasurePowerActionType): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    subscribeToTreasurePowerActions(
+      _boardId: string,
+      _gameId: string,
+      _cb: (actions: TreasurePowerAction[]) => void,
+      _onError: (error: unknown) => void,
+    ): Unsubscribe {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async resolveAndTransitionTreasureToWheel(
+      _boardId: string,
+      _gameId: string,
+      _resolvedState: Omit<TreasureResolvedState, "resolvedAt">,
+    ): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async spinTreasureHostWheel(_boardId: string, _gameId: string, _winnerUid: string): Promise<void> {
+      throw new Error("Treasure Rush not yet implemented in mock");
+    },
+
+    async reSpinTreasureHostWheel(_boardId: string, _gameId: string): Promise<number> {
+      throw new Error("Treasure Rush not yet implemented in mock");
     },
   };
 }
