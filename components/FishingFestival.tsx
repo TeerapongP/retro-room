@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { User } from "firebase/auth";
 import { HostWheel } from "@/components/HostWheel";
 import { currentHostUid, excludedHostUids } from "@/lib/crowded-farm";
@@ -183,6 +183,10 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
       ? Math.min(game.fishingDurationSec * 1000, Math.max(0, fishingEndsAt.getTime() - nowMs))
       : null;
   const isFishingLive = timeLeft !== null && timeLeft > 0;
+  const elapsedMs = (isFishingLive && game && timeLeft !== null)
+    ? game.fishingDurationSec * 1000 - timeLeft
+    : null;
+  const isCasting = elapsedMs !== null && elapsedMs < 1800;
 
   useEffect(() => {
     if (!isFishingLive || isBiteOpen) return;
@@ -195,6 +199,21 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
     const timerId = setTimeout(() => setIsBiteOpen(false), BITE_WINDOW_MS);
     return () => clearTimeout(timerId);
   }, [isBiteOpen]);
+
+  const prevBiteRef = useRef(false);
+  const [justMissed, setJustMissed] = useState(false);
+  useEffect(() => {
+    const wasOpen = prevBiteRef.current;
+    prevBiteRef.current = isBiteOpen;
+    if (wasOpen && !isBiteOpen && isFishingLive) {
+      setJustMissed(true);
+    }
+  }, [isBiteOpen, isFishingLive]);
+  useEffect(() => {
+    if (!justMissed) return;
+    const t = setTimeout(() => setJustMissed(false), 1200);
+    return () => clearTimeout(t);
+  }, [justMissed]);
 
   if (loadError !== null || game === undefined) {
     return (
@@ -351,6 +370,16 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
 
   const shopIsOpen = phase === "scoring";
   const shopIsLocked = !!myAction;
+
+  const getAnglerState = (uid: string): 'idle' | 'casting' | 'waiting' | 'bite' | 'catch' | 'miss' => {
+    if (phase !== 'fishing' || !isFishingLive) return 'idle';
+    const memberCatch = catches.find(c => c.uid === uid);
+    if (memberCatch?.lastCatchAt && nowMs - memberCatch.lastCatchAt.getTime() < 1500) return 'catch';
+    if (uid === user.uid && justMissed) return 'miss';
+    if (uid === user.uid && isBiteOpen) return 'bite';
+    if (isCasting) return 'casting';
+    return 'waiting';
+  };
   const myBalance = myPowerPoints?.balance ?? 0;
 
   return (
@@ -476,19 +505,26 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
           </p>
           <div className="ff-scene">
             <span className="ff-cloud" aria-hidden="true" />
+            <span className="ff-cloud ff-cloud-2" aria-hidden="true" />
             <div className="ff-trees" aria-hidden="true" />
             <div className="ff-fence" aria-hidden="true" />
             <div className="ff-water" aria-hidden="true" />
             <div className="ff-pier" aria-hidden="true" />
             <ul className="ff-anglers">
-              {sceneMembers.map((member) => (
-                <li key={member.uid} className="ff-angler" title={member.displayName}>
-                  <Avatar photoUrl={photoOf(member.uid)} name={member.displayName} uid={member.uid} />
-                  <span className="ff-rod" aria-hidden="true" />
-                  <span className="ff-line" aria-hidden="true" />
-                  <span className={`ff-bobber${member.uid === user.uid && canCatch ? " ff-bobber-bite" : ""}`} aria-hidden="true" />
-                </li>
-              ))}
+              {sceneMembers.map((member) => {
+                const anglerState = getAnglerState(member.uid);
+                return (
+                  <li key={member.uid} className={`ff-angler ff-angler-${anglerState}`} title={member.displayName}>
+                    <Avatar photoUrl={photoOf(member.uid)} name={member.displayName} uid={member.uid} />
+                    <span className="ff-rod" aria-hidden="true" />
+                    <span className="ff-line" aria-hidden="true" />
+                    <span className={`ff-bobber${anglerState === "bite" ? " ff-bobber-bite" : ""}`} aria-hidden="true" />
+                    {anglerState === "bite" && <span className="ff-ripple" aria-hidden="true" />}
+                    {anglerState === "catch" && <span className="ff-catch-fish" aria-hidden="true">🐟</span>}
+                    {anglerState === "miss" && <span className="ff-miss-splash" aria-hidden="true" />}
+                  </li>
+                );
+              })}
             </ul>
             {hiddenMemberCount > 0 ? <span className="ff-more">+{hiddenMemberCount}</span> : null}
             <div className="ff-grass" aria-hidden="true" />
@@ -1123,6 +1159,29 @@ const STYLES = `
 .ff-bobber { position: absolute; left: calc(3.85em - 0.35rem); top: calc(2.6em + 2.1rem); width: 0.7rem; height: 0.7rem; border-radius: 50%; border: 2px solid #493521; background: linear-gradient(#e2473d 0 50%, #fff 50% 100%); }
 .ff-bobber-bite { animation: ff-dip 0.5s steps(4, end) infinite; }
 .ff-bobber-bite::after { content: ""; position: absolute; left: 50%; top: 50%; width: 0.7rem; height: 0.35rem; border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); animation: ff-ring 0.8s steps(6, end) infinite; }
+
+/* ── Angler states ── */
+.ff-angler-idle .ff-rod { transform: rotate(-72deg); }
+.ff-angler-idle .ff-line { height: 0.5em; opacity: 0.3; }
+.ff-angler-idle .ff-bobber { display: none; }
+
+.ff-angler-casting .ff-rod { animation: ff-cast 1.8s steps(12, end) forwards; }
+.ff-angler-casting .ff-line { height: 0.4em; opacity: 0.4; animation: ff-line-extend 1.8s steps(12, end) forwards; }
+.ff-angler-casting .ff-bobber { top: 1.2em; opacity: 0; animation: ff-bobber-travel 1.8s steps(12, end) forwards; }
+
+.ff-angler-waiting .ff-bobber { animation: ff-bob 3s steps(6, end) infinite; }
+
+.ff-angler-catch .ff-rod { transform: rotate(-58deg); animation: ff-rod-catch 1s steps(8, end); }
+.ff-angler-catch .ff-bobber { animation: ff-bobber-launch 0.7s steps(5, end); }
+
+.ff-angler-miss { animation: ff-miss-shake 0.5s steps(5, end); }
+.ff-angler-miss .ff-bobber { animation: ff-miss-bounce 1.2s steps(8, end); }
+
+.ff-ripple { position: absolute; left: calc(3.85em - 0.6rem); top: calc(2.6em + 2rem); width: 1.4rem; height: 0.6rem; border: 2px solid rgba(255 255 255 / 0.65); border-radius: 50%; pointer-events: none; z-index: 3; animation: ff-water-ripple 1.2s steps(8, end) infinite; }
+.ff-catch-fish { position: absolute; left: 1.5em; top: -0.5em; font-size: 1.3em; line-height: 1; animation: ff-fish-pop 1.2s steps(8, end) forwards; pointer-events: none; z-index: 4; }
+.ff-miss-splash { position: absolute; left: calc(3.85em - 0.5rem); top: calc(2.6em + 2rem); width: 1.2rem; height: 0.5rem; border: 2px solid rgba(100 180 255 / 0.9); border-radius: 50%; pointer-events: none; z-index: 3; animation: ff-splash 0.9s steps(6, end) forwards; }
+.ff-cloud-2 { left: 55%; top: 22%; width: 3.8rem; height: 1rem; box-shadow: 0.9rem -0.5rem 0 0.12rem #fff, 1.9rem 0.2rem 0 #fff; animation-duration: 19s; animation-delay: -11s; }
+
 .ff-more { position: absolute; z-index: 3; right: 0.5rem; top: 0.5rem; padding: 0 0.5rem; font-weight: 800; background: #fff3df; border: 3px solid #493521; }
 .ff-catch { width: calc(100% - 1rem); margin: 0 0.5rem 0.5rem; font-size: 1.1rem; background: #cfc8ba; }
 .ff-catch-open { background: #f5bd4f; animation: ff-pulse 0.6s steps(4, end) infinite; }
@@ -1244,6 +1303,17 @@ const STYLES = `
 @keyframes ff-ring { from { width: 0.7rem; height: 0.35rem; opacity: 1; } to { width: 2.4rem; height: 1rem; opacity: 0; } }
 @keyframes ff-pulse { 0%, 100% { box-shadow: 0 4px 0 0 #493521, 0 0 0 0 rgb(245 189 79 / 0.9); } 50% { box-shadow: 0 4px 0 0 #493521, 0 0 0 0.6rem rgb(245 189 79 / 0); filter: brightness(1.12); } }
 @keyframes ff-peck { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
+@keyframes ff-bob { 0%, 85%, 100% { transform: translateY(0); } 42% { transform: translateY(1px); } }
+@keyframes ff-rod-catch { 0% { transform: rotate(-35deg); } 35% { transform: rotate(-65deg); } 65% { transform: rotate(-52deg); } 100% { transform: rotate(-58deg); } }
+@keyframes ff-bobber-launch { 0% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-0.9rem); opacity: 1; } 100% { transform: translateY(-0.5rem); opacity: 0; } }
+@keyframes ff-fish-pop { 0% { opacity: 1; transform: translateY(0) scale(1); } 45% { opacity: 1; transform: translateY(-1em) scale(1.3); } 100% { opacity: 0; transform: translateY(-1.8em) scale(0.5); } }
+@keyframes ff-water-ripple { 0% { transform: scale(0.6); opacity: 0.8; } 70% { opacity: 0.3; } 100% { transform: scale(2.2); opacity: 0; } }
+@keyframes ff-cast { 0% { transform: rotate(-72deg); } 20% { transform: rotate(-82deg); } 55% { transform: rotate(-8deg); } 100% { transform: rotate(-35deg); } }
+@keyframes ff-line-extend { 0%, 35% { height: 0.4em; opacity: 0.4; } 70% { height: 50%; opacity: 0.8; } 100% { height: calc(2.7em + 2.4rem); opacity: 1; } }
+@keyframes ff-bobber-travel { 0%, 35% { top: 1.2em; opacity: 0; } 55% { top: 1.0em; opacity: 1; } 100% { top: calc(2.6em + 2.1rem); opacity: 1; } }
+@keyframes ff-miss-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+@keyframes ff-miss-bounce { 0% { transform: translateY(0.5rem); } 40% { transform: translateY(-0.3rem); } 70% { transform: translateY(0.1rem); } 100% { transform: translateY(0); } }
+@keyframes ff-splash { 0% { transform: scale(0.5); opacity: 1; } 50% { transform: scale(1.5) scaleY(0.6); opacity: 0.6; } 100% { transform: scale(2.5) scaleY(0.3); opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   .ff-root, .ff-root * { animation: none !important; transition: none !important; }
