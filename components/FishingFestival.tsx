@@ -980,7 +980,7 @@ const STYLES = `
 }
 /* PP badge — center column */
 .ff-pp-badge {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.1rem;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0.1rem;
   padding: 0.5rem 1.5rem;
   background: linear-gradient(180deg, #fff8e7 0%, #ffe8a0 100%);
   border-left: 5px solid #3d1e06;
@@ -994,7 +994,7 @@ const STYLES = `
 .ff-pp-coin { font-size: 1.4rem; }
 /* Right column — round + timer stacked */
 .ff-header-status {
-  display: flex; flex-direction: column; align-items: stretch; justify-content: center;
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
   gap: 0.4rem; padding: 0.5rem 0.8rem;
 }
 .ff-round-badge {
@@ -1059,6 +1059,7 @@ const STYLES = `
   outline: 3px solid #c8975e;
   box-shadow: inset 0 0 0 3px #e8c07a, 6px 9px 0 rgb(48 30 15 / 0.55);
   min-width: 0; max-width: 100%; box-sizing: border-box;
+  overflow: visible;
 }
 /* Panel inner content padding (not for heading/scene) */
 .ff-wood > *:not(.ff-heading),
