@@ -27,8 +27,13 @@ import {
   type FishingGame,
   type FishingGameStatus,
   type MoveTargetBoard,
+  type PowerAction,
+  type PowerActionType,
+  type PowerPoints,
+  type ResolvedState,
   type WheelSegment,
 } from "../firebase/types";
+import { POWER_ACTION_COSTS } from "../firebase/types";
 
 /**
  * In-memory stand-in for Firebase Auth and Firestore (F19, D89 to D92). It does NOT run Security Rules:
@@ -95,10 +100,16 @@ type StoredFishingGame = {
   wheelSegment: WheelSegment | null;
   wheelSpunAt: string | null;
   fishingEndsAt: string | null;
-  resolution: "wheel" | "none" | null;
+  powerShopEndsAt: string | null;
+  reSpinCount: number;
+  resolvedState: (Omit<ResolvedState, "resolvedAt"> & { resolvedAt: string | null }) | null;
+  resolution: "wheel" | "golden-hook" | "none" | null;
   winnerUid: string | null;
   resolvedAt: string | null;
 };
+
+type StoredPowerPoints = { balance: number; earned: number };
+type StoredPowerAction = { type: PowerActionType; targetUid: string | null; cost: number; submittedAt: string };
 
 type StoredFishCatch = {
   catchCount: number;
@@ -122,6 +133,8 @@ type MockState = {
   /** Fishing Festival games per board; absent in states saved before this feature existed. */
   fishGames?: Record<string, Record<string, StoredFishingGame>>;
   fishCatches?: Record<string, Record<string, Record<string, StoredFishCatch>>>;
+  fishPowerPoints?: Record<string, Record<string, Record<string, StoredPowerPoints>>>;
+  fishPowerActions?: Record<string, Record<string, Record<string, StoredPowerAction>>>;
   counter: number;
 };
 
@@ -312,7 +325,16 @@ export function createMockBackend(options: MockBackendOptions = {}) {
     return (((state.fishCatches ??= {})[boardId] ??= {})[gameId] ??= {});
   }
 
+  function fishPowerPointsOf(boardId: string, gameId: string): Record<string, StoredPowerPoints> {
+    return (((state.fishPowerPoints ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
+  function fishPowerActionsOf(boardId: string, gameId: string): Record<string, StoredPowerAction> {
+    return (((state.fishPowerActions ??= {})[boardId] ??= {})[gameId] ??= {});
+  }
+
   function toFishingGame(gameId: string, stored: StoredFishingGame): FishingGame {
+    const rs = stored.resolvedState;
     return {
       id: gameId,
       gameType: "fishing",
@@ -323,6 +345,11 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       fishingEndsAt: stored.fishingEndsAt ? new Date(stored.fishingEndsAt) : null,
       fishingDurationSec: stored.fishingDurationSec,
       ignoredUids: [...stored.ignoredUids],
+      powerShopEndsAt: stored.powerShopEndsAt ? new Date(stored.powerShopEndsAt) : null,
+      reSpinCount: stored.reSpinCount,
+      resolvedState: rs
+        ? { ...rs, resolvedAt: rs.resolvedAt ? new Date(rs.resolvedAt) : null }
+        : null,
       resolution: stored.resolution,
       winnerUid: stored.winnerUid,
       resolvedAt: stored.resolvedAt ? new Date(stored.resolvedAt) : null,
@@ -637,6 +664,9 @@ export function createMockBackend(options: MockBackendOptions = {}) {
         wheelSegment: null,
         wheelSpunAt: null,
         fishingEndsAt: null,
+        powerShopEndsAt: null,
+        reSpinCount: 0,
+        resolvedState: null,
         resolution: null,
         winnerUid: null,
         resolvedAt: null,
@@ -718,6 +748,110 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       return subscribe(() => {
         const catchMap = state.fishCatches?.[boardId]?.[gameId] ?? {};
         return Object.entries(catchMap).map(([uid, stored]) => toFishCatch(uid, stored));
+      }, cb, onError);
+    },
+
+    async lockPowerPoints(
+      boardId: string,
+      gameId: string,
+      points: { uid: string; balance: number; earned: number }[],
+    ): Promise<void> {
+      const pp = fishPowerPointsOf(boardId, gameId);
+      for (const p of points) pp[p.uid] = { balance: p.balance, earned: p.earned };
+      changed();
+    },
+
+    async submitPowerAction(
+      boardId: string,
+      gameId: string,
+      uid: string,
+      type: PowerActionType,
+      targetUid: string | null,
+    ): Promise<void> {
+      const pp = fishPowerPointsOf(boardId, gameId);
+      const pa = fishPowerActionsOf(boardId, gameId);
+      if (pa[uid]) throw denied("A Power Action was already submitted this round");
+      const balance = pp[uid]?.balance ?? 0;
+      const cost = POWER_ACTION_COSTS[type];
+      if (balance < cost) throw denied("Insufficient Power Points");
+      pa[uid] = { type, targetUid: targetUid ?? null, cost, submittedAt: now().toISOString() };
+      if (pp[uid]) pp[uid].balance = balance - cost;
+      changed();
+    },
+
+    async resolveAndTransitionToWheel(
+      boardId: string,
+      gameId: string,
+      resolvedState: Omit<ResolvedState, "resolvedAt">,
+    ): Promise<void> {
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      game.status = "wheel";
+      game.resolvedState = { ...resolvedState, resolvedAt: now().toISOString() };
+      changed();
+    },
+
+    async spinFishingHostWheel(
+      boardId: string,
+      gameId: string,
+      winnerUid: string,
+      resolution: "wheel" | "golden-hook",
+    ): Promise<void> {
+      const board = boardOrThrow(boardId);
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      game.status = "finished";
+      game.resolution = resolution;
+      game.winnerUid = winnerUid;
+      game.resolvedAt = now().toISOString();
+      board.nextHostUid = winnerUid;
+      board.nextHostGameId = gameId;
+      board.nextHostSpunAt = now().toISOString();
+      changed();
+    },
+
+    async reSpinFishingHostWheel(boardId: string, gameId: string): Promise<number> {
+      const game = fishGamesOf(boardId)[gameId];
+      if (!game) throw denied("Fishing game not found");
+      if (game.reSpinCount >= 2) throw denied("Re-spin limit reached");
+      game.reSpinCount += 1;
+      changed();
+      return game.reSpinCount;
+    },
+
+    subscribeToFishingPowerPoints(
+      boardId: string,
+      gameId: string,
+      cb: (points: PowerPoints[]) => void,
+      onError: (error: unknown) => void,
+    ): Unsubscribe {
+      return subscribe(() => {
+        const ppMap = state.fishPowerPoints?.[boardId]?.[gameId] ?? {};
+        return Object.entries(ppMap).map(([uid, stored]) => ({
+          uid,
+          balance: stored.balance,
+          earned: stored.earned,
+          updatedAt: null,
+        }));
+      }, cb, onError);
+    },
+
+    subscribeToFishingPowerActions(
+      boardId: string,
+      gameId: string,
+      cb: (actions: PowerAction[]) => void,
+      onError: (error: unknown) => void,
+    ): Unsubscribe {
+      return subscribe(() => {
+        const paMap = state.fishPowerActions?.[boardId]?.[gameId] ?? {};
+        return Object.entries(paMap).map(([uid, stored]) => ({
+          uid,
+          type: stored.type,
+          targetUid: stored.targetUid,
+          cost: stored.cost,
+          submittedAt: new Date(stored.submittedAt),
+          updatedAt: null,
+        }));
       }, cb, onError);
     },
 

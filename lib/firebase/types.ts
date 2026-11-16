@@ -85,6 +85,7 @@ export type FishingGameStatus =
   | "selecting-wheel"
   | "fishing"
   | "scoring"
+  | "wheel"
   | "finished"
   | "cancelled";
 
@@ -96,6 +97,50 @@ export type WheelSegment =
   | "double-points"
   | "rare-fish";
 
+export type PowerActionType =
+  | "lucky-respin"
+  | "right-neighbor"
+  | "safe-catch"
+  | "fishy-shuffle"
+  | "golden-hook"
+  | "bait-trap";
+
+export const POWER_ACTION_COSTS: Readonly<Record<PowerActionType, number>> = {
+  "lucky-respin": 30,
+  "right-neighbor": 50,
+  "safe-catch": 40,
+  "fishy-shuffle": 20,
+  "golden-hook": 150,
+  "bait-trap": 60,
+};
+
+export const MAX_RESPINS = 2;
+
+export type PowerAction = {
+  uid: string;
+  type: PowerActionType;
+  targetUid: string | null;
+  cost: number;
+  submittedAt: Date | null;
+  updatedAt: Date | null;
+};
+
+export type PowerPoints = {
+  uid: string;
+  balance: number;
+  earned: number;
+  updatedAt: Date | null;
+};
+
+export type ResolvedState = {
+  safeCatchUids: string[];
+  goldenHookWinner: string | null;
+  baitTrapMap: Record<string, string>;
+  finalCandidateUids: string[];
+  reSpinGrantCount: number;
+  resolvedAt: Date | null;
+};
+
 export type FishingGame = {
   id: string;
   gameType: "fishing";
@@ -106,7 +151,10 @@ export type FishingGame = {
   fishingEndsAt: Date | null;
   fishingDurationSec: 30 | 45 | 60;
   ignoredUids: string[];
-  resolution: "wheel" | "none" | null;
+  powerShopEndsAt: Date | null;
+  reSpinCount: number;
+  resolvedState: ResolvedState | null;
+  resolution: "wheel" | "golden-hook" | "none" | null;
   winnerUid: string | null;
   resolvedAt: Date | null;
 };

@@ -321,6 +321,111 @@ service cloud.firestore {
              .hasOnly(['status', 'resolution', 'winnerUid', 'resolvedAt', 'updatedAt']);
     }
 
+    // Admin closes the Power Shop and transitions to the wheel phase with a resolved state.
+    function validFishingResolveToWheel(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status == 'scoring'
+        && data.status == 'wheel'
+        && data.get('resolvedState', null) != null
+        && data.resolvedState.get('finalCandidateUids', null) is list
+        && data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'resolvedState', 'updatedAt']);
+    }
+
+    // Admin triggers the wheel finish from the wheel phase.
+    function validFishingWheelFinish(boardId, gameId) {
+      let data = request.resource.data;
+      let board = get(boardPath(boardId)).data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status == 'wheel'
+        && data.status == 'finished'
+        && data.get('winnerUid', null) != null
+        && data.resolvedAt == request.time
+        && exists(memberPath(boardId, data.winnerUid))
+        && !(data.winnerUid == board.get('hostUid', board.ownerId))
+        && data.resolution in ['wheel', 'golden-hook']
+        && data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'resolution', 'winnerUid', 'resolvedAt', 'updatedAt']);
+    }
+
+    // Admin increments reSpinCount during the wheel phase.
+    function validFishingReSpin(boardId, gameId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && resource.data.get('gameType', '') == 'fishing'
+        && resource.data.status == 'wheel'
+        && data.diff(resource.data).affectedKeys().hasOnly(['reSpinCount', 'updatedAt'])
+        && data.reSpinCount == resource.data.get('reSpinCount', 0) + 1
+        && data.reSpinCount <= 2;
+    }
+
+    // Admin writes locked Power Points after end-fishing (scoring phase).
+    function validPowerPointsCreate(boardId, gameId) {
+      let data = request.resource.data;
+      let game = get(gamePath(boardId, gameId)).data;
+      return isAdmin()
+        && game.get('gameType', '') == 'fishing'
+        && game.status == 'scoring'
+        && data.keys().hasOnly(['balance', 'earned', 'updatedAt'])
+        && data.keys().hasAll(['balance', 'earned', 'updatedAt'])
+        && data.balance is int
+        && data.balance >= 0
+        && data.earned is int
+        && data.earned >= 0
+        && data.updatedAt == request.time;
+    }
+
+    // Player deducts their balance when submitting a Power Action (transaction writes both docs).
+    function validPowerPointsDeduct(boardId, gameId, uid) {
+      let data = request.resource.data;
+      let game = get(gamePath(boardId, gameId)).data;
+      let cost = getAfter(
+        /databases/$(database)/documents/boards/$(boardId)/farmGames/$(gameId)/powerActions/$(uid)
+      ).data.cost;
+      return signedIn()
+        && request.auth.uid == uid
+        && game.get('gameType', '') == 'fishing'
+        && game.status == 'scoring'
+        && data.diff(resource.data).affectedKeys().hasOnly(['balance', 'updatedAt'])
+        && data.balance == resource.data.balance - cost
+        && data.balance >= 0
+        && data.updatedAt == request.time
+        && existsAfter(
+             /databases/$(database)/documents/boards/$(boardId)/farmGames/$(gameId)/powerActions/$(uid)
+           );
+    }
+
+    // Player submits their Power Action (at most once per round, during scoring phase).
+    function validPowerActionCreate(boardId, gameId, uid) {
+      let data = request.resource.data;
+      let game = get(gamePath(boardId, gameId)).data;
+      let validTypes = ['lucky-respin', 'right-neighbor', 'safe-catch', 'fishy-shuffle', 'golden-hook', 'bait-trap'];
+      let costs = {
+        'lucky-respin': 30,
+        'right-neighbor': 50,
+        'safe-catch': 40,
+        'fishy-shuffle': 20,
+        'golden-hook': 150,
+        'bait-trap': 60,
+      };
+      let requiredTarget = data.type in ['golden-hook', 'bait-trap'];
+      return signedIn()
+        && request.auth.uid == uid
+        && isMember(boardId)
+        && game.get('gameType', '') == 'fishing'
+        && game.status == 'scoring'
+        && data.keys().hasOnly(['type', 'targetUid', 'cost', 'submittedAt', 'updatedAt'])
+        && data.keys().hasAll(['type', 'targetUid', 'cost', 'submittedAt', 'updatedAt'])
+        && data.type in validTypes
+        && data.cost == costs[data.type]
+        && data.submittedAt == request.time
+        && data.updatedAt == request.time
+        && (!requiredTarget || (data.targetUid is string && exists(memberPath(boardId, data.targetUid))));
+    }
+
     function validFarmChoice(boardId, gameId, uid) {
       let data = request.resource.data;
       let board = get(boardPath(boardId)).data;
@@ -657,7 +762,10 @@ service cloud.firestore {
           || validFishingSpinWheel(boardId, gameId)
           || validFishingEndFishing(boardId, gameId)
           || validFishingSetIgnoredUids(boardId, gameId)
-          || validFishingFinish(boardId, gameId);
+          || validFishingFinish(boardId, gameId)
+          || validFishingResolveToWheel(boardId, gameId)
+          || validFishingWheelFinish(boardId, gameId)
+          || validFishingReSpin(boardId, gameId);
         allow delete: if false;
 
         match /catches/{uid} {
@@ -674,6 +782,24 @@ service cloud.firestore {
             && request.resource.data.lastCatchAt == request.time
             && request.resource.data.updatedAt == request.time;
           allow delete: if false;
+        }
+
+        match /powerPoints/{uid} {
+          allow read: if isMember(boardId) || isAdmin();
+          allow create: if validPowerPointsCreate(boardId, gameId);
+          allow update: if validPowerPointsDeduct(boardId, gameId, uid);
+          allow delete: if false;
+        }
+
+        match /powerActions/{uid} {
+          // Private during scoring phase: only the submitter and admin can read.
+          // After the game transitions to wheel/finished, all members can read.
+          allow read: if isAdmin()
+            || (signedIn() && request.auth.uid == uid && isMember(boardId))
+            || ((isMember(boardId) || isAdmin())
+               && get(gamePath(boardId, gameId)).data.status in ['wheel', 'finished']);
+          allow create: if validPowerActionCreate(boardId, gameId, uid);
+          allow update, delete: if false;
         }
 
         match /choices/{uid} {

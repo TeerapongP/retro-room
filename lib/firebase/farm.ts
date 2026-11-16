@@ -25,7 +25,17 @@ import {
 } from "../crowded-farm";
 import { getMockBackend, isMockMode } from "../mock";
 import { getFirebaseFirestore } from "./client";
-import type { FishCatch, FishingGame, FishingGameStatus, WheelSegment } from "./types";
+import type {
+  FishCatch,
+  FishingGame,
+  FishingGameStatus,
+  PowerAction,
+  PowerActionType,
+  PowerPoints,
+  ResolvedState,
+  WheelSegment,
+} from "./types";
+import { MAX_RESPINS, POWER_ACTION_COSTS } from "./types";
 
 /**
  * Crowded Farm services (F30). Starting, finishing, cancelling and storing a fallback result are transactions:
@@ -318,8 +328,32 @@ function toFishingGame(gameId: string, data: DocumentData): FishingGame | null {
   const rawDuration = data.fishingDurationSec;
   const fishingDurationSec: 30 | 45 | 60 = rawDuration === 45 ? 45 : rawDuration === 60 ? 60 : 30;
   const rawResolution: unknown = data.resolution;
-  const resolution: "wheel" | "none" | null =
-    rawResolution === "wheel" ? "wheel" : rawResolution === "none" ? "none" : null;
+  const resolution: "wheel" | "golden-hook" | "none" | null =
+    rawResolution === "wheel" ? "wheel"
+    : rawResolution === "golden-hook" ? "golden-hook"
+    : rawResolution === "none" ? "none"
+    : null;
+
+  const rawRS = data.resolvedState;
+  let resolvedState: FishingGame["resolvedState"] = null;
+  if (rawRS && typeof rawRS === "object") {
+    resolvedState = {
+      safeCatchUids: Array.isArray(rawRS.safeCatchUids)
+        ? rawRS.safeCatchUids.filter((u: unknown): u is string => typeof u === "string")
+        : [],
+      goldenHookWinner: typeof rawRS.goldenHookWinner === "string" ? rawRS.goldenHookWinner : null,
+      baitTrapMap:
+        rawRS.baitTrapMap && typeof rawRS.baitTrapMap === "object"
+          ? (rawRS.baitTrapMap as Record<string, string>)
+          : {},
+      finalCandidateUids: Array.isArray(rawRS.finalCandidateUids)
+        ? rawRS.finalCandidateUids.filter((u: unknown): u is string => typeof u === "string")
+        : [],
+      reSpinGrantCount: typeof rawRS.reSpinGrantCount === "number" ? rawRS.reSpinGrantCount : 0,
+      resolvedAt: toDate(rawRS.resolvedAt),
+    };
+  }
+
   return {
     id: gameId,
     gameType: "fishing",
@@ -332,9 +366,43 @@ function toFishingGame(gameId: string, data: DocumentData): FishingGame | null {
     ignoredUids: Array.isArray(data.ignoredUids)
       ? data.ignoredUids.filter((uid): uid is string => typeof uid === "string")
       : [],
+    powerShopEndsAt: toDate(data.powerShopEndsAt),
+    reSpinCount: typeof data.reSpinCount === "number" ? data.reSpinCount : 0,
+    resolvedState,
     resolution,
     winnerUid: typeof data.winnerUid === "string" ? data.winnerUid : null,
     resolvedAt: toDate(data.resolvedAt),
+  };
+}
+
+const POWER_ACTION_TYPES: ReadonlySet<string> = new Set<PowerActionType>([
+  "lucky-respin",
+  "right-neighbor",
+  "safe-catch",
+  "fishy-shuffle",
+  "golden-hook",
+  "bait-trap",
+]);
+
+function toPowerPoints(uid: string, data: DocumentData): PowerPoints {
+  return {
+    uid,
+    balance: typeof data.balance === "number" ? Math.max(0, data.balance) : 0,
+    earned: typeof data.earned === "number" ? Math.max(0, data.earned) : 0,
+    updatedAt: toDate(data.updatedAt),
+  };
+}
+
+function toPowerAction(uid: string, data: DocumentData): PowerAction | null {
+  const rawType: unknown = data.type;
+  if (typeof rawType !== "string" || !POWER_ACTION_TYPES.has(rawType)) return null;
+  return {
+    uid,
+    type: rawType as PowerActionType,
+    targetUid: typeof data.targetUid === "string" ? data.targetUid : null,
+    cost: typeof data.cost === "number" ? data.cost : 0,
+    submittedAt: toDate(data.submittedAt),
+    updatedAt: toDate(data.updatedAt),
   };
 }
 
@@ -498,6 +566,170 @@ export function subscribeToFishCatches(
     (snapshot) => {
       cb(
         snapshot.docs.map((catchDoc) => toFishCatch(catchDoc.id, catchDoc.data({ serverTimestamps: "estimate" }))),
+      );
+    },
+    onError,
+  );
+}
+
+function powerPointsPath(boardId: string, gameId: string, uid: string, db: Firestore) {
+  return doc(db, "boards", boardId, "farmGames", gameId, "powerPoints", uid);
+}
+
+function powerActionPath(boardId: string, gameId: string, uid: string, db: Firestore) {
+  return doc(db, "boards", boardId, "farmGames", gameId, "powerActions", uid);
+}
+
+/** Admin writes locked Power Points for all players after fishing ends (scoring phase entry). */
+export async function lockPowerPoints(
+  boardId: string,
+  gameId: string,
+  points: { uid: string; balance: number; earned: number }[],
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().lockPowerPoints(boardId, gameId, points);
+  const batch = writeBatch(db);
+  for (const p of points) {
+    batch.set(powerPointsPath(boardId, gameId, p.uid, db), {
+      balance: p.balance,
+      earned: p.earned,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+/** Player submits a Power Action. Atomically deducts balance from their powerPoints doc. */
+export async function submitPowerAction(
+  boardId: string,
+  gameId: string,
+  uid: string,
+  type: PowerActionType,
+  targetUid: string | null,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().submitPowerAction(boardId, gameId, uid, type, targetUid);
+  const cost = POWER_ACTION_COSTS[type];
+  const ppRef = powerPointsPath(boardId, gameId, uid, db);
+  const paRef = powerActionPath(boardId, gameId, uid, db);
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const ppSnap = await transaction.get(ppRef);
+      const paSnap = await transaction.get(paRef);
+      if (paSnap.exists()) throw new FarmError("already-resolved", "A Power Action was already submitted this round");
+      const balance: number = ppSnap.exists() ? (ppSnap.data()?.balance ?? 0) : 0;
+      if (balance < cost) throw new FarmError("not-active", "Insufficient Power Points");
+      transaction.set(paRef, {
+        type,
+        targetUid: targetUid ?? null,
+        cost,
+        submittedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      transaction.update(ppRef, { balance: balance - cost, updatedAt: serverTimestamp() });
+    },
+    TRANSACTION_OPTIONS,
+  );
+}
+
+/** Admin closes the Power Shop and writes the resolved state, transitioning to the wheel phase. */
+export async function resolveAndTransitionToWheel(
+  boardId: string,
+  gameId: string,
+  resolvedState: Omit<ResolvedState, "resolvedAt">,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().resolveAndTransitionToWheel(boardId, gameId, resolvedState);
+  await updateDoc(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "wheel",
+    resolvedState: { ...resolvedState, resolvedAt: serverTimestamp() },
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Admin spins the Next Host Wheel during the wheel phase (or directly applies Golden Hook). */
+export async function spinFishingHostWheel(
+  boardId: string,
+  gameId: string,
+  winnerUid: string,
+  resolution: "wheel" | "golden-hook",
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().spinFishingHostWheel(boardId, gameId, winnerUid, resolution);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "boards", boardId, "farmGames", gameId), {
+    status: "finished",
+    resolution,
+    winnerUid,
+    resolvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(db, "boards", boardId), {
+    nextHostUid: winnerUid,
+    nextHostGameId: gameId,
+    nextHostSpunAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/** Admin re-spins the host wheel (Lucky Re-spin). Increments reSpinCount before picking the new winner. */
+export async function reSpinFishingHostWheel(
+  boardId: string,
+  gameId: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<number> {
+  if (isMockMode()) return getMockBackend().reSpinFishingHostWheel(boardId, gameId);
+  const gameRef = doc(db, "boards", boardId, "farmGames", gameId);
+  let newCount = 0;
+  await runTransaction(
+    db,
+    async (transaction) => {
+      const snap = await transaction.get(gameRef);
+      const current: number = snap.data()?.reSpinCount ?? 0;
+      if (current >= MAX_RESPINS) throw new FarmError("not-active", "Re-spin limit reached");
+      newCount = current + 1;
+      transaction.update(gameRef, { reSpinCount: newCount, updatedAt: serverTimestamp() });
+    },
+    TRANSACTION_OPTIONS,
+  );
+  return newCount;
+}
+
+export function subscribeToFishingPowerPoints(
+  boardId: string,
+  gameId: string,
+  cb: (points: PowerPoints[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToFishingPowerPoints(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "powerPoints"),
+    (snapshot) => {
+      cb(snapshot.docs.map((d) => toPowerPoints(d.id, d.data({ serverTimestamps: "estimate" }))));
+    },
+    onError,
+  );
+}
+
+export function subscribeToFishingPowerActions(
+  boardId: string,
+  gameId: string,
+  cb: (actions: PowerAction[]) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToFishingPowerActions(boardId, gameId, cb, onError);
+  return onSnapshot(
+    collection(db, "boards", boardId, "farmGames", gameId, "powerActions"),
+    (snapshot) => {
+      cb(
+        snapshot.docs.flatMap((d) => {
+          const action = toPowerAction(d.id, d.data({ serverTimestamps: "estimate" }));
+          return action ? [action] : [];
+        }),
       );
     },
     onError,

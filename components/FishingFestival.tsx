@@ -6,17 +6,40 @@ import { HostWheel } from "@/components/HostWheel";
 import { currentHostUid, excludedHostUids } from "@/lib/crowded-farm";
 import {
   endFishing,
-  finishFishingGame,
   handOverHost,
+  lockPowerPoints,
   recordCatch,
+  resolveAndTransitionToWheel,
+  reSpinFishingHostWheel,
   setIgnoredUids,
   spinActivityWheel,
+  spinFishingHostWheel,
   startFishingGame,
+  submitPowerAction,
   subscribeToFishCatches,
   subscribeToFishingGame,
+  subscribeToFishingPowerActions,
+  subscribeToFishingPowerPoints,
 } from "@/lib/firebase/farm";
-import type { Board, BoardMember, FishCatch, FishingGame, WheelSegment } from "@/lib/firebase/types";
-import { buildCandidates, calcScores, type ScoredParticipant } from "@/lib/fishing-festival";
+import type {
+  Board,
+  BoardMember,
+  FishCatch,
+  FishingGame,
+  PowerAction,
+  PowerActionType,
+  PowerPoints,
+  WheelSegment,
+} from "@/lib/firebase/types";
+import { MAX_RESPINS, POWER_ACTION_COSTS } from "@/lib/firebase/types";
+import {
+  buildCandidates,
+  calcScores,
+  computeRightNeighbor,
+  resolveBaitTrap,
+  resolveActions,
+  type ScoredParticipant,
+} from "@/lib/fishing-festival";
 import { pickWinnerUid, wheelAngle } from "@/lib/wheel";
 
 type FishingFestivalProps = {
@@ -49,12 +72,41 @@ const ELIGIBILITY_TEXT: Record<Eligibility, { mark: string; label: string }> = {
 const AVATAR_COLORS = ["#e2685d", "#f29a4a", "#e0a21b", "#7cc36a", "#4aa3c7", "#b48ad8", "#d977a8", "#8a6a45"];
 const MAX_SCENE_AVATARS = 8;
 const ACTIVITY_SPIN_MS = 3000;
-/** A spin younger than this is animated; an older one is shown as it ended. */
 const FRESH_SPIN_MS = 10_000;
 const BITE_MIN_DELAY_MS = 4000;
 const BITE_DELAY_SPREAD_MS = 4000;
 const BITE_WINDOW_MS = 2500;
 const TICK_MS = 200;
+
+const POWER_ACTION_ORDER: readonly PowerActionType[] = [
+  "lucky-respin",
+  "right-neighbor",
+  "safe-catch",
+  "fishy-shuffle",
+  "golden-hook",
+  "bait-trap",
+];
+
+const ACTION_LABEL: Record<PowerActionType, string> = {
+  "lucky-respin": "ลุ้นหมุนใหม่",
+  "right-neighbor": "เพื่อนบ้านขวา",
+  "safe-catch": "แหกค่าย",
+  "fishy-shuffle": "สับการ์ด",
+  "golden-hook": "Golden Hook ★",
+  "bait-trap": "กับดักเบ็ด ★",
+};
+
+const ACTION_DESC: Record<PowerActionType, string> = {
+  "lucky-respin": "ให้สิทธิ์หมุนวงล้อ Next Host ใหม่ได้ 1 ครั้ง",
+  "right-neighbor": "บังคับผลวงล้อให้ตกที่เพื่อนบ้านขวาของ Host ปัจจุบัน",
+  "safe-catch": "ถอนตัวออกจากการสุ่ม Next Host รอบนี้",
+  "fishy-shuffle": "สับลำดับชื่อในวงล้อ Next Host",
+  "golden-hook": "เลือก Next Host คนนี้โดยตรง (ต้องระบุเป้าหมาย)",
+  "bait-trap": "ถ้าเป้าหมายชนะ จะถูกเบี่ยงไปคนถัดไปทางขวา (ต้องระบุเป้าหมาย)",
+};
+
+/** Actions where the player must pick a target member. */
+const SHOP_TARGETED: ReadonlySet<PowerActionType> = new Set<PowerActionType>(["golden-hook", "bait-trap"]);
 
 function formatClock(ms: number): string {
   const totalSeconds = Math.ceil(ms / 1000);
@@ -86,11 +138,15 @@ export function FishingFestival({ board, members, user, isAdmin, onAdvancePhase 
 function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }: FishingFestivalProps & { gameId: string | null }) {
   const [game, setGame] = useState<FishingGame | null | undefined>(gameId === null ? null : undefined);
   const [catches, setCatches] = useState<FishCatch[]>([]);
+  const [powerPoints, setPowerPoints] = useState<PowerPoints[]>([]);
+  const [powerActions, setPowerActions] = useState<PowerAction[]>([]);
   const [durationSec, setDurationSec] = useState<DurationSec>(45);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isBiteOpen, setIsBiteOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedAction, setSelectedAction] = useState<PowerActionType | null>(null);
+  const [selectedTargetUid, setSelectedTargetUid] = useState<string | null>(null);
 
   useEffect(() => {
     if (gameId === null) return;
@@ -102,10 +158,19 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
     return subscribeToFishCatches(board.id, gameId, setCatches, () => setLoadError("โหลดคะแนนการตกปลาไม่สำเร็จ"));
   }, [board.id, gameId]);
 
+  useEffect(() => {
+    if (gameId === null) return;
+    return subscribeToFishingPowerPoints(board.id, gameId, setPowerPoints, () => setLoadError("โหลดคะแนน Power Shop ไม่สำเร็จ"));
+  }, [board.id, gameId]);
+
+  useEffect(() => {
+    if (gameId === null) return;
+    return subscribeToFishingPowerActions(board.id, gameId, setPowerActions, () => setLoadError("โหลดการกระทำ Power Shop ไม่สำเร็จ"));
+  }, [board.id, gameId]);
+
   const phase: Phase = game?.status ?? "idle";
   const nowMs = useNow(TICK_MS, phase === "fishing");
   const fishingEndsAt = game?.fishingEndsAt ?? null;
-  // The first tick comes TICK_MS after the status change, so the stale clock is capped at the full duration.
   const timeLeft =
     game && phase === "fishing" && fishingEndsAt
       ? Math.min(game.fishingDurationSec * 1000, Math.max(0, fishingEndsAt.getTime() - nowMs))
@@ -150,7 +215,6 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
   const canCatch = isBiteOpen && isFishingLive;
   const ignoredUids = game?.ignoredUids ?? [];
   const winnerUid = game?.winnerUid ?? null;
-  // After the handover the winner is the Host, so the round keeps showing the exclusions that applied when it was played.
   const hasHandedOver = phase === "finished" && winnerUid !== null && board.hostUid === winnerUid;
   const hostOfRound = hasHandedOver ? board.pastHostUids[board.pastHostUids.length - 1] : currentHostUid(board);
   const excludedUids = hasHandedOver ? [...new Set(board.pastHostUids)].sort() : excludedHostUids(board);
@@ -159,24 +223,40 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
     if (excludedUids.includes(uid)) return "past-host";
     return ignoredUids.includes(uid) ? "ignored" : "included";
   };
-  const nameOf = (uid: string) => members.find((member) => member.uid === uid)?.displayName ?? "ไม่ทราบชื่อ";
+  const nameOf = (uid: string) => members.find((m) => m.uid === uid)?.displayName ?? "ไม่ทราบชื่อ";
   const photoOf = (uid: string) => (uid === user.uid ? user.photoURL : null);
 
-  // calcScores only scores the rows it is given, so every member gets a row and a member without a catch scores 0.
-  // It returns the rows sorted by score, highest first, then by uid.
   const scored = calcScores(
     members.map((member) => {
-      const fishCatch = catches.find((entry) => entry.uid === member.uid);
+      const fishCatch = catches.find((c) => c.uid === member.uid);
       return { uid: member.uid, catchCount: fishCatch?.catchCount ?? 0, lastCatchAt: fishCatch?.lastCatchAt ?? null };
     }),
     game?.wheelSegment ?? null,
   );
+
   const candidates = buildCandidates(
-    members.map((member) => member.uid),
+    members.map((m) => m.uid),
     ignoredUids,
     excludedUids,
   ).map((uid) => ({ uid, name: nameOf(uid) }));
-  const canEditIgnored = isAdmin && game !== null && (phase === "selecting-wheel" || phase === "fishing" || phase === "scoring");
+
+  const canEditIgnored = isAdmin && game !== null && (phase === "selecting-wheel" || phase === "fishing");
+
+  // Power Shop derived values
+  const myPowerPoints = powerPoints.find((pp) => pp.uid === user.uid);
+  const myAction = powerActions.find((a) => a.uid === user.uid);
+  const eligibleTargets = members.filter((m) => eligibilityOf(m.uid) === "included" && m.uid !== user.uid);
+
+  // Wheel phase candidates from resolved state
+  const resolvedState = game?.resolvedState ?? null;
+  const wheelCandidates = resolvedState
+    ? resolvedState.finalCandidateUids.map((uid) => ({ uid, name: nameOf(uid) }))
+    : candidates;
+
+  // Re-spin availability
+  const reSpinGrantCount = resolvedState?.reSpinGrantCount ?? 0;
+  const reSpinCount = game?.reSpinCount ?? 0;
+  const reSpinsRemaining = Math.max(0, Math.min(reSpinGrantCount, MAX_RESPINS) - reSpinCount);
 
   function handleStart() {
     void run(() => startFishingGame(board.id, durationSec));
@@ -194,15 +274,69 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
     void run(() => recordCatch(board.id, game.id, user.uid));
   }
 
-  function handleSpinHost() {
+  async function handleEndFishingAndLockScores() {
     if (!game) return;
-    const pickedUid = pickWinnerUid(candidates);
-    if (pickedUid) void run(() => finishFishingGame(board.id, game.id, pickedUid));
+    await endFishing(board.id, game.id);
+    const pts = scored.map((p) => ({ uid: p.uid, balance: p.score, earned: p.score }));
+    await lockPowerPoints(board.id, game.id, pts);
+  }
+
+  async function handleSubmitPowerAction() {
+    if (!game || !selectedAction) return;
+    const needsTarget = SHOP_TARGETED.has(selectedAction);
+    if (needsTarget && !selectedTargetUid) return;
+    await submitPowerAction(board.id, game.id, user.uid, selectedAction, needsTarget ? selectedTargetUid : null);
+    setSelectedAction(null);
+    setSelectedTargetUid(null);
+  }
+
+  async function handleResolveAndOpenWheel() {
+    if (!game) return;
+    const hostUid = currentHostUid(board) ?? "";
+    const result = resolveActions({
+      actions: powerActions,
+      allMemberUids: members.map((m) => m.uid),
+      currentHostUid: hostUid,
+      ignoredUids: game.ignoredUids,
+      hostExcludedUids: excludedHostUids(board),
+    });
+    await resolveAndTransitionToWheel(board.id, game.id, result);
+  }
+
+  async function handleReSpin() {
+    if (!game) return;
+    await reSpinFishingHostWheel(board.id, game.id);
+  }
+
+  function handleSpinHost() {
+    if (!game || !resolvedState) return;
+
+    if (resolvedState.goldenHookWinner !== null) {
+      void run(() => spinFishingHostWheel(board.id, game.id, resolvedState.goldenHookWinner!, "golden-hook"));
+      return;
+    }
+
+    const eligibleSet = new Set(resolvedState.finalCandidateUids);
+    const hasRightNeighbor = powerActions.some((a) => a.type === "right-neighbor");
+    if (hasRightNeighbor) {
+      const hostUid = currentHostUid(board) ?? "";
+      const neighbor = computeRightNeighbor(members.map((m) => m.uid), hostUid, eligibleSet);
+      if (neighbor !== null) {
+        const finalWinner = resolveBaitTrap(neighbor, resolvedState.baitTrapMap, eligibleSet);
+        void run(() => spinFishingHostWheel(board.id, game.id, finalWinner, "wheel"));
+        return;
+      }
+    }
+
+    const rawWinner = pickWinnerUid(wheelCandidates);
+    if (!rawWinner) return;
+    const finalWinner = resolveBaitTrap(rawWinner, resolvedState.baitTrapMap, eligibleSet);
+    void run(() => spinFishingHostWheel(board.id, game.id, finalWinner, "wheel"));
   }
 
   function handleToggleIgnored(uid: string) {
     if (!game) return;
-    const next = ignoredUids.includes(uid) ? ignoredUids.filter((ignoredUid) => ignoredUid !== uid) : [...ignoredUids, uid].sort();
+    const next = ignoredUids.includes(uid) ? ignoredUids.filter((u) => u !== uid) : [...ignoredUids, uid].sort();
     void run(() => setIgnoredUids(board.id, game.id, next));
   }
 
@@ -248,9 +382,24 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
           </button>
         ) : null}
         {isAdmin && game && phase === "fishing" && timeLeft === 0 ? (
-          <button type="button" className="pixel-button pixel-button-gold" disabled={isBusy} onClick={() => void run(() => endFishing(board.id, game.id))}>
+          <button type="button" className="pixel-button pixel-button-gold" disabled={isBusy} onClick={() => void run(handleEndFishingAndLockScores)}>
             จบการตกปลา
           </button>
+        ) : null}
+        {/* Wheel phase admin controls */}
+        {isAdmin && phase === "wheel" && resolvedState ? (
+          <>
+            {resolvedState.goldenHookWinner !== null ? (
+              <button type="button" className="pixel-button pixel-button-gold" disabled={isBusy} onClick={handleSpinHost}>
+                ยืนยัน Golden Hook: {nameOf(resolvedState.goldenHookWinner)} 🎣
+              </button>
+            ) : null}
+            {reSpinsRemaining > 0 ? (
+              <button type="button" className="pixel-button" disabled={isBusy} onClick={() => void run(handleReSpin)}>
+                หมุนใหม่! ({reSpinsRemaining} สิทธิ์)
+              </button>
+            ) : null}
+          </>
         ) : null}
         {canStart ? (
           <>
@@ -274,6 +423,97 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
         ) : null}
         {!isAdmin && phase === "idle" ? <p className="ff-status">รอผู้ดำเนินรายการเริ่มเกม</p> : null}
       </div>
+
+      {/* Power Shop — visible during scoring phase */}
+      {phase === "scoring" && game !== null ? (
+        <div className="ff-panel ff-wood ff-shop">
+          <h3 className="ff-heading">🛒 Power Shop</h3>
+          <p className="ff-shop-balance">
+            <span>แต้มของคุณ</span>
+            <strong className="ff-shop-pts">{myPowerPoints?.balance ?? 0}</strong>
+            <span>pts</span>
+          </p>
+
+          {myAction ? (
+            <div className="ff-action-submitted" role="status">
+              <span aria-hidden="true">✅</span> ส่งแล้ว: <strong>{ACTION_LABEL[myAction.type]}</strong>
+              {myAction.targetUid ? ` → ${nameOf(myAction.targetUid)}` : ""}
+            </div>
+          ) : (
+            <>
+              <div className="ff-action-grid" role="group" aria-label="เลือก Power Action">
+                {POWER_ACTION_ORDER.map((type) => {
+                  const cost = POWER_ACTION_COSTS[type];
+                  const canAfford = (myPowerPoints?.balance ?? 0) >= cost;
+                  const isSelected = selectedAction === type;
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      className={`ff-action-card${isSelected ? " ff-action-card-on" : ""}${!canAfford ? " ff-action-card-poor" : ""}`}
+                      disabled={!canAfford || isBusy}
+                      onClick={() => {
+                        setSelectedAction(isSelected ? null : type);
+                        setSelectedTargetUid(null);
+                      }}
+                    >
+                      <span className="ff-action-name">{ACTION_LABEL[type]}</span>
+                      <span className="ff-action-cost">{cost} pts</span>
+                      <span className="ff-action-desc">{ACTION_DESC[type]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedAction ? (
+                <div className="ff-action-confirm">
+                  {SHOP_TARGETED.has(selectedAction) ? (
+                    <select
+                      className="ff-target-select"
+                      value={selectedTargetUid ?? ""}
+                      onChange={(e) => setSelectedTargetUid(e.target.value || null)}
+                    >
+                      <option value="">เลือกเป้าหมาย…</option>
+                      {eligibleTargets.map((m) => (
+                        <option key={m.uid} value={m.uid}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="pixel-button pixel-button-gold"
+                    disabled={isBusy || (SHOP_TARGETED.has(selectedAction) && !selectedTargetUid)}
+                    onClick={() => void run(handleSubmitPowerAction)}
+                  >
+                    ยืนยัน {ACTION_LABEL[selectedAction]}
+                  </button>
+                  <button type="button" className="pixel-button" onClick={() => { setSelectedAction(null); setSelectedTargetUid(null); }}>
+                    ยกเลิก
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
+
+          {isAdmin ? (
+            <div className="ff-shop-admin">
+              <p className="ff-shop-count">
+                <span aria-hidden="true">📋</span> ส่งแล้ว {powerActions.length} / {members.length} คน
+              </p>
+              <button
+                type="button"
+                className="pixel-button pixel-button-gold"
+                disabled={isBusy}
+                onClick={() => void run(handleResolveAndOpenWheel)}
+              >
+                ปิดร้านและตัดสิน
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="ff-row ff-row-top">
         <div className="ff-panel ff-scene-panel">
@@ -333,20 +573,34 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
 
         <div className="ff-panel ff-wood">
           <h3 className="ff-heading">วงล้อ Next Host</h3>
-          {game && (phase === "scoring" || phase === "finished") ? (
-            <HostWheel
-              key={`${game.id}:${game.resolvedAt?.getTime() ?? "none"}`}
-              candidates={candidates}
-              winnerUid={phase === "finished" ? winnerUid : null}
-              spunAt={phase === "finished" ? game.resolvedAt : null}
-              canSpin={isAdmin && phase === "scoring" && !isBusy}
-              hint={phase === "scoring" ? "รอผู้ดำเนินรายการหมุนวงล้อ" : null}
-              onSpin={handleSpinHost}
-            />
+          {game && (phase === "wheel" || phase === "finished") ? (
+            <>
+              {phase === "wheel" && resolvedState?.goldenHookWinner ? (
+                <p className="ff-status" role="status">
+                  <span aria-hidden="true">🎣</span> Golden Hook — {nameOf(resolvedState.goldenHookWinner)} ชนะโดยตรง!
+                </p>
+              ) : null}
+              <HostWheel
+                key={`${game.id}:${phase === "wheel" ? reSpinCount : (game.resolvedAt?.getTime() ?? "none")}`}
+                candidates={phase === "wheel" ? wheelCandidates : candidates}
+                winnerUid={phase === "finished" ? winnerUid : null}
+                spunAt={phase === "finished" ? game.resolvedAt : null}
+                canSpin={isAdmin && phase === "wheel" && !isBusy && resolvedState?.goldenHookWinner === null}
+                hint={phase === "wheel" && !isAdmin ? "รอผู้ดำเนินรายการหมุนวงล้อ" : null}
+                onSpin={handleSpinHost}
+              />
+            </>
           ) : (
-            <p className="ff-note">วงล้อจะเปิดเมื่อจบการตกปลา</p>
+            <p className="ff-note">
+              {phase === "scoring" ? "วงล้อจะเปิดหลังปิดร้าน" : "วงล้อจะเปิดเมื่อจบการตกปลา"}
+            </p>
           )}
           {phase === "scoring" && candidates.length === 0 ? (
+            <p className="farm-warning" role="alert">
+              ไม่มีผู้มีสิทธิ์เป็น Next Host เหลือแล้ว
+            </p>
+          ) : null}
+          {phase === "wheel" && resolvedState && resolvedState.finalCandidateUids.length === 0 && resolvedState.goldenHookWinner === null ? (
             <p className="farm-warning" role="alert">
               ไม่มีผู้มีสิทธิ์เป็น Next Host เหลือแล้ว
             </p>
@@ -377,6 +631,7 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
             <li>ผู้ดำเนินรายการหมุนวงล้อกิจกรรมเพื่อกำหนดโบนัสของรอบ</li>
             <li>เมื่อทุ่นจม ให้กดปุ่มดึงเบ็ดให้ทันก่อนปลาหนี</li>
             <li>ตกปลาให้ได้มากที่สุดก่อนหมดเวลา คะแนนขึ้นกับจำนวนปลาและโบนัส</li>
+            <li>คะแนนปลาแปลงเป็น Power Points สำหรับซื้อ Ability ใน Power Shop</li>
             <li>จบรอบแล้วหมุนวงล้อ Next Host จากผู้ที่มีสิทธิ์ Host ปัจจุบันและคนที่เคยเป็น Host ไม่ถูกสุ่ม</li>
           </ul>
           <PixelChicken />
@@ -392,7 +647,6 @@ function Avatar({ photoUrl, name, uid }: AvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (photoUrl && photoUrl !== failedUrl) {
     return (
-      // A Google profile photo is an external URL; next/image would need a remote-host config for no gain at this size.
       // eslint-disable-next-line @next/next/no-img-element
       <img src={photoUrl} alt="" referrerPolicy="no-referrer" className="ff-avatar" onError={() => setFailedUrl(photoUrl)} />
     );
@@ -408,7 +662,6 @@ const WHEEL_CENTER = 100;
 const WHEEL_RADIUS = 96;
 const SECTOR_DEG = 360 / SEGMENTS.length;
 
-/** A point on the wheel, `deg` clockwise from the top, rounded so the markup is stable. */
 function wheelPoint(deg: number, radius: number): string {
   const rad = (deg * Math.PI) / 180;
   return `${(WHEEL_CENTER + radius * Math.sin(rad)).toFixed(2)} ${(WHEEL_CENTER - radius * Math.cos(rad)).toFixed(2)}`;
@@ -416,7 +669,6 @@ function wheelPoint(deg: number, radius: number): string {
 
 type ActivityWheelProps = { segment: WheelSegment | null; spunAt: Date | null };
 
-/** Remounted by key for every spin, so the first render decides once whether the spin is animated. */
 function ActivityWheel({ segment, spunAt }: ActivityWheelProps) {
   const index = SEGMENTS.findIndex((entry) => entry.id === segment);
   const target = index < 0 ? 0 : wheelAngle(index, SEGMENTS.length);
@@ -519,7 +771,6 @@ function Scoreboard({ scored, ignoredUids, nameOf, photoOf }: ScoreboardProps) {
   );
 }
 
-/** Each row is one pixel line of the mascot: [x, y, width, fill]. */
 const CHICKEN_PIXELS: readonly (readonly [number, number, number, string])[] = [
   [5, 0, 2, "#d9433b"],
   [4, 1, 4, "#d9433b"],
@@ -551,7 +802,6 @@ function PixelChicken() {
   );
 }
 
-/** React hoists and dedupes a style tag that has href and precedence, so every render shares one sheet. */
 function FestivalStyles() {
   return (
     <style href="fishing-festival" precedence="medium">
@@ -630,6 +880,24 @@ const STYLES = `
 .ff-rules .ff-heading { justify-self: center; }
 .ff-rule-list { display: grid; gap: 0.4rem; margin: 0; padding-left: 1.2rem; list-style: square; font-size: 0.95rem; }
 .ff-chicken { justify-self: end; align-self: end; image-rendering: pixelated; animation: ff-peck 1.2s steps(2, end) infinite; }
+
+/* Power Shop */
+.ff-shop { width: 100%; justify-items: stretch; background: repeating-linear-gradient(#e9c88f 0 22px, #dfb878 22px 24px); }
+.ff-shop-balance { display: flex; align-items: baseline; gap: 0.5rem; margin: 0; justify-self: center; font-size: 1rem; font-weight: 700; }
+.ff-shop-pts { font-size: 1.5rem; font-weight: 800; color: #b8860b; }
+.ff-action-submitted { padding: 0.5rem 0.9rem; font-weight: 700; text-align: center; background: #d4edda; border: 3px solid #493521; }
+.ff-action-grid { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); width: 100%; }
+.ff-action-card { display: grid; gap: 0.2rem; padding: 0.5rem 0.6rem; text-align: left; color: #493521; background: #fff3df; border: 3px solid #493521; box-shadow: 0 3px 0 #493521; cursor: pointer; }
+.ff-action-card:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.ff-action-card-on { background: #f5bd4f; box-shadow: inset 0 0 0 2px #ffe08a, 0 3px 0 #493521; }
+.ff-action-card-poor { opacity: 0.45; }
+.ff-action-name { font-size: 0.9rem; font-weight: 800; }
+.ff-action-cost { font-size: 0.8rem; font-weight: 700; color: #b8860b; }
+.ff-action-desc { font-size: 0.75rem; line-height: 1.4; white-space: normal; }
+.ff-action-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; justify-self: center; }
+.ff-target-select { padding: 0.3rem 0.5rem; font-size: 0.9rem; font-weight: 700; color: #493521; background: #fff3df; border: 3px solid #493521; }
+.ff-shop-admin { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.6rem; padding-top: 0.4rem; border-top: 3px dashed #493521; width: 100%; }
+.ff-shop-count { margin: 0; font-weight: 700; }
 
 @keyframes ff-ripple { from { background-position: 0 0, 0 0.75rem; } to { background-position: 4rem 0, -5rem 0.75rem; } }
 @keyframes ff-drift { from { transform: translateX(0); } to { transform: translateX(3rem); } }
