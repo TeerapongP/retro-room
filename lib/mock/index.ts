@@ -6,7 +6,7 @@ type GlobalWithMock = typeof globalThis & { __retroRoomMockBackend?: MockBackend
 
 /** True only for local development with NEXT_PUBLIC_MOCK_MODE=true. Production builds never report mock mode (F19, D90). */
 export function isMockMode(): boolean {
-  return process.env.NEXT_PUBLIC_MOCK_MODE === "true" && process.env.NODE_ENV !== "production";
+  return process.env.NEXT_PUBLIC_MOCK_MODE?.trim() === "true" && process.env.NODE_ENV !== "production";
 }
 
 function browserStorage(): Storage | undefined {

@@ -266,7 +266,7 @@ export function tcMultiplier(endsAtMs: number, nowMs: number): number {
 /** Calculate all achievements from final player states and attacks. */
 export function calcAchievements(
   states: TreasurePlayerState[],
-  attacks: AttackDocument[],
+  _attacks: AttackDocument[],
 ): AchievementResult[] {
   if (states.length === 0) return [];
 

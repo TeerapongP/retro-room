@@ -1,34 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { HostWheel } from "@/components/HostWheel";
 import { currentHostUid, excludedHostUids } from "@/lib/crowded-farm";
 import {
   bankTreasure,
+  buyBattleItem,
   endTreasureRush,
   handOverHost,
   lockPowerPoints,
-  lockTreasureScores,
+  lockSettlement,
   openChest,
-  resolveAndTransitionTreasureToWheel,
+  resolveAttack,
   reSpinTreasureHostWheel,
+  sendReaction,
   setIgnoredUids,
   spinTreasureHostWheel,
   spinTreasureWheel,
   startTreasureRush,
   submitTreasurePowerAction,
+  subscribeToAttacks,
+  subscribeToBattleFeed,
+  subscribeToInventory,
   subscribeToMyChestBoard,
+  subscribeToReactions,
   subscribeToTreasureGame,
   subscribeToTreasurePowerActions,
   subscribeToFishingPowerPoints,
   subscribeToTreasurePlayerStates,
+  useDefensiveItemAgainstAttack as fireDefensiveItem,
+  useOffensiveItem as fireOffensiveItem,
   writeChestBoards,
 } from "@/lib/firebase/farm";
 import type {
+  AchievementResult,
+  AttackDocument,
+  BattleFeedEvent,
+  BattleItemType,
   Board,
   BoardMember,
+  InventoryState,
   PowerPoints,
+  Reaction,
+  ReactionType,
   TreasureChest,
   TreasureGame,
   TreasureModifier,
@@ -37,14 +52,20 @@ import type {
   TreasurePowerActionType,
 } from "@/lib/firebase/types";
 import {
+  ATTACK_WARNING_MS,
+  BATTLE_ITEM_CATEGORIES,
+  BATTLE_ITEM_COSTS,
+  FINAL_RUSH_ATTACK_SHUTDOWN_MS,
   TREASURE_MAX_RESPINS,
   TREASURE_POWER_ACTION_COSTS,
 } from "@/lib/firebase/types";
 import {
   buildTreasureCandidates,
+  calcAchievements,
   calcTreasureScores,
   earnedPP,
   generateChestBoard,
+  isFinalRush,
   resolveTreasureActions,
   type ScoredTreasureParticipant,
 } from "@/lib/treasure-rush";
@@ -111,6 +132,75 @@ const CHEST_EMOJI: Record<string, string> = {
   mystery: "🎁",
 };
 
+const BATTLE_ITEM_EMOJI: Record<BattleItemType, string> = {
+  "magic-shield": "🛡️",
+  "treasure-lock": "🔒",
+  "recovery-potion": "💊",
+  "mirror-shield": "🪞",
+  "bomb-gift": "💣",
+  "sneaky-thief": "🦝",
+  "ice-trap": "🧊",
+  "chaos-swap": "🔀",
+  "lucky-key": "🗝️",
+  "treasure-radar": "📡",
+  "golden-pick": "⛏️",
+};
+
+const BATTLE_ITEM_LABEL: Record<BattleItemType, string> = {
+  "magic-shield": "Magic Shield",
+  "treasure-lock": "Treasure Lock",
+  "recovery-potion": "Recovery Potion",
+  "mirror-shield": "Mirror Shield",
+  "bomb-gift": "Bomb Gift",
+  "sneaky-thief": "Sneaky Thief",
+  "ice-trap": "Ice Trap",
+  "chaos-swap": "Chaos Swap",
+  "lucky-key": "Lucky Key",
+  "treasure-radar": "Treasure Radar",
+  "golden-pick": "Golden Pick",
+};
+
+const BATTLE_ITEM_DESC: Record<BattleItemType, string> = {
+  "magic-shield": "ป้องกันการโจมตีครั้งถัดไป 1 ครั้ง",
+  "treasure-lock": "ล็อกกล่องสมบัติ ป้องกัน Bomb Gift",
+  "recovery-potion": "คืน +50 TC ทันที (ไม่ใช้ช่องฉาก)",
+  "mirror-shield": "สะท้อนการโจมตีกลับผู้โจมตี",
+  "bomb-gift": "ระเบิด -60 TC จากเป้าหมาย",
+  "sneaky-thief": "ขโมย 50 TC จากเป้าหมาย",
+  "ice-trap": "แช่แข็งเป้าหมาย 5 วินาที",
+  "chaos-swap": "สลับ TC กับเป้าหมาย",
+  "lucky-key": "โอกาส 2× TC บนกล่องถัดไป",
+  "treasure-radar": "เปิดเผย 3 กล่องข้างหน้า",
+  "golden-pick": "+50 TC บนกล่องถัดไป (ไม่ใช้ช่องฉาก)",
+};
+
+const REACTION_EMOJI: Record<ReactionType, string> = {
+  laugh: "😂",
+  shock: "😱",
+  fire: "🔥",
+  clap: "👏",
+  skull: "💀",
+  heart: "❤️",
+};
+
+const REACTION_TYPES: ReactionType[] = ["laugh", "shock", "fire", "clap", "skull", "heart"];
+
+const ACHIEVEMENT_LABEL: Record<AchievementResult["type"], string> = {
+  "treasure-hunter": "🗺️ Treasure Hunter",
+  "master-defender": "🛡️ Master Defender",
+  "chaos-maker": "💣 Chaos Maker",
+  "crown-collector": "👑 Crown Collector",
+  "smart-banker": "🏦 Smart Banker",
+};
+
+const ACHIEVEMENT_DESC: Record<AchievementResult["type"], string> = {
+  "treasure-hunter": "เปิดกล่องสมบัติมากที่สุด",
+  "master-defender": "บล็อกโจมตีได้มากที่สุด",
+  "chaos-maker": "ส่งโจมตีมากที่สุด",
+  "crown-collector": "เก็บ Crown ได้มากที่สุด",
+  "smart-banker": "ประสิทธิภาพการเก็บแต้มสูงสุด",
+};
+
 const AVATAR_COLORS = ["#e2685d", "#f29a4a", "#e0a21b", "#7cc36a", "#4aa3c7", "#b48ad8", "#d977a8", "#8a6a45"];
 const TICK_MS = 500;
 
@@ -169,6 +259,14 @@ function TreasureRound({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedAction, setSelectedAction] = useState<TreasurePowerActionType | null>(null);
   const [openedReveal, setOpenedReveal] = useState<{ index: number; emoji: string; pts: number } | null>(null);
+  const [inventory, setInventory] = useState<InventoryState | null>(null);
+  const [attacks, setAttacks] = useState<AttackDocument[]>([]);
+  const [battleFeed, setBattleFeed] = useState<BattleFeedEvent[]>([]);
+  const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [shopOpen, setShopOpen] = useState(false);
+  const [targetSelectItem, setTargetSelectItem] = useState<BattleItemType | null>(null);
+  const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string; x: number }[]>([]);
+  const floatIdRef = useRef(0);
 
   useEffect(() => {
     if (!gameId) return;
@@ -202,6 +300,45 @@ function TreasureRound({
       setLoadError("โหลด Power Actions ไม่สำเร็จ"),
     );
   }, [board.id, gameId]);
+
+  useEffect(() => {
+    if (!gameId) return;
+    return subscribeToInventory(board.id, gameId, user.uid, setInventory, () => {});
+  }, [board.id, gameId, user.uid]);
+
+  useEffect(() => {
+    if (!gameId) return;
+    return subscribeToAttacks(board.id, gameId, setAttacks, () => {});
+  }, [board.id, gameId]);
+
+  useEffect(() => {
+    if (!gameId) return;
+    return subscribeToBattleFeed(board.id, gameId, setBattleFeed, () => {});
+  }, [board.id, gameId]);
+
+  useEffect(() => {
+    if (!gameId) return;
+    return subscribeToReactions(board.id, gameId, setReactions, () => {});
+  }, [board.id, gameId]);
+
+  const prevReactionCountRef = useRef(0);
+  useEffect(() => {
+    const newCount = reactions.length;
+    if (newCount <= prevReactionCountRef.current) {
+      prevReactionCountRef.current = newCount;
+      return;
+    }
+    const newest = reactions.slice(prevReactionCountRef.current);
+    prevReactionCountRef.current = newCount;
+    for (const r of newest) {
+      if (r.uid === user.uid) continue;
+      const emoji = REACTION_EMOJI[r.type];
+      const id = floatIdRef.current++;
+      const x = 20 + Math.random() * 60;
+      setFloatingReactions((prev) => [...prev.slice(-8), { id, emoji, x }]);
+      setTimeout(() => setFloatingReactions((prev) => prev.filter((f) => f.id !== id)), 2000);
+    }
+  }, [reactions, user.uid]);
 
   const phase = game?.status ?? "idle";
   const nowMs = useNow(TICK_MS, phase === "playing");
@@ -341,11 +478,6 @@ function TreasureRound({
   async function handleLockScores() {
     if (!game) return;
     await run(async () => {
-      await lockTreasureScores(
-        board.id,
-        game.id,
-        scored.map((p) => ({ uid: p.uid, score: p.score })),
-      );
       const ppMap = scored.map((p) => {
         const state = playerStates.find((s) => s.uid === p.uid);
         const earned = earnedPP(state?.bankedPoints ?? 0);
@@ -357,17 +489,51 @@ function TreasureRound({
         };
       });
       await lockPowerPoints(board.id, game.id, ppMap);
+      const achievements = calcAchievements(playerStates, attacks);
       const resolved = resolveTreasureActions({
         actions: powerActions,
         allMemberUids: members.map((m) => m.uid),
         ignoredUids,
         hostExcludedUids: excludedUids,
       });
-      await resolveAndTransitionTreasureToWheel(board.id, game.id, {
+      await lockSettlement(board.id, game.id, achievements, scored.map((p) => ({ uid: p.uid, score: p.score })), {
         finalCandidateUids: resolved.finalCandidateUids,
         reSpinGrantCount: resolved.reSpinGrantCount,
       });
     });
+  }
+
+  async function handleBuyItem(itemType: BattleItemType) {
+    if (!game) return;
+    await run(() => buyBattleItem(board.id, game.id, user.uid, itemType));
+  }
+
+  async function handleUseOffensiveItem(targetUid: string) {
+    if (!game || !targetSelectItem) return;
+    const item = targetSelectItem;
+    setTargetSelectItem(null);
+    setShopOpen(false);
+    await run(async () => {
+      const attackId = await fireOffensiveItem(board.id, game.id, user.uid, targetUid, item);
+      setTimeout(() => {
+        resolveAttack(board.id, game.id, attackId).catch(() => {});
+      }, ATTACK_WARNING_MS + 200);
+    });
+  }
+
+  async function handleDefend(attackId: string, defenseItem: BattleItemType) {
+    if (!game) return;
+    await run(() => fireDefensiveItem(board.id, game.id, user.uid, attackId, defenseItem));
+  }
+
+  async function handleReaction(type: ReactionType) {
+    if (!game) return;
+    const emoji = REACTION_EMOJI[type];
+    const id = floatIdRef.current++;
+    const x = 20 + Math.random() * 60;
+    setFloatingReactions((prev) => [...prev.slice(-8), { id, emoji, x }]);
+    setTimeout(() => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)), 2000);
+    await sendReaction(board.id, game.id, user.uid, type).catch(() => {});
   }
 
   async function handleSubmitPowerAction() {
@@ -405,7 +571,7 @@ function TreasureRound({
     await run(() => setIgnoredUids(board.id, game.id, next));
   }
 
-  const canEditIgnored = isAdmin && game !== null && phase === "idle";
+  const canEditIgnored = isAdmin && game !== null && (phase === "idle" || phase === "preparation");
   const modifierInfo = MODIFIERS.find((m) => m.id === game?.activityModifier);
 
   return (
@@ -435,8 +601,8 @@ function TreasureRound({
         </p>
       )}
 
-      {/* ── IDLE ──────────────────────────────────────── */}
-      {phase === "idle" && (
+      {/* ── IDLE / PREPARATION ────────────────────────── */}
+      {(phase === "idle" || phase === "preparation" || game === null) && (
         <div className="tr-panel">
           <p className="farm-hint">ผู้ดูแลระบบจะเริ่มรอบเกมและหมุนวงล้อ Activity</p>
 
@@ -461,7 +627,7 @@ function TreasureRound({
             </div>
           )}
 
-          {isAdmin && game !== null && phase === "idle" && (
+          {isAdmin && game !== null && (phase === "idle" || phase === "preparation") && (
             <div className="tr-admin-setup">
               <p className="farm-hint">กล่องสมบัติพร้อมแล้ว — กด Spin เพื่อเลือก Activity และเริ่มรอบ</p>
               <div className="tr-eligibility-list">
@@ -582,6 +748,81 @@ function TreasureRound({
             </div>
           )}
 
+          {/* Final Rush banner */}
+          {endsAt && isFinalRush(endsAt.getTime(), nowMs) && (
+            <FinalRushBanner
+              endsAtMs={endsAt.getTime()}
+              nowMs={nowMs}
+              shutdownMs={FINAL_RUSH_ATTACK_SHUTDOWN_MS}
+            />
+          )}
+
+          {/* Attack warnings for this player */}
+          {attacks
+            .filter((a) => a.targetUid === user.uid && a.status === "warning")
+            .map((a) => (
+              <AttackWarningCard
+                key={a.id}
+                attack={a}
+                nowMs={nowMs}
+                inventory={inventory}
+                nameOf={nameOf}
+                isBusy={isBusy}
+                onDefend={handleDefend}
+              />
+            ))}
+
+          {/* Target selector overlay */}
+          {targetSelectItem && (
+            <TargetSelector
+              item={targetSelectItem}
+              members={members}
+              myUid={user.uid}
+              nameOf={nameOf}
+              isBusy={isBusy}
+              onSelect={handleUseOffensiveItem}
+              onCancel={() => setTargetSelectItem(null)}
+            />
+          )}
+
+          {/* Inventory bar */}
+          <InventoryBar
+            inventory={inventory}
+            isBusy={isBusy}
+            frozenUntilMs={myState?.frozenUntilMs ?? null}
+            nowMs={nowMs}
+            onActivateOffensive={(itemType) => setTargetSelectItem(itemType)}
+          />
+
+          {/* Battle shop toggle */}
+          <div className="tr-action-row">
+            <button
+              className={`tr-btn ${shopOpen ? "tr-btn-active" : "tr-btn-primary"}`}
+              onClick={() => setShopOpen(!shopOpen)}
+              disabled={isBusy}
+            >
+              🛒 Battle Shop
+            </button>
+          </div>
+
+          {shopOpen && (
+            <BattleShop
+              currentRunPoints={myState?.currentRunPoints ?? 0}
+              frozenUntilMs={myState?.frozenUntilMs ?? null}
+              nowMs={nowMs}
+              inventorySlots={inventory?.slots.length ?? 0}
+              isBusy={isBusy}
+              onBuy={handleBuyItem}
+              onSelectOffensive={(itemType) => { setTargetSelectItem(itemType); setShopOpen(false); }}
+            />
+          )}
+
+          {/* Battle feed */}
+          <BattleFeedPanel events={battleFeed} nameOf={nameOf} />
+
+          {/* Reactions bar */}
+          <ReactionsBar floatingReactions={floatingReactions} onReact={handleReaction} />
+
           {/* Admin end-game */}
           {isAdmin && (
             <div className="tr-admin-row">
@@ -599,7 +840,7 @@ function TreasureRound({
       {/* ── SETTLEMENT ───────────────────────────────────── */}
       {phase === "settlement" && (
         <div className="tr-panel">
-          <h3 className="tr-section-title">📊 ผลคะแนน &amp; Power Shop</h3>
+          <h3 className="tr-section-title">📊 ผลคะแนนรอบนี้</h3>
           <Leaderboard scored={scored} myUid={user.uid} phase={phase} nameOf={nameOf} />
 
           {/* Power Shop for players */}
@@ -657,6 +898,9 @@ function TreasureRound({
       {(phase === "host_selection" || phase === "finished") && (
         <div className="tr-panel">
           <h3 className="tr-section-title">🎡 เลือก Host คนถัดไป</h3>
+          {game?.achievements && game.achievements.length > 0 && (
+            <AchievementsPanel achievements={game.achievements} nameOf={nameOf} />
+          )}
           <Leaderboard scored={scored} myUid={user.uid} phase={phase} nameOf={nameOf} />
           {wheelCandidates.length > 0 ? (
             <HostWheel
@@ -703,6 +947,292 @@ function TreasureRound({
         </div>
       )}
     </section>
+  );
+}
+
+function FinalRushBanner({ endsAtMs, nowMs, shutdownMs }: { endsAtMs: number; nowMs: number; shutdownMs: number }) {
+  const timeLeft = endsAtMs - nowMs;
+  const isShutdown = timeLeft <= shutdownMs;
+  return (
+    <div className={`tr-final-rush ${isShutdown ? "tr-final-rush-shutdown" : ""}`} role="alert">
+      <span className="tr-final-rush-icon">⚡</span>
+      <span className="tr-final-rush-label">FINAL RUSH — 2× TC</span>
+      {isShutdown && <span className="tr-final-rush-lock">🔒 ล็อกโจมตี</span>}
+    </div>
+  );
+}
+
+function AttackWarningCard({
+  attack,
+  nowMs,
+  inventory,
+  nameOf,
+  isBusy,
+  onDefend,
+}: {
+  attack: AttackDocument;
+  nowMs: number;
+  inventory: InventoryState | null;
+  nameOf: (uid: string) => string;
+  isBusy: boolean;
+  onDefend: (attackId: string, item: BattleItemType) => void;
+}) {
+  const warningLeft = attack.createdAt ? Math.max(0, attack.createdAt.getTime() + ATTACK_WARNING_MS - nowMs) : 0;
+  const defenseItems = (inventory?.slots ?? []).filter((s) =>
+    s.itemType === "magic-shield" || s.itemType === "treasure-lock" || s.itemType === "mirror-shield"
+  );
+  return (
+    <div className="tr-attack-warning" role="alert">
+      <div className="tr-attack-warning-header">
+        <span className="tr-attack-warning-icon">⚠️</span>
+        <span className="tr-attack-warning-text">
+          {nameOf(attack.attackerUid)} ส่ง {BATTLE_ITEM_EMOJI[attack.itemType]} {BATTLE_ITEM_LABEL[attack.itemType]}!
+        </span>
+        <span className="tr-attack-warning-countdown">{(warningLeft / 1000).toFixed(1)}s</span>
+      </div>
+      {defenseItems.length > 0 && (
+        <div className="tr-attack-defense-row">
+          {defenseItems.map((slot, i) => (
+            <button
+              key={i}
+              className="tr-btn tr-btn-xs tr-btn-defend"
+              onClick={() => onDefend(attack.id, slot.itemType)}
+              disabled={isBusy}
+            >
+              {BATTLE_ITEM_EMOJI[slot.itemType]} {BATTLE_ITEM_LABEL[slot.itemType]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InventoryBar({
+  inventory,
+  isBusy,
+  frozenUntilMs,
+  nowMs,
+  onActivateOffensive,
+}: {
+  inventory: InventoryState | null;
+  isBusy: boolean;
+  frozenUntilMs: number | null;
+  nowMs: number;
+  onActivateOffensive: (item: BattleItemType) => void;
+}) {
+  const slots = inventory?.slots ?? [];
+  const isFrozen = frozenUntilMs !== null && frozenUntilMs > nowMs;
+  return (
+    <div className="tr-inventory">
+      <span className="tr-inventory-label">🎒 ฉาก ({slots.length}/3)</span>
+      {isFrozen && <span className="tr-frozen-badge">🧊 แช่แข็ง</span>}
+      <div className="tr-inventory-slots">
+        {[0, 1, 2].map((i) => {
+          const slot = slots[i];
+          const isOffensive = slot ? BATTLE_ITEM_CATEGORIES[slot.itemType] === "offensive" : false;
+          return (
+            <div key={i} className={`tr-inv-slot ${slot ? "tr-inv-slot-filled" : "tr-inv-slot-empty"}`}>
+              {slot ? (
+                <>
+                  <span className="tr-inv-emoji">{BATTLE_ITEM_EMOJI[slot.itemType]}</span>
+                  <span className="tr-inv-name">{BATTLE_ITEM_LABEL[slot.itemType]}</span>
+                  {isOffensive && (
+                    <button
+                      className="tr-btn tr-btn-xs tr-btn-use"
+                      onClick={() => onActivateOffensive(slot.itemType)}
+                      disabled={isBusy || isFrozen}
+                    >
+                      ใช้
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span className="tr-inv-empty">—</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TargetSelector({
+  item,
+  members,
+  myUid,
+  nameOf,
+  isBusy,
+  onSelect,
+  onCancel,
+}: {
+  item: BattleItemType;
+  members: { uid: string }[];
+  myUid: string;
+  nameOf: (uid: string) => string;
+  isBusy: boolean;
+  onSelect: (uid: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="tr-target-overlay" role="dialog" aria-label="เลือกเป้าหมาย">
+      <div className="tr-target-header">
+        <span>{BATTLE_ITEM_EMOJI[item]} {BATTLE_ITEM_LABEL[item]} — เลือกเป้าหมาย</span>
+        <button className="tr-btn tr-btn-xs" onClick={onCancel} disabled={isBusy}>✕</button>
+      </div>
+      <div className="tr-target-list">
+        {members
+          .filter((m) => m.uid !== myUid)
+          .map((m) => (
+            <button
+              key={m.uid}
+              className="tr-btn tr-btn-target"
+              onClick={() => onSelect(m.uid)}
+              disabled={isBusy}
+            >
+              {nameOf(m.uid)}
+            </button>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function BattleShop({
+  currentRunPoints,
+  frozenUntilMs,
+  nowMs,
+  inventorySlots,
+  isBusy,
+  onBuy,
+  onSelectOffensive,
+}: {
+  currentRunPoints: number;
+  frozenUntilMs: number | null;
+  nowMs: number;
+  inventorySlots: number;
+  isBusy: boolean;
+  onBuy: (item: BattleItemType) => void;
+  onSelectOffensive: (item: BattleItemType) => void;
+}) {
+  const isFrozen = frozenUntilMs !== null && frozenUntilMs > nowMs;
+  const categories: BattleItemType[][] = [
+    ["magic-shield", "treasure-lock", "recovery-potion", "mirror-shield"],
+    ["bomb-gift", "sneaky-thief", "ice-trap", "chaos-swap"],
+    ["lucky-key", "treasure-radar", "golden-pick"],
+  ];
+  const catLabels = ["🛡️ Defensive", "⚔️ Offensive", "🍀 Lucky"];
+  const isInstant = (item: BattleItemType) => item === "recovery-potion" || item === "golden-pick";
+  return (
+    <div className="tr-shop">
+      <div className="tr-shop-tc-row">
+        <span className="tr-shop-tc">💰 TC: {currentRunPoints}</span>
+        {isFrozen && <span className="tr-frozen-badge">🧊 แช่แข็ง</span>}
+      </div>
+      {categories.map((items, ci) => (
+        <div key={ci} className="tr-shop-category">
+          <div className="tr-shop-cat-label">{catLabels[ci]}</div>
+          <div className="tr-shop-grid">
+            {items.map((item) => {
+              const cost = BATTLE_ITEM_COSTS[item];
+              const canAfford = currentRunPoints >= cost;
+              const slotFull = !isInstant(item) && inventorySlots >= 3;
+              const disabled = isBusy || isFrozen || !canAfford || slotFull;
+              const isOff = BATTLE_ITEM_CATEGORIES[item] === "offensive";
+              return (
+                <button
+                  key={item}
+                  className={`tr-shop-item ${!canAfford || slotFull ? "tr-shop-disabled" : ""}`}
+                  onClick={() => isOff ? onSelectOffensive(item) : onBuy(item)}
+                  disabled={disabled}
+                  title={BATTLE_ITEM_DESC[item]}
+                >
+                  <span className="tr-shop-icon">{BATTLE_ITEM_EMOJI[item]}</span>
+                  <span className="tr-shop-name">{BATTLE_ITEM_LABEL[item]}</span>
+                  <span className="tr-shop-cost">{cost} TC</span>
+                  {isInstant(item) && <span className="tr-shop-instant">⚡ทันที</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BattleFeedPanel({ events, nameOf }: { events: BattleFeedEvent[]; nameOf: (uid: string) => string }) {
+  const sorted = [...events].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0)).slice(0, 10);
+  if (sorted.length === 0) return null;
+  function eventText(e: BattleFeedEvent): string {
+    const actor = nameOf(e.actorUid);
+    const target = e.targetUid ? nameOf(e.targetUid) : null;
+    const item = e.itemType ? `${BATTLE_ITEM_EMOJI[e.itemType]} ${BATTLE_ITEM_LABEL[e.itemType]}` : "";
+    switch (e.type) {
+      case "item-bought": return `${actor} ซื้อ ${item}`;
+      case "attack-sent": return `${actor} ส่ง ${item} ไปยัง ${target}`;
+      case "attack-resolved": return `${item} ถูก ${target}: ${(e.tcDelta ?? 0) < 0 ? e.tcDelta : `+${e.tcDelta}`} TC`;
+      case "attack-blocked": return `${target} บล็อก ${item} ของ ${actor}`;
+      case "attack-reflected": return `${target} สะท้อน ${item} กลับ ${actor}`;
+      case "bank": return `${actor} เก็บแต้ม ${(e.tcDelta ?? 0) > 0 ? `+${e.tcDelta}` : e.tcDelta} TC`;
+      case "chest-opened": return `${actor} เปิดกล่อง ${(e.tcDelta ?? 0) > 0 ? `+${e.tcDelta}` : e.tcDelta} TC`;
+      case "final-rush": return "⚡ FINAL RUSH เริ่มแล้ว — 2× TC";
+      case "achievement": return `🏆 ${actor} ได้ Achievement`;
+      default: return `${actor} ${e.type}`;
+    }
+  }
+  return (
+    <div className="tr-feed">
+      <div className="tr-feed-title">📋 Battle Feed</div>
+      <ul className="tr-feed-list">
+        {sorted.map((e) => (
+          <li key={e.id} className="tr-feed-item">{eventText(e)}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ReactionsBar({
+  floatingReactions,
+  onReact,
+}: {
+  floatingReactions: { id: number; emoji: string; x: number }[];
+  onReact: (type: ReactionType) => void;
+}) {
+  return (
+    <div className="tr-reactions">
+      <div className="tr-reaction-floats" aria-hidden>
+        {floatingReactions.map((r) => (
+          <span key={r.id} className="tr-float-emoji" style={{ left: `${r.x}%` }}>{r.emoji}</span>
+        ))}
+      </div>
+      <div className="tr-reaction-btns">
+        {REACTION_TYPES.map((type) => (
+          <button key={type} className="tr-reaction-btn" onClick={() => onReact(type)} aria-label={type}>
+            {REACTION_EMOJI[type]}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AchievementsPanel({ achievements, nameOf }: { achievements: AchievementResult[]; nameOf: (uid: string) => string }) {
+  return (
+    <div className="tr-achievements">
+      <div className="tr-ach-title">🏆 Achievements</div>
+      <div className="tr-ach-list">
+        {achievements.map((a) => (
+          <div key={a.type} className="tr-ach-row">
+            <span className="tr-ach-label">{ACHIEVEMENT_LABEL[a.type]}</span>
+            <span className="tr-ach-desc">{ACHIEVEMENT_DESC[a.type]}</span>
+            <span className="tr-ach-winner">{nameOf(a.winnerUid)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1003,9 +1533,109 @@ function TreasureStyles() {
       .tr-winner-label { font-size: 0.6rem; color: #f29a4a; }
       .farm-hint { font-size: 0.6rem; color: #888; margin: 0; }
       .farm-warning { font-size: 0.6rem; color: #e2685d; margin: 0; padding: 0.5rem; background: #2d0f0f; border-radius: 3px; }
+      /* ── Chaos Battle ───────────────────────────── */
+      .tr-final-rush {
+        display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.5rem 0.75rem; border-radius: 4px;
+        background: #2d1a00; border: 2px solid #f29a4a;
+        animation: tr-blink 0.8s step-end infinite;
+        font-size: 0.65rem; color: #f29a4a;
+      }
+      .tr-final-rush-shutdown { border-color: #e2685d; color: #e2685d; }
+      .tr-final-rush-icon { font-size: 1rem; }
+      .tr-final-rush-label { flex: 1; }
+      .tr-final-rush-lock { font-size: 0.55rem; }
+      .tr-attack-warning {
+        padding: 0.75rem; border-radius: 4px;
+        background: #2d0f0f; border: 2px solid #e2685d;
+        display: flex; flex-direction: column; gap: 0.5rem;
+      }
+      .tr-attack-warning-header { display: flex; align-items: center; gap: 0.5rem; font-size: 0.6rem; }
+      .tr-attack-warning-icon { font-size: 1rem; }
+      .tr-attack-warning-text { flex: 1; }
+      .tr-attack-warning-countdown { color: #e2685d; font-size: 0.75rem; min-width: 2.5rem; text-align: right; }
+      .tr-attack-defense-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+      .tr-btn-defend { border-color: #7cc36a; color: #7cc36a; }
+      .tr-inventory {
+        display: flex; flex-direction: column; gap: 0.4rem;
+        padding: 0.5rem; background: #16213e; border: 2px solid #4a4a7a; border-radius: 4px;
+      }
+      .tr-inventory-label { font-size: 0.55rem; color: #aaa; }
+      .tr-frozen-badge { font-size: 0.55rem; color: #4aa3c7; padding: 0.1rem 0.3rem; background: #0f1a2d; border-radius: 3px; }
+      .tr-inventory-slots { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+      .tr-inv-slot {
+        flex: 1; min-width: 5rem; padding: 0.4rem; border-radius: 3px;
+        display: flex; flex-direction: column; align-items: center; gap: 0.2rem;
+        font-size: 0.5rem; border: 2px solid #4a4a7a;
+      }
+      .tr-inv-slot-filled { border-color: #b48ad8; background: #1a1a2e; }
+      .tr-inv-slot-empty { opacity: 0.4; }
+      .tr-inv-emoji { font-size: 1rem; }
+      .tr-inv-name { font-size: 0.45rem; text-align: center; }
+      .tr-inv-empty { font-size: 0.75rem; }
+      .tr-btn-use { border-color: #e0a21b; color: #e0a21b; }
+      .tr-target-overlay {
+        position: relative; padding: 0.75rem;
+        background: #0f0f1a; border: 2px solid #b48ad8; border-radius: 4px;
+        display: flex; flex-direction: column; gap: 0.5rem;
+      }
+      .tr-target-header { display: flex; align-items: center; justify-content: space-between; font-size: 0.6rem; color: #b48ad8; }
+      .tr-target-list { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+      .tr-btn-target { border-color: #d977a8; color: #d977a8; padding: 0.4rem 0.75rem; }
+      .tr-shop-tc-row { display: flex; align-items: center; gap: 0.5rem; }
+      .tr-shop-tc { font-size: 0.65rem; color: #f29a4a; }
+      .tr-shop-category { display: flex; flex-direction: column; gap: 0.3rem; }
+      .tr-shop-cat-label { font-size: 0.55rem; color: #aaa; padding: 0.2rem 0; border-bottom: 1px solid #2a2a4a; }
+      .tr-shop-instant { font-size: 0.45rem; color: #7cc36a; }
+      .tr-feed {
+        padding: 0.5rem; background: #0f0f1a; border: 2px solid #2a2a4a; border-radius: 4px;
+        max-height: 8rem; overflow: hidden;
+      }
+      .tr-feed-title { font-size: 0.55rem; color: #aaa; margin-bottom: 0.3rem; }
+      .tr-feed-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+      .tr-feed-item { font-size: 0.5rem; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tr-reactions {
+        position: relative; padding: 0.4rem 0;
+        display: flex; flex-direction: column; gap: 0.3rem;
+      }
+      .tr-reaction-floats {
+        position: absolute; top: -3rem; left: 0; right: 0; height: 3rem;
+        pointer-events: none; overflow: hidden;
+      }
+      .tr-float-emoji {
+        position: absolute; bottom: 0; font-size: 1.5rem;
+        animation: tr-float-up 2s ease-out forwards;
+      }
+      @keyframes tr-float-up {
+        0% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(-3rem); }
+      }
+      .tr-reaction-btns { display: flex; gap: 0.4rem; justify-content: center; flex-wrap: wrap; }
+      .tr-reaction-btn {
+        font-size: 1.25rem; background: none; border: 2px solid #2a2a4a; border-radius: 50%;
+        width: 2.5rem; height: 2.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+        transition: border-color 0.1s, transform 0.1s;
+      }
+      .tr-reaction-btn:hover { border-color: #b48ad8; transform: scale(1.15); }
+      .tr-reaction-btn:active { transform: scale(0.9); }
+      .tr-achievements {
+        padding: 0.75rem; background: #1a1a0f; border: 2px solid #f7dc6f; border-radius: 4px;
+        display: flex; flex-direction: column; gap: 0.5rem;
+      }
+      .tr-ach-title { font-size: 0.65rem; color: #f7dc6f; }
+      .tr-ach-list { display: flex; flex-direction: column; gap: 0.3rem; }
+      .tr-ach-row {
+        display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem;
+        align-items: center; padding: 0.3rem; background: #0f0f0f; border-radius: 3px;
+      }
+      .tr-ach-label { font-size: 0.55rem; color: #e0a21b; }
+      .tr-ach-desc { font-size: 0.45rem; color: #888; }
+      .tr-ach-winner { font-size: 0.55rem; color: #7cc36a; }
       @media (max-width: 480px) {
         .tr-chest-grid { grid-template-columns: repeat(3, 1fr); }
         .tr-title { font-size: 0.75rem; }
+        .tr-inventory-slots { flex-direction: column; }
+        .tr-reaction-btns { gap: 0.3rem; }
       }
     `}</style>
   );
