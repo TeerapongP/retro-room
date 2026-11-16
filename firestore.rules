@@ -770,15 +770,24 @@ service cloud.firestore {
 
         match /catches/{uid} {
           allow read: if isMember(boardId) || isAdmin();
-          allow create, update: if signedIn()
+          allow create: if signedIn()
             && request.auth.uid == uid
             && isMember(boardId)
             && get(gamePath(boardId, gameId)).data.get('gameType', '') == 'fishing'
             && get(gamePath(boardId, gameId)).data.status == 'fishing'
             && request.time <= get(gamePath(boardId, gameId)).data.fishingEndsAt
             && request.resource.data.keys().hasOnly(['catchCount', 'lastCatchAt', 'updatedAt'])
-            && request.resource.data.catchCount is int
-            && request.resource.data.catchCount > 0
+            && request.resource.data.catchCount == 1
+            && request.resource.data.lastCatchAt == request.time
+            && request.resource.data.updatedAt == request.time;
+          allow update: if signedIn()
+            && request.auth.uid == uid
+            && isMember(boardId)
+            && get(gamePath(boardId, gameId)).data.get('gameType', '') == 'fishing'
+            && get(gamePath(boardId, gameId)).data.status == 'fishing'
+            && request.time <= get(gamePath(boardId, gameId)).data.fishingEndsAt
+            && request.resource.data.keys().hasOnly(['catchCount', 'lastCatchAt', 'updatedAt'])
+            && request.resource.data.catchCount == resource.data.catchCount + 1
             && request.resource.data.lastCatchAt == request.time
             && request.resource.data.updatedAt == request.time;
           allow delete: if false;

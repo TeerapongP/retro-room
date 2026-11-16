@@ -304,6 +304,12 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
     await lockPowerPoints(board.id, game.id, pts);
   }
 
+  async function handleLockScoresRetry() {
+    if (!game) return;
+    const pts = scored.map((p) => ({ uid: p.uid, balance: p.score, earned: p.score }));
+    await lockPowerPoints(board.id, game.id, pts);
+  }
+
   async function handleSubmitPowerAction() {
     if (!game || !selectedAction) return;
     const needsTarget = SHOP_TARGETED.has(selectedAction);
@@ -464,6 +470,11 @@ function FestivalRound({ gameId, board, members, user, isAdmin, onAdvancePhase }
         {isAdmin && game && phase === "fishing" && timeLeft === 0 ? (
           <button type="button" className="pixel-button pixel-button-gold" disabled={isBusy} onClick={() => void run(handleEndFishingAndLockScores)}>
             จบการตกปลา
+          </button>
+        ) : null}
+        {isAdmin && phase === "scoring" && powerPoints.length === 0 ? (
+          <button type="button" className="pixel-button pixel-button-gold" disabled={isBusy} onClick={() => void run(handleLockScoresRetry)}>
+            ล็อกคะแนน ↺
           </button>
         ) : null}
         {isAdmin && phase === "wheel" && resolvedState ? (

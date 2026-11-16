@@ -146,6 +146,26 @@ describe("calcScores", () => {
     const resultsBAC = calcScores(catchesBAC, "small-fish");
     expect(resultsABC.map((r) => r.uid)).toEqual(resultsBAC.map((r) => r.uid));
   });
+
+  it("null segment falls back to base score (catchCount × 10)", () => {
+    const catches = [makeCatch("a", 3), makeCatch("b", 1)];
+    const results = calcScores(catches, null);
+    const byUid = Object.fromEntries(results.map((r) => [r.uid, r.score]));
+    expect(byUid["a"]).toBe(30);
+    expect(byUid["b"]).toBe(10);
+  });
+
+  it("three-argument form enriches results with displayName", () => {
+    const catches = [makeCatch("a", 2), makeCatch("b", 1)];
+    const members = [
+      { uid: "a", displayName: "Alice", role: "member" as const, joinedAt: null },
+      { uid: "b", displayName: "Bob", role: "member" as const, joinedAt: null },
+    ];
+    const results = calcScores(catches, members, "small-fish");
+    const byUid = Object.fromEntries(results.map((r) => [r.uid, r]));
+    expect(byUid["a"].displayName).toBe("Alice");
+    expect(byUid["b"].displayName).toBe("Bob");
+  });
 });
 
 // ---------------------------------------------------------------------------

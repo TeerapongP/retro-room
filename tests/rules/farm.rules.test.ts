@@ -18,7 +18,7 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const ADMIN_EMAIL = "thirapong.pin@ascendcorp.com";
 const BOARD = "farm";
@@ -668,6 +668,89 @@ describe("host eligibility (D163 to D166)", () => {
     await seed({ board: { farmActiveGameId: "done", nextHostGameId: "done", nextHostUid: "carol" }, games: { done: finishedGame("carol") } });
     await assertFails(
       updateDoc(boardRef(admin()), { nextHostUid: "bob", nextHostSpunAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+});
+
+describe("fishing catches", () => {
+  const fishingGame = (extra: GameSeed = {}) => ({
+    gameType: "fishing",
+    status: "fishing",
+    startedAt: secondsFromNow(-10),
+    fishingDurationSec: 30,
+    fishingEndsAt: secondsFromNow(20),
+    wheelSegment: "small-fish",
+    ignoredUids: [],
+    ...extra,
+  });
+
+  const catchRef = (client: ReturnType<typeof admin>, gameId: string, uid: string) =>
+    doc(client, `boards/${BOARD}/farmGames/${gameId}/catches/${uid}`);
+
+  const writeCatch = (client: ReturnType<typeof admin>, gameId: string, uid: string, data: Record<string, unknown>) =>
+    setDoc(catchRef(client, gameId, uid), data);
+
+  const updateCatch = (client: ReturnType<typeof admin>, gameId: string, uid: string, data: Record<string, unknown>) =>
+    updateDoc(catchRef(client, gameId, uid), data);
+
+  beforeEach(async () => {
+    await seed({ games: { g1: fishingGame() } });
+  });
+
+  it("allows a member to create their own catch with catchCount 1 during fishing", async () => {
+    await assertSucceeds(
+      writeCatch(alice(), "g1", "alice", { catchCount: 1, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("allows a member to increment their own catch count by 1", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `boards/${BOARD}/farmGames/g1/catches/alice`), {
+        catchCount: 2,
+        lastCatchAt: seeded,
+        updatedAt: seeded,
+      });
+    });
+    await assertSucceeds(
+      updateCatch(alice(), "g1", "alice", { catchCount: 3, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("denies writing someone else's catch", async () => {
+    await assertFails(
+      writeCatch(alice(), "g1", "bob", { catchCount: 1, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("denies a non-member (stranger) writing a catch", async () => {
+    await assertFails(
+      writeCatch(stranger(), "g1", "stranger", { catchCount: 1, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("denies writing a catch when the game is in scoring phase", async () => {
+    await seed({ games: { g1: fishingGame({ status: "scoring" }) } });
+    await assertFails(
+      writeCatch(alice(), "g1", "alice", { catchCount: 1, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("denies creating a catch with catchCount != 1", async () => {
+    await assertFails(
+      writeCatch(alice(), "g1", "alice", { catchCount: 5, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it("denies updating a catch that skips a count (not catchCount + 1)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `boards/${BOARD}/farmGames/g1/catches/alice`), {
+        catchCount: 1,
+        lastCatchAt: seeded,
+        updatedAt: seeded,
+      });
+    });
+    await assertFails(
+      updateCatch(alice(), "g1", "alice", { catchCount: 5, lastCatchAt: serverTimestamp(), updatedAt: serverTimestamp() }),
     );
   });
 });
