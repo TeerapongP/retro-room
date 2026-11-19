@@ -1,4 +1,4 @@
-import type { User } from "firebase/auth";
+import { getAuth, type User } from "firebase/auth";
 import {
   Timestamp,
   collection,
@@ -10,6 +10,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -22,11 +23,23 @@ import {
 import { getMockBackend, isMockMode } from "../mock";
 import { clampPhase } from "../phases";
 import { getFirebaseFirestore } from "./client";
-import { type Board, type BoardMember, type BoardRole, type DashboardBoard } from "./types";
+import { makeSessionSnapshot } from "../retro-analytics";
+import type { ActionItem, BoardCard } from "./types";
+import { type Board, type BoardMember, type BoardRole, type DashboardBoard, type RatingRound } from "./types";
 
 function toDate(value: unknown): Date | null {
   return value && typeof (value as Timestamp).toDate === "function"
     ? (value as Timestamp).toDate()
+    : null;
+}
+
+function toRatingRound(value: unknown): RatingRound | null {
+  if (typeof value !== "object" || value === null) return null;
+  const data = value as Record<string, unknown>;
+  const endsAt = toDate(data.endsAt);
+  const durationSec = data.durationSec;
+  return endsAt && typeof durationSec === "number" && Number.isInteger(durationSec) && durationSec >= 1 && durationSec <= 7200 && typeof data.revealed === "boolean"
+    ? { endsAt, durationSec, revealed: data.revealed }
     : null;
 }
 
@@ -65,9 +78,11 @@ export async function startSession(
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
   if (isMockMode()) return getMockBackend().startSession(boardId);
+  const sessionId = doc(collection(db, "boards", boardId, "sessionSnapshots")).id;
   await updateDoc(doc(db, "boards", boardId), {
     status: "in-progress",
     startedAt: serverTimestamp(),
+    currentSessionId: sessionId,
     updatedAt: serverTimestamp(),
   });
 }
@@ -84,6 +99,35 @@ export async function startTimer(
     timerDurationSec: Math.round(minutes * 60),
     updatedAt: serverTimestamp(),
   });
+}
+
+/** Admin only: starts the independent countdown for the self-rating phase. */
+export async function startRatingTimer(
+  boardId: string,
+  minutes: number,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().startRatingTimer(boardId, minutes);
+  await updateDoc(doc(db, "boards", boardId), {
+    ratingRound: {
+      endsAt: Timestamp.fromMillis(Date.now() + minutes * 60_000),
+      durationSec: minutes * 60,
+      revealed: false,
+    },
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Admin only: may cancel a rating countdown before it expires. */
+export async function stopRatingTimer(boardId: string, db: Firestore = getFirebaseFirestore()): Promise<void> {
+  if (isMockMode()) return getMockBackend().stopRatingTimer(boardId);
+  await updateDoc(doc(db, "boards", boardId), { ratingRound: deleteField(), updatedAt: serverTimestamp() });
+}
+
+/** Admin only: Firestore Rules require the persisted rating deadline to have elapsed. */
+export async function revealRatings(boardId: string, db: Firestore = getFirebaseFirestore()): Promise<void> {
+  if (isMockMode()) return getMockBackend().revealRatings(boardId);
+  await updateDoc(doc(db, "boards", boardId), { "ratingRound.revealed": true, updatedAt: serverTimestamp() });
 }
 
 /** Admin only (D117, D121): moves the shared session step (1 to 6). Rules reject anyone else. */
@@ -125,10 +169,54 @@ export async function completeSession(
   db: Firestore = getFirebaseFirestore(),
 ): Promise<void> {
   if (isMockMode()) return getMockBackend().completeSession(boardId);
-  await updateDoc(doc(db, "boards", boardId), {
-    status: "completed",
-    completedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  const boardRef = doc(db, "boards", boardId);
+  const uid = getAuth(db.app).currentUser?.uid;
+  if (!uid) throw new Error("ต้องเข้าสู่ระบบก่อนจบเซสชัน");
+  const cardsCollection = collection(db, "boards", boardId, "cards");
+  const [visibleCards, ownCards, actionsList] = await Promise.all([
+    getDocs(query(cardsCollection, where("hidden", "==", false))),
+    getDocs(query(cardsCollection, where("authorId", "==", uid))),
+    getDocs(collection(db, "boards", boardId, "actionItems")),
+  ]);
+  const cardDocsById = new Map([...visibleCards.docs, ...ownCards.docs].map((snapshot) => [snapshot.id, snapshot]));
+  await runTransaction(db, async (transaction) => {
+    const boardDoc = await transaction.get(boardRef);
+    if (!boardDoc.exists() || boardDoc.data().status !== "in-progress") throw new Error("เซสชันนี้ไม่ได้กำลังดำเนินการ");
+    const sessionId = typeof boardDoc.data().currentSessionId === "string"
+      ? boardDoc.data().currentSessionId as string
+      : doc(collection(db, "boards", boardId, "sessionSnapshots")).id;
+    const [cardDocs, actionDocs] = await Promise.all([
+      Promise.all([...cardDocsById.values()].map((item) => transaction.get(item.ref))),
+      Promise.all(actionsList.docs.map((item) => transaction.get(item.ref))),
+    ]);
+    const cards = cardDocs.flatMap((snapshot): BoardCard[] => {
+      if (!snapshot.exists()) return [];
+      const data = snapshot.data();
+      return data.hidden === true || typeof data.text !== "string" || !["went-well", "to-improve", "ideas"].includes(data.columnId)
+        ? []
+        : [{ id: snapshot.id, text: data.text, authorId: typeof data.authorId === "string" ? data.authorId : "", hidden: false, columnId: data.columnId, groupId: null, createdAt: null }];
+    });
+    const items = actionDocs.flatMap((snapshot): ActionItem[] => {
+      if (!snapshot.exists()) return [];
+      const data = snapshot.data();
+      if (typeof data.text !== "string" || typeof data.dueDate !== "string" || !["not-started", "in-progress", "completed"].includes(data.status)) return [];
+      return [{ id: snapshot.id, text: data.text, dueDate: data.dueDate, status: data.status as ActionItem["status"], createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : null, completedAt: data.completedAt instanceof Timestamp ? data.completedAt.toDate() : null }];
+    });
+    const completedAt = new Date();
+    const completedTimestamp = serverTimestamp();
+    const summary = makeSessionSnapshot(cards, items, sessionId, completedAt);
+    transaction.set(doc(db, "boards", boardId, "sessionSnapshots", sessionId), {
+      completedAt: completedTimestamp,
+      categoryCounts: summary.categoryCounts,
+      dueActionCount: summary.dueActionCount,
+      completedDueActionCount: summary.completedDueActionCount,
+    });
+    transaction.update(boardRef, {
+      status: "completed",
+      currentSessionId: sessionId,
+      completedAt: completedTimestamp,
+      updatedAt: serverTimestamp(),
+    });
   });
 }
 
@@ -142,12 +230,15 @@ export async function resetBoard(
     updatedAt: serverTimestamp(),
     completedAt: deleteField(),
     startedAt: deleteField(),
+    currentSessionId: deleteField(),
     phase: deleteField(),
     timerEndsAt: deleteField(),
     timerDurationSec: deleteField(),
+    ratingRound: deleteField(),
     nextHostUid: deleteField(),
     nextHostSpunAt: deleteField(),
     farmActiveGameId: deleteField(),
+    chaosActiveGameId: deleteField(),
     nextHostGameId: deleteField(),
     hostUid: deleteField(),
     pastHostUids: deleteField(),
@@ -168,7 +259,7 @@ export async function clearBoard(
   for (const d of [...cardsSnap.docs, ...votersSnap.docs, ...ratingsSnap.docs]) {
     batch.delete(d.ref);
   }
-  batch.update(doc(db, "boards", boardId), { phase: 1, updatedAt: serverTimestamp() });
+  batch.update(doc(db, "boards", boardId), { phase: 1, ratingRound: deleteField(), updatedAt: serverTimestamp() });
   await batch.commit();
 }
 
@@ -216,12 +307,15 @@ export function subscribeToBoard(
               title: data.title,
               ownerId: data.ownerId,
               status: data.status ?? "in-progress",
+              currentSessionId: typeof data.currentSessionId === "string" ? data.currentSessionId : null,
               timerEndsAt: toDate(data.timerEndsAt),
               timerDurationSec: typeof data.timerDurationSec === "number" ? data.timerDurationSec : null,
+              ratingRound: toRatingRound(data.ratingRound),
               phase: clampPhase(data.phase),
               nextHostUid: typeof data.nextHostUid === "string" ? data.nextHostUid : null,
               nextHostSpunAt: toDate(data.nextHostSpunAt),
               farmActiveGameId: typeof data.farmActiveGameId === "string" ? data.farmActiveGameId : null,
+              chaosActiveGameId: typeof data.chaosActiveGameId === "string" ? data.chaosActiveGameId : null,
               nextHostGameId: typeof data.nextHostGameId === "string" ? data.nextHostGameId : null,
               hostUid: typeof data.hostUid === "string" ? data.hostUid : null,
               pastHostUids: Array.isArray(data.pastHostUids)

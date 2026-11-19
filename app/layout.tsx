@@ -1,16 +1,9 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans_Thai } from "next/font/google";
 import localFont from "next/font/local";
 import { BackgroundMusic } from "@/components/BackgroundMusic";
 import { EmulatorBanner } from "@/components/EmulatorBanner";
 import { AuthProvider } from "@/lib/firebase/auth";
 import "./globals.css";
-
-const bodyFont = IBM_Plex_Sans_Thai({
-  variable: "--font-body",
-  subsets: ["thai", "latin"],
-  weight: ["400", "500", "700"],
-});
 
 /**
  * TA GBA monothai MAX (SIL OFL 1.1, TA Font; license in app/fonts/OFL.txt). A Thai and Latin pixel font drawn on a
@@ -31,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="th" className={`${bodyFont.variable} ${pixelFont.variable} h-full antialiased`}>
+    <html lang="th" className={`${pixelFont.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         <EmulatorBanner />
         <BackgroundMusic />

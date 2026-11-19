@@ -39,7 +39,7 @@ export async function createTestUser(
   const auth = getAuth(app);
   connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
   const db = getFirestore(app);
-  connectFirestoreEmulator(db, "127.0.0.1", 8080);
+  connectFirestoreEmulator(db, "127.0.0.1", 8380);
   const email = options.email ?? `${sub}@example.test`;
   const credential = GoogleAuthProvider.credential(
     JSON.stringify({
@@ -72,7 +72,7 @@ export function reconnectTestUser(existing: TestUser): Promise<TestUser> {
 export async function resetEmulators(): Promise<void> {
   await Promise.all(createdApps.splice(0).map((app) => deleteApp(app)));
   await fetch(
-    `http://127.0.0.1:8080/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
+    `http://127.0.0.1:8380/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
     { method: "DELETE" },
   );
   await fetch(`${AUTH_EMULATOR_URL}/emulator/v1/projects/${PROJECT_ID}/accounts`, {

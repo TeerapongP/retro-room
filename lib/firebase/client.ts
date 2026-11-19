@@ -6,7 +6,7 @@ import { isMockMode } from "../mock";
 const EMULATOR_PROJECT_ID = "demo-retro-room";
 const AUTH_EMULATOR_URL = "http://127.0.0.1:9099";
 const FIRESTORE_EMULATOR_HOST = "127.0.0.1";
-const FIRESTORE_EMULATOR_PORT = 8080;
+const FIRESTORE_EMULATOR_PORT = 8380;
 const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1"];
 
 const productionFirebaseConfig = {
@@ -51,7 +51,7 @@ function assertEmulatorModeIsLocal(): void {
   }
 }
 
-function getFirebaseApp(): FirebaseApp {
+export function getFirebaseApp(): FirebaseApp {
   if (isEmulatorRequested()) {
     assertEmulatorModeIsLocal();
     return getApps().length > 0 ? getApp() : initializeApp(emulatorFirebaseConfig);

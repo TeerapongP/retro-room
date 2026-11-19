@@ -12,9 +12,10 @@ import { DialogueBox } from "@/components/DialogueBox";
 import { AuthLoadingNotice, LoadingNotice } from "@/components/LoadingNotice";
 import { ModalDialog } from "@/components/ModalDialog";
 import { MoveCardDialog } from "@/components/MoveCardDialog";
-import { TreasureRush } from "@/components/TreasureRush";
+import { ChaosGame } from "@/components/ChaosGame";
 import { RatingPanel } from "@/components/RatingPanel";
 import { PhaseStepper } from "@/components/PhaseStepper";
+import { RetroSummaryReport } from "@/components/RetroSummaryReport";
 import { StackCardDialog } from "@/components/StackCardDialog";
 import { TitleScreen } from "@/components/TitleScreen";
 import { isAdminUser } from "@/lib/firebase/admin";
@@ -31,6 +32,9 @@ import {
   getOwnMembership,
   joinBoard,
   setPhase,
+  startRatingTimer,
+  stopRatingTimer,
+  revealRatings,
   startSession,
   startTimer,
   stopTimer,
@@ -207,6 +211,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
   const [stackingCard, setStackingCard] = useState<BoardCard | null>(null);
   const [voters, setVoters] = useState<Voter[]>([]);
   const [ratings, setRatings] = useState<Rating[]>([]);
+  const [ratingTimerExpired, setRatingTimerExpired] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
@@ -338,7 +343,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
             <div>
               <h1>{board.title}</h1>
               <p>
-                {isOwner ? "Owner" : "Member"} · {members.length} คน · {isCompleted ? "COMPLETED" : "IN PROGRESS"}
+                {isOwner ? "เจ้าของ" : "สมาชิก"} · {members.length} คน · {isCompleted ? "เสร็จสิ้น" : "กำลังดำเนินการ"}
               </p>
             </div>
           </>
@@ -350,14 +355,23 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
                 โหวตเหลือ {votesLeft(myVotes)}/{VOTES_PER_MEMBER}
               </span>
             ) : null}
-            {isCompleted || board.phase !== 1 ? null : (
+            {isCompleted || (board.phase !== 1 && board.phase !== 4) ? null : (
               <BoardTimer
-                board={board}
+                key={board.phase}
+                endsAt={board.phase === 4 ? board.ratingRound?.endsAt ?? null : board.timerEndsAt}
                 isAdmin={isAdmin}
-                onStart={(minutes) => void runAction(() => startTimer(board.id, minutes))}
-                onStop={() => void runAction(() => stopTimer(board.id))}
+                onStart={(minutes) => void runAction(() => board.phase === 4 ? startRatingTimer(board.id, minutes) : startTimer(board.id, minutes))}
+                onStop={board.phase === 4
+                  ? ratingTimerExpired ? undefined : () => void runAction(() => stopRatingTimer(board.id))
+                  : () => void runAction(() => stopTimer(board.id))}
+                onExpiredChange={board.phase === 4 ? setRatingTimerExpired : undefined}
               />
             )}
+            {isRatingStep && isAdmin && board.ratingRound && !board.ratingRound.revealed && ratingTimerExpired ? (
+              <button type="button" className="board-button" onClick={() => void runAction(() => revealRatings(board.id))}>
+                เปิดคะแนน
+              </button>
+            ) : null}
             <button type="button" className="board-button board-button-quiet" onClick={handleCopyLink}>
               {copyState === "copied"
                 ? "คัดลอกลิงก์แล้ว"
@@ -478,9 +492,10 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       ) : null}
 
       {isCompleted ? (
-        <p role="status" className="board-notice">
-          เซสชันนี้จบแล้ว บอร์ดเป็นแบบอ่านอย่างเดียว
-        </p>
+        <div className="board-notice">
+          <p role="status">เซสชันนี้จบแล้ว บอร์ดเป็นแบบอ่านอย่างเดียว</p>
+          {board.phase === 6 ? null : <Link className="board-button" href={`/boards/${board.id}/summary`}>ดูสรุปและรายงาน</Link>}
+        </div>
       ) : null}
 
       {liveError ? (
@@ -546,10 +561,12 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         </ModalDialog>
       ) : null}
 
-      {board.phase === 5 && !isCompleted ? (
-        <TreasureRush board={board} members={members} user={user} isAdmin={isAdmin} onAdvancePhase={isAdmin ? () => void runAction(() => setPhase(board.id, 6)) : undefined} />
+      {board.phase === 6 ? (
+        <RetroSummaryReport boardId={board.id} title={board.title} uid={uid} isAdmin={isAdmin} embedded />
+      ) : board.phase === 5 && !isCompleted ? (
+        <ChaosGame board={board} members={members} user={user} isAdmin={isAdmin} onAdvancePhase={isAdmin ? () => void runAction(() => setPhase(board.id, 6)) : undefined} />
       ) : isRatingStep ? (
-        <RatingPanel ratings={ratings} members={members} uid={uid} onRate={(score) => void handleRate(score)} />
+        <RatingPanel ratings={ratings} members={members} uid={uid} revealed={board.ratingRound?.revealed ?? false} timerExpired={ratingTimerExpired} onRate={(score) => void handleRate(score)} />
       ) : cards === null && !liveError ? (
         <LoadingNotice />
       ) : (

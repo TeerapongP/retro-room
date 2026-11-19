@@ -201,7 +201,9 @@ describe("Fishing Festival security rules", () => {
   });
 
   it("non-admin cannot spin the activity wheel", async () => {
-    // Start a fresh game to test against (since the current one is already fishing).
+    // Resolve the current game first so the new round obeys the one-active-game rule.
+    await adminEndFishing(gameId);
+    await adminFinishGame(gameId, memberB.uid);
     // We just try to do the wheel-spin update as a member.
     const badGameId = newGameId();
     // We can't use adminStartFishingGame since it would conflict — just test a direct update.
@@ -217,10 +219,10 @@ describe("Fishing Festival security rules", () => {
         updatedAt: serverTimestamp(),
       }),
     ).rejects.toMatchObject(permissionDenied);
-    // Clean up: set to finished state so it doesn't interfere with subsequent tests.
+
     await adminSpinWheel(badGameId);
-    await adminEndFishing(badGameId);
-    await adminFinishGame(badGameId, memberB.uid);
+    gameId = badGameId;
+
   });
 
   it("admin can set ignoredUids on a fishing game in-flight", async () => {

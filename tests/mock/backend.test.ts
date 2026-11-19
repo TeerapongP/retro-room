@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ADMIN_EMAIL } from "../../lib/firebase/admin";
-import { createMockBackend } from "../../lib/mock/backend";
+import { createMockBackend, MOCK_STATE_KEY } from "../../lib/mock/backend";
 import type { BoardCard } from "../../lib/firebase/types";
 
 function memoryStorage() {
@@ -87,6 +87,34 @@ describe("mock boards", () => {
     expect(statuses).toEqual(["waiting", "in-progress", "completed"]);
   });
 
+  it("should persist Action Items and immutable real session snapshots", async () => {
+    const backend = setup();
+    const user = await backend.signIn();
+    const boardId = await backend.createBoard(user.uid, "History", "Aomsin");
+    await backend.startSession(boardId);
+    await backend.addCard(boardId, user.uid, "ideas", "Write guide");
+    await backend.createActionItem(boardId, "Write guide", "2026-11-05");
+    const items: Array<{ id: string; status: string }> = [];
+    const snapshots: Array<{ categoryCounts: Record<string, number>; dueActionCount: number }> = [];
+    const stopItems = backend.subscribeToActionItems(boardId, (next) => items.splice(0, items.length, ...next), fail);
+    await flush();
+    await backend.setActionItemStatus(boardId, items[0].id, "completed");
+    await backend.completeSession(boardId);
+    const stopSnapshots = backend.subscribeToSessionSnapshots(boardId, (next) => snapshots.splice(0, snapshots.length, ...next), fail);
+    await flush();
+    await backend.resetBoard(boardId);
+    await backend.startSession(boardId);
+    await backend.completeSession(boardId);
+    await flush();
+    stopItems();
+    stopSnapshots();
+
+    expect(items[0]).toMatchObject({ status: "completed" });
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[0]).toMatchObject({ categoryCounts: { "went-well": 0, "to-improve": 0, ideas: 1 }, dueActionCount: 1 });
+    expect(snapshots[1].categoryCounts.ideas).toBe(1);
+  });
+
   it("should add a member when a user joins and report a missing membership as null before", async () => {
     const backend = setup();
     const user = await backend.signIn();
@@ -100,12 +128,14 @@ describe("mock boards", () => {
     const stop = backend.subscribeToMembers(boardId, (members) => names.splice(0, names.length, ...members.map((m) => m.displayName)), fail);
     await flush();
     stop();
-    expect(names).toEqual(["Aomsin", "Guest"]);
+    expect(names).toContain("Aomsin");
+    expect(names).toContain("Guest");
+    expect(names).toHaveLength(8);
   });
 });
 
-describe("mock private writing step", () => {
-  it("should show members only their own cards in step 1, everyone's from step 2, and everything once completed", async () => {
+describe("mock writing step", () => {
+  it("should show all non-hidden cards in every phase", async () => {
     const backend = setup();
     const admin = await backend.signIn();
     const boardId = await backend.createBoard(admin.uid, "Private", "Aomsin");
@@ -118,14 +148,14 @@ describe("mock private writing step", () => {
     const stopGuest = backend.subscribeToCards(boardId, { uid: "guest", isAdmin: false }, (next) => (guestView.cards = next), fail);
     const stopAdmin = backend.subscribeToCards(boardId, { uid: admin.uid, isAdmin: true }, (next) => (adminView.cards = next), fail);
     await flush();
-    expect(guestView.cards.map((card) => card.text)).toEqual(["Guest card"]);
+    expect(guestView.cards.map((card) => card.text).sort()).toEqual(["Guest card", "Owner card"]);
     expect(adminView.cards).toHaveLength(2);
 
     await backend.setPhase(boardId, 2);
     expect(guestView.cards).toHaveLength(2);
 
     await backend.setPhase(boardId, 1);
-    expect(guestView.cards.map((card) => card.text)).toEqual(["Guest card"]);
+    expect(guestView.cards.map((card) => card.text).sort()).toEqual(["Guest card", "Owner card"]);
 
     await backend.completeSession(boardId);
     stopGuest();
@@ -629,14 +659,36 @@ describe("mock cards", () => {
 });
 
 describe("mock persistence and seed", () => {
-  it("should seed two in-progress demo boards for the mock admin", async () => {
+  it("should not seed demo boards for the mock admin", async () => {
     const backend = setup();
     const user = await backend.signIn();
     const titles: string[] = [];
     const stop = backend.subscribeToMemberships(user.uid, (boards) => titles.splice(0, titles.length, ...boards.map((b) => b.title)), fail);
     await flush();
     stop();
-    expect(titles.sort()).toEqual(["Sprint 13", "Sprint 23"]);
+    expect(titles.sort()).toEqual([]);
+  });
+
+  it("should remove legacy demo boards from stored state and keep other boards", async () => {
+    const storage = memoryStorage();
+    const board = (id: string, title: string) => ({ id, title, ownerId: "mock-admin", status: "in-progress", createdAt: "2026-11-06T09:00:00.000Z" });
+    storage.setItem(MOCK_STATE_KEY, JSON.stringify({
+      session: null,
+      profiles: { "mock-admin": "Aomsin" },
+      boards: { sprint13: board("sprint13", "Sprint 13"), sprint23: board("sprint23", "Sprint 23"), custom: board("custom", "Custom") },
+      members: { sprint13: {}, sprint23: {}, custom: {} },
+      cards: { sprint13: {}, sprint23: {}, custom: {} },
+      votes: { sprint13: {}, sprint23: {}, custom: {} },
+      counter: 0,
+    }));
+    const backend = setup({ storage });
+    await backend.signIn();
+    const saved = JSON.parse(storage.getItem(MOCK_STATE_KEY) ?? "{}") as { boards: Record<string, unknown>; members: Record<string, unknown>; cards: Record<string, unknown>; votes: Record<string, unknown> };
+    for (const collection of [saved.boards, saved.members, saved.cards, saved.votes]) {
+      expect(collection).not.toHaveProperty("sprint13");
+      expect(collection).not.toHaveProperty("sprint23");
+      expect(collection).toHaveProperty("custom");
+    }
   });
 
   it("should restore boards and the session from storage in a new backend", async () => {

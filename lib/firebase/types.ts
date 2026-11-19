@@ -25,14 +25,23 @@ export function isValidPlayerName(name: string): boolean {
 
 export type BoardStatus = "waiting" | "in-progress" | "completed";
 
+export type RatingRound = {
+  endsAt: Date;
+  durationSec: number;
+  revealed: boolean;
+};
+
 export type Board = {
   id: string;
   title: string;
   ownerId: string;
   status: BoardStatus;
+  currentSessionId?: string | null;
   /** Shared countdown (F22, D111): end time and the length it was started with, or null when no timer runs. */
   timerEndsAt: Date | null;
   timerDurationSec: number | null;
+  /** Phase 4 self-rating countdown and shared reveal state. */
+  ratingRound: RatingRound | null;
   /** Shared session step, 1 to 6 (F23, D117). */
   phase: number;
   /** Result of the next-host wheel (F29, D149): the winner's uid and when the wheel was spun, or null before any spin. */
@@ -40,6 +49,7 @@ export type Board = {
   nextHostSpunAt: Date | null;
   /** Crowded Farm (F30): the round in play, and the round the stored next host came from (D153, D157). */
   farmActiveGameId: string | null;
+  chaosActiveGameId: string | null;
   nextHostGameId: string | null;
   /**
    * Host of this session (F30, D163): null until a Host is handed over, and then the owner hosts. `pastHostUids` lists
@@ -47,6 +57,24 @@ export type Board = {
    */
   hostUid: string | null;
   pastHostUids: string[];
+};
+
+export type ActionItemStatus = "not-started" | "in-progress" | "completed";
+export type ActionItem = {
+  id: string;
+  text: string;
+  status: ActionItemStatus;
+  dueDate: string;
+  createdAt: Date | null;
+  completedAt: Date | null;
+};
+
+export type SessionSnapshot = {
+  id: string;
+  completedAt: Date;
+  categoryCounts: Record<ColumnId, number>;
+  dueActionCount: number;
+  completedDueActionCount: number;
 };
 
 export type BoardMember = {

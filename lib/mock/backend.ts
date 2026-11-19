@@ -13,10 +13,13 @@ import {
 } from "../crowded-farm";
 import { isValidRating, type Rating } from "../ratings";
 import { VOTES_PER_MEMBER, type Voter } from "../votes";
+import { ACTION_ITEM_STATUSES, isValidDueDate, makeSessionSnapshot } from "../retro-analytics";
 import {
   isValidPlayerName,
   normalizePlayerName,
   type AchievementResult,
+  type ActionItem,
+  type ActionItemStatus,
   type AttackDocument,
   type AttackStatus,
   type BattleFeedEvent,
@@ -27,6 +30,7 @@ import {
   type BoardMember,
   type BoardRole,
   type BoardStatus,
+  type SessionSnapshot,
   type ColumnId,
   type DashboardBoard,
   type FishCatch,
@@ -71,6 +75,14 @@ import {
 
 export const MOCK_STATE_KEY = "retro-room:mock-state";
 const MOCK_ADMIN_UID = "mock-admin";
+const MOCK_PLAYERS = [
+  ["mock-ploy", "Ploy"],
+  ["mock-nok", "Nok"],
+  ["mock-kai", "Kai"],
+  ["mock-may", "May"],
+  ["mock-pim", "Pim"],
+  ["mock-ton", "Ton"],
+] as const;
 
 export type MockUser = {
   uid: string;
@@ -92,18 +104,23 @@ type StoredBoard = {
   title: string;
   ownerId: string;
   status: BoardStatus;
+  currentSessionId?: string | null;
   timerEndsAt?: string | null;
   timerDurationSec?: number | null;
+  ratingRound?: { endsAt: string; durationSec: number; revealed: boolean } | null;
   phase?: number;
   nextHostUid?: string | null;
   nextHostSpunAt?: string | null;
   farmActiveGameId?: string | null;
+  chaosActiveGameId?: string | null;
   nextHostGameId?: string | null;
   hostUid?: string | null;
   pastHostUids?: string[];
   createdAt: string;
 };
 type StoredMember = Omit<BoardMember, "joinedAt"> & { joinedAt: string };
+type StoredActionItem = Omit<ActionItem, "createdAt" | "completedAt"> & { createdAt: string; completedAt: string | null };
+type StoredSessionSnapshot = Omit<SessionSnapshot, "completedAt"> & { completedAt: string };
 type StoredFarmGame = {
   id: string;
   startedAt: string;
@@ -198,6 +215,8 @@ type MockState = {
   boards: Record<string, StoredBoard>;
   members: Record<string, Record<string, StoredMember>>;
   cards: Record<string, Record<string, StoredCard>>;
+  actionItems?: Record<string, Record<string, StoredActionItem>>;
+  sessionSnapshots?: Record<string, Record<string, StoredSessionSnapshot>>;
   /** Voter documents per board (F26); absent in states saved before voting existed. */
   votes?: Record<string, Record<string, string[]>>;
   /** Self ratings per board (F28); absent in states saved before ratings existed. */
@@ -232,44 +251,20 @@ export type MockBackendOptions = {
   now?: () => Date;
 };
 
+function addMockPlayers(members: Record<string, StoredMember>, joinedAt: string): void {
+  if (Object.keys(members).some((uid) => uid !== MOCK_ADMIN_UID)) return;
+  for (const [uid, displayName] of MOCK_PLAYERS) {
+    members[uid] ??= { uid, role: "member", displayName, joinedAt };
+  }
+}
+
 function seedState(): MockState {
-  const at = (minute: number) => `2026-11-06T09:0${minute}:00.000Z`;
-  const board = (id: string, title: string): StoredBoard => ({
-    id,
-    title,
-    ownerId: "mock-ploy",
-    status: "in-progress",
-    createdAt: at(0),
-  });
-  const members = (): Record<string, StoredMember> => ({
-    "mock-ploy": { uid: "mock-ploy", role: "owner", displayName: "Ploy", joinedAt: at(0) },
-    "mock-nok": { uid: "mock-nok", role: "member", displayName: "Nok", joinedAt: at(1) },
-    [MOCK_ADMIN_UID]: { uid: MOCK_ADMIN_UID, role: "member", displayName: "Aomsin", joinedAt: at(2) },
-  });
-  const card = (id: string, columnId: ColumnId, text: string, authorId: string, hidden: boolean, minute: number): StoredCard => ({
-    id,
-    columnId,
-    text,
-    authorId,
-    hidden,
-    createdAt: at(minute),
-  });
   return {
     session: null,
-    profiles: { [MOCK_ADMIN_UID]: "Aomsin", "mock-ploy": "Ploy", "mock-nok": "Nok" },
-    boards: { sprint23: board("sprint23", "Sprint 23"), sprint13: board("sprint13", "Sprint 13") },
-    members: { sprint23: members(), sprint13: members() },
-    cards: {
-      sprint23: {
-        a: card("a", "went-well", "Deploy was smooth this sprint", "mock-ploy", false, 1),
-        b: card("b", "to-improve", "Stand-ups run too long", "mock-nok", false, 2),
-        c: card("c", "to-improve", "Private feedback about the review process", "mock-nok", true, 3),
-        d: card("d", "ideas", "Try a demo day on Fridays", "mock-ploy", false, 4),
-      },
-      sprint13: {
-        e: card("e", "ideas", "Pair on the release checklist", "mock-ploy", false, 5),
-      },
-    },
+    profiles: { [MOCK_ADMIN_UID]: "Aomsin", "mock-ploy": "Ploy", "mock-nok": "Nok", "mock-kai": "Kai", "mock-may": "May", "mock-pim": "Pim", "mock-ton": "Ton" },
+    boards: {},
+    members: {},
+    cards: {},
     counter: 0,
   };
 }
@@ -292,7 +287,25 @@ function loadState(storage: StorageLike | undefined): MockState {
     const raw = storage.getItem(MOCK_STATE_KEY);
     if (!raw) return seedState();
     const parsed: unknown = JSON.parse(raw);
-    return isMockState(parsed) ? parsed : seedState();
+    if (!isMockState(parsed)) return seedState();
+    for (const [key, collection] of Object.entries(parsed)) {
+      if (key === "profiles" || key === "session" || key === "counter") continue;
+      if (collection && typeof collection === "object") {
+        const boardData = collection as Record<string, unknown>;
+        delete boardData.sprint23;
+        delete boardData.sprint13;
+      }
+    }
+    const fresh = seedState();
+    for (const boardId of Object.keys(parsed.members)) {
+      parsed.members[boardId] = { ...(fresh.members[boardId] ?? {}), ...parsed.members[boardId] };
+    }
+    for (const [boardId, board] of Object.entries(parsed.boards)) {
+      if (board.ownerId === MOCK_ADMIN_UID) {
+        addMockPlayers((parsed.members[boardId] ??= {}), board.createdAt);
+      }
+    }
+    return parsed;
   } catch {
     return seedState();
   }
@@ -360,12 +373,17 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       title: stored.title,
       ownerId: stored.ownerId,
       status: stored.status,
+      currentSessionId: stored.currentSessionId ?? null,
       timerEndsAt: stored.timerEndsAt ? new Date(stored.timerEndsAt) : null,
       timerDurationSec: stored.timerDurationSec ?? null,
+      ratingRound: stored.ratingRound && Number.isFinite(Date.parse(stored.ratingRound.endsAt)) && Number.isInteger(stored.ratingRound.durationSec) && stored.ratingRound.durationSec >= 1 && stored.ratingRound.durationSec <= 7200 && typeof stored.ratingRound.revealed === "boolean"
+        ? { ...stored.ratingRound, endsAt: new Date(stored.ratingRound.endsAt) }
+        : null,
       phase: clampPhase(stored.phase),
       nextHostUid: stored.nextHostUid ?? null,
       nextHostSpunAt: stored.nextHostSpunAt ? new Date(stored.nextHostSpunAt) : null,
       farmActiveGameId: stored.farmActiveGameId ?? null,
+      chaosActiveGameId: stored.chaosActiveGameId ?? null,
       nextHostGameId: stored.nextHostGameId ?? null,
       hostUid: stored.hostUid ?? null,
       pastHostUids: [...(stored.pastHostUids ?? [])],
@@ -633,12 +651,15 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       const createdAt = now().toISOString();
       state.boards[id] = { id, title, ownerId: uid, status: "waiting", createdAt };
       state.members[id] = { [uid]: { uid, role: "owner", displayName: playerName, joinedAt: createdAt } };
+      if (uid === MOCK_ADMIN_UID) addMockPlayers(state.members[id], createdAt);
       changed();
       return id;
     },
 
     async startSession(boardId: string): Promise<void> {
-      boardOrThrow(boardId).status = "in-progress";
+      const board = boardOrThrow(boardId);
+      board.status = "in-progress";
+      board.currentSessionId = nextId("session");
       changed();
     },
 
@@ -648,6 +669,42 @@ export function createMockBackend(options: MockBackendOptions = {}) {
         onVoters,
         onError,
       );
+    },
+
+    subscribeToActionItems(boardId: string, cb: (items: ActionItem[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => Object.values(state.actionItems?.[boardId] ?? {}).map((item) => ({ ...item, createdAt: new Date(item.createdAt), completedAt: item.completedAt ? new Date(item.completedAt) : null })), cb, onError);
+    },
+
+    subscribeToSessionSnapshots(boardId: string, cb: (items: SessionSnapshot[]) => void, onError: (error: unknown) => void): Unsubscribe {
+      return subscribe(() => Object.values(state.sessionSnapshots?.[boardId] ?? {}).map((item) => ({ ...item, categoryCounts: { ...item.categoryCounts }, completedAt: new Date(item.completedAt) })).sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime()), cb, onError);
+    },
+
+    async createActionItem(boardId: string, text: string, dueDate: string): Promise<void> {
+      if (currentUser()?.uid !== MOCK_ADMIN_UID && currentUser()?.uid !== boardOrThrow(boardId).ownerId) throw denied("Only the board owner can add action items");
+      if (text.trim().length === 0 || text.trim().length > 500 || !isValidDueDate(dueDate)) throw new Error("กรุณาตรวจสอบรายการและวันครบกำหนด");
+      const id = nextId("action");
+      ((state.actionItems ??= {})[boardId] ??= {})[id] = { id, text: text.trim(), dueDate, status: "not-started", createdAt: now().toISOString(), completedAt: null };
+      changed();
+    },
+
+    async setActionItemStatus(boardId: string, itemId: string, status: ActionItemStatus): Promise<void> {
+      if (currentUser()?.uid !== MOCK_ADMIN_UID && currentUser()?.uid !== boardOrThrow(boardId).ownerId) throw denied("Only the board owner can update action items");
+      if (!ACTION_ITEM_STATUSES.includes(status)) throw new Error("สถานะรายการไม่ถูกต้อง");
+      const item = state.actionItems?.[boardId]?.[itemId];
+      if (!item) throw new Error("Action item not found");
+      item.status = status;
+      item.completedAt = status === "completed" ? now().toISOString() : null;
+      changed();
+    },
+
+    async editActionItem(boardId: string, itemId: string, text: string, dueDate: string): Promise<void> {
+      if (currentUser()?.uid !== MOCK_ADMIN_UID && currentUser()?.uid !== boardOrThrow(boardId).ownerId) throw denied("Only the board owner can edit action items");
+      if (text.trim().length === 0 || text.trim().length > 500 || !isValidDueDate(dueDate)) throw new Error("กรุณาตรวจสอบรายการและวันครบกำหนด");
+      const item = state.actionItems?.[boardId]?.[itemId];
+      if (!item) throw new Error("Action item not found");
+      item.text = text.trim();
+      item.dueDate = dueDate;
+      changed();
     },
 
     async saveMyVotes(boardId: string, uid: string, cardIds: string[]): Promise<void> {
@@ -1047,8 +1104,37 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       changed();
     },
 
+    async startRatingTimer(boardId: string, minutes: number): Promise<void> {
+      const board = boardOrThrow(boardId);
+      if (currentUser()?.uid !== MOCK_ADMIN_UID || board.status !== "in-progress" || clampPhase(board.phase) !== 4 || !Number.isInteger(minutes) || minutes < 1 || minutes > 120 || board.ratingRound?.revealed) throw denied("ไม่สามารถเริ่มจับเวลาคะแนนได้");
+      board.ratingRound = { endsAt: new Date(now().getTime() + minutes * 60_000).toISOString(), durationSec: minutes * 60, revealed: false };
+      changed();
+    },
+
+    async stopRatingTimer(boardId: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      if (currentUser()?.uid !== MOCK_ADMIN_UID || board.status !== "in-progress" || clampPhase(board.phase) !== 4 || !board.ratingRound || board.ratingRound.revealed || Date.parse(board.ratingRound.endsAt) <= now().getTime()) throw denied("ไม่สามารถยกเลิกเวลาคะแนนได้");
+      board.ratingRound = null;
+      changed();
+    },
+
+    async revealRatings(boardId: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      if (currentUser()?.uid !== MOCK_ADMIN_UID || board.status !== "in-progress" || clampPhase(board.phase) !== 4 || !board.ratingRound || board.ratingRound.revealed || Date.parse(board.ratingRound.endsAt) > now().getTime()) throw denied("คะแนนจะเปิดได้เมื่อหมดเวลาและแอดมินอนุมัติเท่านั้น");
+      board.ratingRound.revealed = true;
+      changed();
+    },
+
     async completeSession(boardId: string): Promise<void> {
-      boardOrThrow(boardId).status = "completed";
+      const board = boardOrThrow(boardId);
+      const completedAt = now();
+      const sessionId = board.currentSessionId ?? nextId("session");
+      const cards: BoardCard[] = Object.values(state.cards[boardId] ?? {}).filter((card) => !card.hidden).map((card) => ({ id: card.id, columnId: card.columnId, text: card.text, authorId: card.authorId, hidden: false, groupId: card.groupId ?? null, createdAt: new Date(card.createdAt) }));
+      const items: ActionItem[] = Object.values(state.actionItems?.[boardId] ?? {}).map((item) => ({ ...item, createdAt: new Date(item.createdAt), completedAt: item.completedAt ? new Date(item.completedAt) : null }));
+      const snapshot = makeSessionSnapshot(cards, items, sessionId, completedAt);
+      ((state.sessionSnapshots ??= {})[boardId] ??= {})[sessionId] = { ...snapshot, completedAt: completedAt.toISOString() };
+      board.currentSessionId = sessionId;
+      board.status = "completed";
       changed();
     },
 
@@ -1058,9 +1144,11 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       board.phase = 1;
       board.timerEndsAt = null;
       board.timerDurationSec = null;
+      board.ratingRound = null;
       board.nextHostUid = null;
       board.nextHostSpunAt = null;
       board.farmActiveGameId = null;
+      board.chaosActiveGameId = null;
       board.nextHostGameId = null;
       board.hostUid = null;
       board.pastHostUids = [];
@@ -1073,6 +1161,7 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       if (state.votes) delete state.votes[boardId];
       if (state.ratings) delete state.ratings[boardId];
       boardOrThrow(boardId).phase = 1;
+      boardOrThrow(boardId).ratingRound = null;
       changed();
     },
 
@@ -1094,6 +1183,28 @@ export function createMockBackend(options: MockBackendOptions = {}) {
 
     subscribeToBoard(boardId: string, onBoard: (board: Board | null) => void, onError: (error: unknown) => void): Unsubscribe {
       return subscribe(() => (state.boards[boardId] ? toBoard(state.boards[boardId]) : null), onBoard, onError);
+    },
+
+    setChaosActiveGameId(boardId: string, gameId: string): void {
+      const board = boardOrThrow(boardId);
+      if (board.phase !== 5 || !currentUser() || currentUser()?.uid !== MOCK_ADMIN_UID) throw new Error("Only the admin can create a Chaos game in phase 5");
+      board.chaosActiveGameId = gameId;
+      changed();
+    },
+
+    getChaosBoard(boardId: string): Board {
+      return toBoard(boardOrThrow(boardId));
+    },
+
+    confirmChaosHost(boardId: string, hostUid: string): void {
+      const board = boardOrThrow(boardId);
+      if (board.phase !== 5 || currentUser()?.uid !== MOCK_ADMIN_UID || !state.members[boardId]?.[hostUid]) throw new Error("Invalid Chaos host confirmation");
+      const oldHost = board.hostUid ?? board.ownerId;
+      if (hostUid === oldHost) throw new Error("Current host is ineligible");
+      board.nextHostUid = hostUid;
+      board.nextHostSpunAt = new Date().toISOString();
+      board.nextHostGameId = board.chaosActiveGameId ?? null;
+      changed();
     },
 
     subscribeToMembers(boardId: string, onMembers: (members: BoardMember[]) => void, onError: (error: unknown) => void): Unsubscribe {

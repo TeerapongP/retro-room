@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  webServer: { command: "pnpm dev", url: "http://localhost:3000", reuseExistingServer: !process.env.CI, timeout: 120_000 },
   outputDir: "./artifacts/playwright/test-results",
   timeout: 60_000,
   retries: 1,
@@ -26,7 +27,7 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      use: { ...devices["iPhone 14"] },
+      use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
     },
   ],
 });

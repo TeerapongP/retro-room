@@ -664,7 +664,8 @@ function TreasureRound({
 
       {/* ── PLAYING ───────────────────────────────────── */}
       {phase === "playing" && (
-        <div className="tr-panel">
+        <div className="tr-panel tr-game-layout">
+          <aside className="tr-player-hud" aria-label="Player HUD">
           {/* Timer */}
           <div className="tr-timer-row">
             {timeLeftMs !== null && (
@@ -673,6 +674,14 @@ function TreasureRound({
               </span>
             )}
             {!isLive && <span className="tr-hint">หมดเวลา!</span>}
+          </div>
+
+          <div className="tr-player-card">
+            <span className="tr-player-avatar" style={{ background: avatarColor(user.uid) }} aria-hidden="true">
+              {nameOf(user.uid).charAt(0).toUpperCase()}
+            </span>
+            <span className="tr-player-name">{nameOf(user.uid)}</span>
+            <span className="tr-player-coins">🪙 {myState?.currentRunPoints ?? 0} TC</span>
           </div>
 
           {/* My stats */}
@@ -692,6 +701,38 @@ function TreasureRound({
               </div>
             </div>
           )}
+
+          <div className="tr-hud-extra">
+            <InventoryBar
+              inventory={inventory}
+              isBusy={isBusy}
+              frozenUntilMs={myState?.frozenUntilMs ?? null}
+              nowMs={nowMs}
+              onActivateOffensive={(itemType) => setTargetSelectItem(itemType)}
+            />
+            <button
+              className={`tr-btn ${shopOpen ? "tr-btn-active" : "tr-btn-primary"}`}
+              onClick={() => setShopOpen(!shopOpen)}
+              disabled={isBusy}
+              data-testid="btn-battle-shop"
+            >
+              🛒 Battle Shop
+            </button>
+            {shopOpen && (
+              <BattleShop
+                currentRunPoints={myState?.currentRunPoints ?? 0}
+                frozenUntilMs={myState?.frozenUntilMs ?? null}
+                nowMs={nowMs}
+                inventorySlots={inventory?.slots.length ?? 0}
+                isBusy={isBusy}
+                onBuy={handleBuyItem}
+                onSelectOffensive={(itemType) => { setTargetSelectItem(itemType); setShopOpen(false); }}
+              />
+            )}
+          </div>
+          </aside>
+
+          <main className="tr-arena">
 
           {/* Chest grid */}
           {myChests ? (
@@ -750,6 +791,17 @@ function TreasureRound({
             </div>
           )}
 
+          {isAdmin && (
+            <div className="tr-admin-row">
+              <button className="tr-btn tr-btn-danger" onClick={() => void handleEndGame()} disabled={isBusy} data-testid="btn-end-game">
+                ⏹ จบรอบ
+              </button>
+            </div>
+          )}
+          </main>
+
+          <aside className="tr-multiplayer" aria-label="Multiplayer">
+
           {/* Final Rush banner */}
           {endsAt && isFinalRush(endsAt.getTime(), nowMs) && (
             <FinalRushBanner
@@ -787,56 +839,15 @@ function TreasureRound({
             />
           )}
 
-          {/* Inventory bar */}
-          <InventoryBar
-            inventory={inventory}
-            isBusy={isBusy}
-            frozenUntilMs={myState?.frozenUntilMs ?? null}
-            nowMs={nowMs}
-            onActivateOffensive={(itemType) => setTargetSelectItem(itemType)}
-          />
-
-          {/* Battle shop toggle */}
-          <div className="tr-action-row">
-            <button
-              className={`tr-btn ${shopOpen ? "tr-btn-active" : "tr-btn-primary"}`}
-              onClick={() => setShopOpen(!shopOpen)}
-              disabled={isBusy}
-              data-testid="btn-battle-shop"
-            >
-              🛒 Battle Shop
-            </button>
-          </div>
-
-          {shopOpen && (
-            <BattleShop
-              currentRunPoints={myState?.currentRunPoints ?? 0}
-              frozenUntilMs={myState?.frozenUntilMs ?? null}
-              nowMs={nowMs}
-              inventorySlots={inventory?.slots.length ?? 0}
-              isBusy={isBusy}
-              onBuy={handleBuyItem}
-              onSelectOffensive={(itemType) => { setTargetSelectItem(itemType); setShopOpen(false); }}
-            />
-          )}
-
           {/* Battle feed */}
           <BattleFeedPanel events={battleFeed} nameOf={nameOf} />
 
           {/* Reactions bar */}
           <ReactionsBar floatingReactions={floatingReactions} onReact={handleReaction} />
 
-          {/* Admin end-game */}
-          {isAdmin && (
-            <div className="tr-admin-row">
-              <button className="tr-btn tr-btn-danger" onClick={() => void handleEndGame()} disabled={isBusy} data-testid="btn-end-game">
-                ⏹ จบรอบ
-              </button>
-            </div>
-          )}
-
           {/* Leaderboard */}
           <Leaderboard scored={scored} myUid={user.uid} phase={phase} nameOf={nameOf} />
+          </aside>
         </div>
       )}
 
@@ -1150,11 +1161,17 @@ function BattleShop({
                   className={`tr-shop-item ${!canAfford || slotFull ? "tr-shop-disabled" : ""}`}
                   onClick={() => isOff ? onSelectOffensive(item) : onBuy(item)}
                   disabled={disabled}
-                  title={BATTLE_ITEM_DESC[item]}
+                  title={disabled
+                    ? isFrozen ? "Frozen: wait for the ice trap to end" : !canAfford ? `Need ${cost - currentRunPoints} more TC` : slotFull ? "Inventory full: use or free a slot" : BATTLE_ITEM_DESC[item]
+                    : BATTLE_ITEM_DESC[item]}
+                  aria-label={`${BATTLE_ITEM_LABEL[item]}, ${cost} TC. ${disabled
+                    ? isFrozen ? "Frozen: wait for the ice trap to end" : !canAfford ? `Need ${cost - currentRunPoints} more TC` : slotFull ? "Inventory full: use or free a slot" : "Unavailable"
+                    : BATTLE_ITEM_DESC[item]}`}
                 >
                   <span className="tr-shop-icon">{BATTLE_ITEM_EMOJI[item]}</span>
                   <span className="tr-shop-name">{BATTLE_ITEM_LABEL[item]}</span>
                   <span className="tr-shop-cost">{cost} TC</span>
+                  <span className="tr-shop-desc">{BATTLE_ITEM_DESC[item]}</span>
                   {isInstant(item) && <span className="tr-shop-instant">⚡ทันที</span>}
                 </button>
               );
@@ -1640,6 +1657,190 @@ function TreasureStyles() {
         .tr-title { font-size: 0.75rem; }
         .tr-inventory-slots { flex-direction: column; }
         .tr-reaction-btns { gap: 0.3rem; }
+      }
+      .tr-root {
+        --cave-ink: #170f2b;
+        --cave-panel: #24183b;
+        --cave-line: #654b86;
+        --cave-gold: #ffd16a;
+        --cave-text: #f7e9cb;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 520px;
+        gap: 1rem;
+        padding: clamp(12px, 2vw, 24px);
+        overflow: hidden;
+        color: var(--cave-text);
+        background:
+          radial-gradient(ellipse at 50% 0%, #58346f 0, transparent 38%),
+          radial-gradient(circle at 4% 88%, #4b286b 0 2px, transparent 4px),
+          radial-gradient(circle at 93% 23%, #a05cce 0 2px, transparent 4px),
+          linear-gradient(155deg, #201433 0%, #120e25 60%, #25122f 100%);
+        border: 4px solid #4c3564;
+        box-shadow: inset 0 0 0 3px #100b1c, inset 0 18px 50px #39214f66;
+        font: 500 14px/1.45 "Courier New", monospace;
+        image-rendering: pixelated;
+      }
+      .tr-root *, .tr-root *::before, .tr-root *::after { box-sizing: border-box; }
+      .tr-header { min-height: 54px; padding: 8px 12px; background: #211532; border: 3px solid #73568d; box-shadow: 0 4px #0b0814; }
+      .tr-title { color: #ffe19a; font: 800 22px/1.2 "Courier New", monospace; letter-spacing: .03em; text-shadow: 2px 2px #703f34; }
+      .tr-modifier-badge, .tr-pp-badge { border-radius: 2px; font-size: 12px; padding: 6px 9px; }
+      .tr-panel { gap: 12px; }
+      .tr-game-layout {
+        display: grid;
+        grid-template-columns: minmax(205px, 250px) minmax(400px, 1fr) minmax(235px, 285px);
+        align-items: start;
+        gap: 14px;
+        max-width: 1600px;
+        width: 100%;
+        margin-inline: auto;
+      }
+      .tr-player-hud, .tr-multiplayer { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+      .tr-player-hud { position: sticky; top: 12px; }
+      .tr-player-card { display: grid; grid-template-columns: 44px minmax(0,1fr); align-items: center; gap: 3px 9px; padding: 10px; background: linear-gradient(145deg,#39264c,#21172f); border: 3px solid #8a6b91; box-shadow: 0 4px #0b0814; }
+      .tr-player-avatar { grid-row: span 2; display: grid; place-items: center; width: 42px; height: 42px; border: 3px solid #ffdc88; border-radius: 2px; color: white; font-size: 20px; font-weight: 900; text-shadow: 2px 2px #322; }
+      .tr-player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 900; }
+      .tr-player-coins { color: #ffda75; font-weight: 800; }
+      .tr-multiplayer { max-height: min(78vh, 820px); overflow-y: auto; padding-right: 2px; }
+      .tr-arena {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+        padding: clamp(14px, 2vw, 24px);
+        background: linear-gradient(180deg, #39234d, #211631 45%, #1b142c);
+        border: 4px solid #9c76a7;
+        box-shadow: inset 0 0 0 3px #130d20, 0 6px #0b0814;
+      }
+      .tr-arena > * { width: 100%; }
+      .tr-timer-row { justify-content: center; padding: 7px; border: 2px solid #73568d; background: #180f27; }
+      .tr-timer { font-size: clamp(22px, 3vw, 32px); font-weight: 800; color: #ffe080; text-shadow: 2px 2px #713e34; }
+      .tr-my-stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .tr-stat-pill { min-width: 0; min-height: 68px; gap: 4px; padding: 8px 4px; border: 2px solid #73568d; border-radius: 2px; background: #211532; }
+      .tr-stat-label { font: 700 10px/1.25 "Courier New", monospace; color: #d5c2e5; text-align: center; }
+      .tr-stat-value { font-size: 18px; color: var(--cave-gold); }
+      .tr-chest-grid {
+        grid-template-columns: repeat(4, minmax(64px, 1fr));
+        width: min(100%, 680px);
+        gap: clamp(8px, 1.2vw, 14px);
+        margin-inline: auto;
+        padding: 12px;
+        background: radial-gradient(ellipse, #5e3d6d 0%, #332344 58%, #211730 100%);
+        border: 4px solid #81628c;
+        box-shadow: inset 0 0 0 3px #1a1126, 0 5px #0b0814;
+      }
+      .tr-chest {
+        position: relative;
+        min-width: 0;
+        width: 100%;
+        max-width: 144px;
+        justify-self: center;
+        aspect-ratio: 1.22;
+        padding: 6px;
+        overflow: visible;
+        color: #fff4d3;
+        border: 3px solid #806094;
+        border-radius: 2px;
+        background: linear-gradient(145deg, #483153, #2a1d3b);
+        box-shadow: inset 0 -5px #1b1328, 0 4px #130d1e;
+      }
+      .tr-chest-next { border-color: #ffe07e; box-shadow: inset 0 -5px #392445, 0 0 0 2px #ffcc4d88, 0 0 20px #ffb32e88; animation: tr-pulse 1s steps(2,end) infinite; }
+      .tr-chest:disabled { opacity: .9; }
+      .tr-chest-closed { position: relative; display: block; width: min(58%, 66px); height: min(55%, 48px); margin-top: 12%; color: transparent; font-size: 0; filter: drop-shadow(3px 4px 0 #130b18); }
+      .tr-chest-closed::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 34%; background: linear-gradient(90deg,#a9552d 0 16%,#f4bd58 16% 24%,#a9552d 24% 76%,#f4bd58 76% 84%,#a9552d 84%); border: 3px solid #f5ca68; }
+      .tr-chest-closed::after { content: ""; position: absolute; left: 4%; right: 4%; top: 35%; bottom: 0; background: linear-gradient(90deg,#8b3f2c 0 12%,#cf7133 12% 37%,#f6c34e 37% 49%,#8c432b 49% 55%,#e39b3d 55% 87%,#8a3e2a 87%); border: 3px solid #f5ca68; border-top: 2px solid #4d2826; }
+      .tr-chest-reveal { font-size: clamp(30px, 4vw, 48px); filter: drop-shadow(0 3px #160c20); }
+      .tr-chest-pts { font: 800 14px/1 "Courier New", monospace; padding: 3px 7px; color: #ffe480; background: #211328; border: 2px solid #e2ac52; }
+      .tr-chest-opened { background: radial-gradient(ellipse at center,#765b8d,#2e213b 68%); }
+      .tr-action-row { justify-content: center; }
+      .tr-btn { min-height: 42px; padding: 9px 12px; border-radius: 2px; font: 700 13px/1.2 "Courier New", monospace; box-shadow: 0 3px #0d0815; }
+      .tr-btn-xs { min-height: 34px; font-size: 12px; }
+      .tr-btn-primary { background: #215b3f; color: #c5ffd3; border-color: #72d598; }
+      .tr-btn-bank { background: #6a4b19; color: #ffedb1; border-color: #f9d772; }
+      .tr-btn-danger { background: #692e40; color: #ffd3d2; }
+      .tr-inventory, .tr-shop, .tr-leaderboard, .tr-feed, .tr-attack-warning, .tr-target-overlay, .tr-achievements, .tr-admin-setup {
+        border-radius: 2px;
+        box-shadow: 0 4px #0b0814;
+      }
+      .tr-inventory, .tr-shop, .tr-leaderboard { padding: 12px; background: linear-gradient(145deg,#2d2044,#21172f); border: 3px solid #795b8c; }
+      .tr-inventory-label, .tr-shop-title, .tr-lb-title, .tr-feed-title, .tr-ach-title { font: 800 14px/1.3 "Courier New", monospace; color: #ffdc86; }
+      .tr-inventory-slots { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+      .tr-inv-slot { min-width: 0; min-height: 72px; padding: 7px 3px; border-radius: 2px; font: 600 11px/1.2 "Courier New", monospace; }
+      .tr-inv-slot-filled { border-color: #c5a2e5; background: #382747; }
+      .tr-inv-emoji { font-size: 23px; }
+      .tr-inv-name { font-size: 10px; }
+      .tr-inv-empty { font-size: 20px; }
+      .tr-lb-list { gap: 5px; }
+      .tr-lb-row { min-width: 0; gap: 7px; padding: 7px 5px; background: #1b1429; font-size: 12px; }
+      .tr-lb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tr-lb-score { white-space: nowrap; color: #ffdd7c; }
+      .tr-lb-avatar { width: 26px; height: 26px; font-size: 12px; border-radius: 2px; }
+      .tr-multiplayer .tr-feed { max-height: 220px; overflow-y: auto; background: #1a1327; border-color: #59466d; }
+      .tr-feed-item { white-space: normal; font: 600 12px/1.35 "Courier New", monospace; }
+      .tr-reaction-btn { width: 40px; height: 40px; background: #2b1d3b; border-radius: 2px; }
+      .tr-attack-warning { border: 4px solid #ff6c6c; background: #632641; box-shadow: 0 0 22px #ff3b5377, 0 4px #0b0814; }
+      .tr-attack-warning-header { font-size: 15px; font-weight: 800; }
+      .tr-attack-warning-countdown { font-size: 19px; }
+      .tr-final-rush { justify-content: center; min-height: 56px; border-radius: 2px; font-size: 17px; font-weight: 900; background: linear-gradient(90deg,#7e281e,#9c4a20,#7e281e); box-shadow: 0 0 22px #ff792a88; }
+      .tr-final-rush-shutdown { background: #6c1c35; }
+      .tr-ach-row { padding: 8px; background: #21172e; }
+      .tr-ach-label { font-size: 12px; }
+      .tr-ach-desc, .tr-ach-winner { font-size: 11px; }
+      .tr-target-overlay { z-index: 2; border-color: #c195e3; background: #281c3c; }
+      .tr-target-list { gap: 8px; }
+      .tr-shop-category { gap: 6px; }
+      .tr-shop-cat-label { font-size: 12px; color: #e3d1f0; }
+      .tr-shop-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+      .tr-shop-item { min-height: 80px; grid-template-columns: 34px 1fr auto; padding: 8px; border-radius: 2px; background: #1b142a; }
+      .tr-shop-icon { font-size: 24px; }
+      .tr-shop-name, .tr-shop-cost { font-size: 11px; }
+      .tr-shop-desc { font-size: 10px; }
+      .tr-hud-extra { display: flex; flex-direction: column; gap: 10px; }
+      .tr-hud-extra > .tr-shop { max-height: 55vh; overflow-y: auto; }
+      .tr-player-hud .tr-shop-grid { grid-template-columns: minmax(0,1fr); }
+      .tr-shop-disabled { opacity: .68; }
+      .tr-arena .tr-admin-row { width: auto; align-self: flex-end; }
+      .tr-root .host-wheel-panel.pixel-panel { color: var(--cave-text); background: linear-gradient(145deg,#352347,#1d142d); border: 4px solid #a17b9a; box-shadow: inset 0 0 0 3px #160f22, 0 5px #0b0814; }
+      .tr-root .host-wheel-result, .tr-root .host-wheel-hint { color: #ffe19a; }
+      .tr-root .host-wheel-pointer { border-top-color: #ffe19a; filter: drop-shadow(0 2px #34223b); }
+      .tr-root .host-wheel-label { color: #24162d; font-family: "Courier New", monospace; font-size: 13px; }
+      .tr-root .host-wheel-panel .pixel-button { min-height: 44px; color: #fff0b7; background: #76512c; border-color: #e4b95c; }
+      body:has(.tr-root) .board-scene { background: #130d20; }
+      body:has(.tr-root) .dashboard-backdrop { display: none; }
+      .tr-game-layout .tr-arena { grid-column: 2; grid-row: 1; }
+      .tr-game-layout .tr-player-hud { grid-column: 1; grid-row: 1; }
+      .tr-game-layout .tr-multiplayer { grid-column: 3; grid-row: 1; }
+      @media (max-width: 1080px) {
+        .tr-game-layout { grid-template-columns: minmax(180px, 230px) minmax(0,1fr); }
+        .tr-game-layout .tr-arena { grid-column: 2; }
+        .tr-game-layout .tr-player-hud { grid-column: 1; }
+        .tr-game-layout .tr-multiplayer { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); max-height: none; overflow: visible; }
+        .tr-game-layout .tr-multiplayer > * { min-width: 0; }
+      }
+      @media (max-width: 680px) {
+        .tr-root { min-height: 0; padding: 10px; gap: 10px; }
+        .tr-title { font-size: 18px; }
+        .tr-game-layout { grid-template-columns: minmax(0,1fr); gap: 10px; }
+        .tr-game-layout .tr-arena { grid-column: 1; grid-row: 1; padding: 10px; }
+        .tr-game-layout .tr-player-hud { position: static; grid-column: 1; grid-row: 2; display: grid; grid-template-columns: 1fr; }
+        .tr-game-layout .tr-multiplayer { grid-column: 1; grid-row: 3; grid-template-columns: 1fr; }
+        .tr-my-stats { grid-template-columns: repeat(3,minmax(0,1fr)); }
+        .tr-stat-pill { min-height: 58px; }
+        .tr-stat-label { font-size: 9px; }
+        .tr-chest-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; padding: 7px; }
+        .tr-chest { aspect-ratio: 1.05; }
+        .tr-chest-closed { width: 62%; height: 54%; }
+        .tr-hud-extra { display: grid; grid-template-columns: 1fr; }
+        .tr-hud-extra > .tr-btn { width: 100%; }
+        .tr-hud-extra > .tr-shop { max-height: none; }
+        .tr-shop-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+        .tr-inv-slot { min-height: 68px; }
+        .tr-player-card { grid-template-columns: 38px minmax(0,1fr) auto; }
+        .tr-player-avatar { grid-row: auto; width: 36px; height: 36px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tr-root *, .tr-root *::before, .tr-root *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
       }
     `}</style>
   );

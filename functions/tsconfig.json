@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": "..",
+    "outDir": "lib"
+  },
+  "include": ["src/**/*.ts", "../lib/chaos/catalog.ts", "../lib/chaos/state.ts", "../lib/chaos/effects.ts"]
+}

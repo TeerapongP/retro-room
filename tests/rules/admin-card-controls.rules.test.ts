@@ -30,6 +30,7 @@ const COMPLETED = "completed";
 const WAITING = "waiting";
 const WRITING = "writing";
 const VOTING = "voting";
+const RATING = "rating";
 const seeded = Timestamp.fromDate(new Date("2026-01-01T00:00:00Z"));
 
 let testEnv: RulesTestEnvironment;
@@ -64,6 +65,7 @@ beforeEach(async () => {
       [OTHER]: "in-progress",
       [WRITING]: "in-progress",
       [VOTING]: "in-progress",
+      [RATING]: "in-progress",
       [COMPLETED]: "completed",
       [WAITING]: "waiting",
     };
@@ -72,9 +74,10 @@ beforeEach(async () => {
         title: boardId,
         ownerId: "alice",
         status,
-        // step 1 (no phase field) keeps other members' cards private (D126); the other boards are already in the review step
+        // Visible cards remain member-readable in step 1; the UI obscures other authors' writing until review (D126).
         ...([SRC, DEST, OTHER].includes(boardId) ? { phase: 2 } : {}),
         ...(boardId === VOTING ? { phase: 3 } : {}),
+        ...(boardId === RATING ? { phase: 4 } : {}),
         createdAt: seeded,
         updatedAt: seeded,
       });
@@ -634,21 +637,22 @@ describe("private writing step (D126 to D130)", () => {
   const phaseUpdate = (boardId: string, phase: number) =>
     updateDoc(doc(admin(), `boards/${boardId}`), { phase, updatedAt: serverTimestamp() });
 
-  it("should let a member read their own card but not another member's card in step 1", async () => {
+  it("should let a member read their own and other visible cards in step 1", async () => {
     await assertSucceeds(getDoc(doc(bob(), `boards/${WRITING}/cards/bobWrote`)));
-    await assertFails(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
+    await assertSucceeds(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
     await assertSucceeds(getDoc(doc(alice(), `boards/${WRITING}/cards/aliceWrote`)));
-    await assertFails(getDoc(doc(alice(), `boards/${WRITING}/cards/bobWrote`)));
+    await assertSucceeds(getDoc(doc(alice(), `boards/${WRITING}/cards/bobWrote`)));
   });
 
-  it("should allow only the own-cards query in step 1", async () => {
+  it("should allow own-card and visible-card queries in step 1", async () => {
     const own = await assertSucceeds(
       getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("authorId", "==", "bob"))),
     );
     if (own.size !== 2) throw new Error(`expected 2 own cards, got ${own.size}`);
-    await assertFails(
+    const visible = await assertSucceeds(
       getDocs(query(collection(bob(), `boards/${WRITING}/cards`), where("hidden", "==", false))),
     );
+    if (visible.size !== 2) throw new Error(`expected 2 visible cards, got ${visible.size}`);
     await assertFails(getDocs(collection(bob(), `boards/${WRITING}/cards`)));
   });
 
@@ -672,7 +676,7 @@ describe("private writing step (D126 to D130)", () => {
     );
     if (visible.size !== 2) throw new Error(`expected 2 visible cards, got ${visible.size}`);
     await assertSucceeds(phaseUpdate(WRITING, 1));
-    await assertFails(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
+    await assertSucceeds(getDoc(doc(bob(), `boards/${WRITING}/cards/aliceWrote`)));
   });
 
   it("should still hide an admin-hidden card from others in step 2 and later", async () => {
@@ -820,6 +824,32 @@ describe("board timer (D109 to D115)", () => {
   });
 });
 
+describe("self-rating timer", () => {
+  const startRatingTimer = (client: ReturnType<typeof admin>, boardId = RATING, minutes = 5) =>
+    updateDoc(doc(client, `boards/${boardId}`), {
+      ratingRound: {
+        endsAt: Timestamp.fromMillis(Date.now() + minutes * 60_000),
+        durationSec: minutes * 60,
+        revealed: false,
+      },
+      updatedAt: serverTimestamp(),
+    });
+
+  it("should let a verified admin start the rating timer", async () => {
+    await assertSucceeds(startRatingTimer(admin()));
+  });
+
+  it("should reject starting the rating timer outside the rating phase", async () => {
+    await assertFails(startRatingTimer(admin(), SRC));
+  });
+
+  it("should reject starting the rating timer by non-admins", async () => {
+    for (const client of [alice(), bob(), stranger()]) {
+      await assertFails(startRatingTimer(client));
+    }
+  });
+});
+
 describe("admin stacking (D102 to D106)", () => {
   const groupUpdate = (client: ReturnType<typeof admin>, cardId: string, data: Record<string, unknown>, boardId = SRC) =>
     updateDoc(doc(client, `boards/${boardId}/cards/${cardId}`), { ...data, updatedAt: serverTimestamp() });
@@ -910,14 +940,14 @@ describe("admin delete (D100)", () => {
 describe("admin board listing", () => {
   it("should let a verified admin list boards", async () => {
     const snapshot = await assertSucceeds(getDocs(collection(admin(), "boards")));
-    if (snapshot.size !== 7) throw new Error(`expected 7 boards, got ${snapshot.size}`);
+    if (snapshot.size !== 8) throw new Error(`expected 8 boards, got ${snapshot.size}`);
   });
 
   it("should let a verified admin list in-progress boards with a status filter", async () => {
     const snapshot = await assertSucceeds(
       getDocs(query(collection(admin(), "boards"), where("status", "==", "in-progress"))),
     );
-    if (snapshot.size !== 5) throw new Error(`expected 5 boards, got ${snapshot.size}`);
+    if (snapshot.size !== 6) throw new Error(`expected 6 boards, got ${snapshot.size}`);
   });
 
   it("should keep listing boards denied for members, owners and strangers", async () => {

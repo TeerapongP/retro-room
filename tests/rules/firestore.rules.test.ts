@@ -442,13 +442,31 @@ describe("session lifecycle", () => {
   const startFields = () => ({
     status: "in-progress",
     startedAt: serverTimestamp(),
+    currentSessionId: "rules-session",
     updatedAt: serverTimestamp(),
   });
   const completeFields = () => ({
     status: "completed",
     completedAt: serverTimestamp(),
+    currentSessionId: "rules-session",
     updatedAt: serverTimestamp(),
   });
+
+  async function completeWithSnapshot(boardId: string) {
+    const db = alice();
+    const batch = writeBatch(db);
+    const boardRef = doc(db, `boards/${boardId}`);
+    const snapshotId = "rules-snapshot";
+    const completedAt = serverTimestamp();
+    batch.set(doc(db, `boards/${boardId}/sessionSnapshots/${snapshotId}`), {
+      completedAt,
+      categoryCounts: { "went-well": 0, "to-improve": 0, ideas: 0 },
+      dueActionCount: 0,
+      completedDueActionCount: 0,
+    });
+    batch.update(boardRef, { status: "completed", completedAt, currentSessionId: snapshotId, updatedAt: serverTimestamp() });
+    return batch.commit();
+  }
 
   it(`should allow creating a board in the waiting status`, async () => {
     await assertSucceeds(ownerCreatesBoardWithStatus("waiting"));
@@ -531,11 +549,15 @@ describe("session lifecycle", () => {
   });
 
   it(`should allow the owner to complete a session in progress`, async () => {
-    await assertSucceeds(updateDoc(doc(alice(), `boards/${BOARD_ID}`), completeFields()));
+    await assertSucceeds(completeWithSnapshot(BOARD_ID));
   });
 
   it(`should allow the owner to complete a legacy board`, async () => {
-    await assertSucceeds(updateDoc(doc(alice(), `boards/${LEGACY_BOARD_ID}`), completeFields()));
+    await assertSucceeds(completeWithSnapshot(LEGACY_BOARD_ID));
+  });
+
+  it(`should deny completing a session without its immutable snapshot`, async () => {
+    await assertFails(updateDoc(doc(alice(), `boards/${BOARD_ID}`), completeFields()));
   });
 
   it(`should deny a member completing the session`, async () => {
@@ -638,6 +660,31 @@ describe("session lifecycle", () => {
         joinedAt: serverTimestamp(),
       }),
     );
+  });
+});
+
+describe("retrospective report records", () => {
+  it("allows the board owner to create and update a valid Action Item", async () => {
+    const ref = doc(alice(), `boards/${BOARD_ID}/actionItems/action1`);
+    await assertSucceeds(setDoc(ref, { text: "Write guide", status: "not-started", dueDate: "2026-11-10", createdAt: serverTimestamp(), completedAt: null }));
+    await assertSucceeds(updateDoc(ref, { status: "completed", completedAt: serverTimestamp() }));
+  });
+
+  it("denies members creating Action Items and rejects invalid dates", async () => {
+    const validItem = { text: "Task", status: "not-started", dueDate: "2026-11-10", createdAt: serverTimestamp(), completedAt: null };
+    await assertFails(setDoc(doc(bob(), `boards/${BOARD_ID}/actionItems/member-item`), validItem));
+    await assertFails(setDoc(doc(alice(), `boards/${BOARD_ID}/actionItems/invalid-date`), { ...validItem, dueDate: "2026-13-40" }));
+    await assertFails(setDoc(doc(alice(), `boards/${BOARD_ID}/actionItems/extra-field`), { ...validItem, authorUid: "alice" }));
+  });
+
+  it("allows members to read snapshots but prevents edits and deletion", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), `boards/${BOARD_ID}/sessionSnapshots/old`), { completedAt: seededTimestamp, categoryCounts: { "went-well": 1, "to-improve": 2, ideas: 3 }, dueActionCount: 0, completedDueActionCount: 0 });
+    });
+    const ref = doc(bob(), `boards/${BOARD_ID}/sessionSnapshots/old`);
+    await assertSucceeds(getDoc(ref));
+    await assertFails(updateDoc(ref, { dueActionCount: 1 }));
+    await assertFails(deleteDoc(ref));
   });
 });
 

@@ -61,4 +61,4 @@ Notes: pnpm skipped build scripts for `@firebase/util`, `protobufjs`, `re2` (not
 
 ## Emulator project
 
-Local emulators use the demo project `demo-retro-room` (Auth 9099, Firestore 8080, see `firebase.json`). It is separate from `retro-room-alcyone` and needs no `firebase login`.
+Local emulators use the demo project `demo-retro-room` (Auth 9099, Firestore 8380, see `firebase.json`). It is separate from `retro-room-alcyone` and needs no `firebase login`.

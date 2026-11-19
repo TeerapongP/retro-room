@@ -5,11 +5,13 @@ type RatingPanelProps = {
   ratings: Rating[];
   members: BoardMember[];
   uid: string;
+  revealed: boolean;
+  timerExpired: boolean;
   onRate: (score: number) => void;
 };
 
-/** Step 4 (F28): the board is hidden and each member picks one score from 1 to 5. Everyone sees all scores. */
-export function RatingPanel({ ratings, members, uid, onRate }: RatingPanelProps) {
+/** Step 4 (F28): members pick a score from 1 to 5; shared results stay concealed until the admin reveals them. */
+export function RatingPanel({ ratings, members, uid, revealed, timerExpired, onRate }: RatingPanelProps) {
   const myScore = ratings.find((rating) => rating.uid === uid)?.score;
   const average = averageRating(ratings);
   const scoreByUid = new Map(ratings.map((rating) => [rating.uid, rating.score]));
@@ -28,25 +30,36 @@ export function RatingPanel({ ratings, members, uid, onRate }: RatingPanelProps)
               onClick={() => onRate(score)}
             >
               <span className="rating-choice-score">{formatScore(score)}</span>
-              <span className="rating-choice-count">{voters > 0 ? `${voters} คน` : " "}</span>
+              <span className="rating-choice-count">{revealed && voters > 0 ? `${voters} คน` : " "}</span>
             </button>
           );
         })}
       </div>
-      <p className="rating-average" role="status">
-        {average === null ? "ยังไม่มีใครให้คะแนน" : `ค่าเฉลี่ย ${formatScore(average)} จาก ${ratings.length} คน`}
-      </p>
-      <ul className="rating-people">
-        {members.map((member) => {
-          const score = scoreByUid.get(member.uid);
-          return (
-            <li key={member.uid}>
-              <span>{member.displayName}</span>
-              <strong>{score === undefined ? "ยังไม่ให้" : formatScore(score)}</strong>
-            </li>
-          );
-        })}
-      </ul>
+      {revealed ? (
+        <>
+          <p className="rating-average" role="status">
+            {average === null ? "ยังไม่มีใครให้คะแนน" : `ค่าเฉลี่ย ${formatScore(average)} จาก ${ratings.length} คน`}
+          </p>
+          <ul className="rating-people">
+            {members.map((member) => {
+              const score = scoreByUid.get(member.uid);
+              return <li key={member.uid}><span>{member.displayName}</span><strong>{score === undefined ? "ยังไม่ให้" : formatScore(score)}</strong></li>;
+            })}
+          </ul>
+        </>
+      ) : (
+        <>
+          <div className="rating-hidden-results" aria-hidden="true">
+            <p className="rating-average">ผลคะแนน</p>
+            <ul className="rating-people">
+              {members.map((member) => <li key={member.uid}><span>{member.displayName}</span><strong>● ● ●</strong></li>)}
+            </ul>
+          </div>
+          <p className="rating-reveal-hint" role="status">
+            {timerExpired ? "หมดเวลาแล้ว รอแอดมินกดเปิดคะแนน" : "คะแนนจะถูกซ่อนไว้จนหมดเวลาและแอดมินกดเปิด"}
+          </p>
+        </>
+      )}
     </section>
   );
 }

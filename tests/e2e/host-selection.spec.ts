@@ -1,97 +1,40 @@
-/**
- * Host Selection QA — settlement and host_selection phase tests.
- *
- * Verifies the leaderboard, host wheel, and hand-over button behavior
- * after the admin ends the game.
- */
 import { test, expect } from "@playwright/test";
-import { reachTreasureRush, createAndStartGame } from "./helpers";
+import { createAndStartGame, selectMobileTab } from "./helpers";
 
-test.describe("Host Selection — post-game flow", () => {
-  test.beforeEach(async ({ page }) => {
-    await reachTreasureRush(page);
-    await createAndStartGame(page);
-    await page.getByTestId("btn-open-chest").waitFor({ state: "visible", timeout: 10_000 });
-  });
+test("ผู้ดูแลตัดสิทธิ์โฮสต์เดิมและยืนยันผู้รับหน้าที่คนถัดไป", async ({ page }) => {
+  await createAndStartGame(page, 3);
+  await selectMobileTab(page, "วงล้อ");
+  await page.getByRole("button", { name: "ปิดร้านค้า" }).click();
 
-  test("admin end-game transitions to settlement", async ({ page }) => {
-    const endBtn = page.getByTestId("btn-end-game");
-    const hasEnd = await endBtn.isVisible().catch(() => false);
-    if (!hasEnd) { test.skip(); return; }
-
-    await endBtn.click();
-    // Settlement shows leaderboard and score table.
-    await expect(page.getByTestId("leaderboard")).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator("text=ผลคะแนนรอบนี้")).toBeVisible({ timeout: 10_000 });
-  });
-
-  test("leaderboard is visible in playing phase", async ({ page }) => {
-    await expect(page.getByTestId("leaderboard")).toBeVisible();
-  });
-
-  test("leaderboard shows player row with score", async ({ page }) => {
-    const lb = page.getByTestId("leaderboard");
-    await expect(lb).toBeVisible();
-    await expect(lb).toContainText("แต้ม");
-  });
-
-  test("settlement phase: Lock Scores button visible for admin", async ({ page }) => {
-    const endBtn = page.getByTestId("btn-end-game");
-    const hasEnd = await endBtn.isVisible().catch(() => false);
-    if (!hasEnd) { test.skip(); return; }
-
-    await endBtn.click();
-    await page.getByTestId("leaderboard").waitFor({ state: "visible", timeout: 15_000 });
-
-    const lockBtn = page.getByRole("button", { name: /lock scores/i });
-    const hasLock = await lockBtn.isVisible().catch(() => false);
-    if (hasLock) {
-      await expect(lockBtn).toBeEnabled();
+  for (let turn = 0; turn < 5; turn++) {
+    await page.getByRole("button", { name: "หมุนวงล้อ", exact: true }).click();
+    for (let eventNumber = 0; eventNumber < 2; eventNumber++) {
+      const spin = page.getByRole("button", { name: /หมุนวงล้อเหตุการณ์|หมุนเหตุการณ์เพิ่มเติม/ });
+      await spin.waitFor({ state: "visible" });
+      await spin.click();
+      await page.getByRole("button", { name: "สรุปผลเหตุการณ์" }).click();
+      if (await page.getByRole("button", { name: "ไปยังรอบถัดไป" }).isVisible().catch(() => false)) break;
     }
-  });
+    await page.getByRole("button", { name: "ไปยังรอบถัดไป" }).click();
+  }
 
-  test("host selection phase: wheel renders after lock", async ({ page }) => {
-    const endBtn = page.getByTestId("btn-end-game");
-    const hasEnd = await endBtn.isVisible().catch(() => false);
-    if (!hasEnd) { test.skip(); return; }
+  const candidates = page.locator(".chaos-final-list");
+  await selectMobileTab(page, "ผู้เล่น");
+  const roster = page.locator(".chaos-roster");
+  const currentHost = (await roster.getByText(/· โฮสต์$/).first().textContent())?.replace(" · โฮสต์", "");
+  if (currentHost) await expect(candidates).not.toContainText(currentHost);
 
-    await endBtn.click();
-    await page.getByTestId("leaderboard").waitFor({ state: "visible", timeout: 15_000 });
+  const eligibility = page.locator('[aria-label="ตั้งค่าผู้มีสิทธิ์เป็นโฮสต์"]');
+  const firstCandidate = await eligibility.locator("label").first().textContent();
+  await eligibility.locator('input[type="checkbox"]').first().uncheck();
+  await eligibility.getByRole("button", { name: "บันทึกสิทธิ์โฮสต์" }).click();
+  if (firstCandidate?.trim()) await expect(candidates).not.toContainText(firstCandidate.trim());
 
-    const lockBtn = page.getByRole("button", { name: /lock scores/i });
-    const hasLock = await lockBtn.isVisible().catch(() => false);
-    if (!hasLock) { test.skip(); return; }
-
-    await lockBtn.click();
-    // After locking, host selection phase shows wheel section.
-    await expect(page.locator("text=เลือก Host คนถัดไป")).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("host-selection: hand-over-host button visible after spin", async ({ page }) => {
-    const endBtn = page.getByTestId("btn-end-game");
-    const hasEnd = await endBtn.isVisible().catch(() => false);
-    if (!hasEnd) { test.skip(); return; }
-
-    await endBtn.click();
-    await page.getByTestId("leaderboard").waitFor({ state: "visible", timeout: 15_000 });
-    const lockBtn = page.getByRole("button", { name: /lock scores/i });
-    const hasLock = await lockBtn.isVisible().catch(() => false);
-    if (!hasLock) { test.skip(); return; }
-
-    await lockBtn.click();
-    await page.locator("text=เลือก Host คนถัดไป").waitFor({ state: "visible", timeout: 15_000 });
-
-    // Admin spins the host wheel.
-    const spinWheelBtn = page.getByRole("button", { name: /spin|หมุน/i }).first();
-    const hasSpin = await spinWheelBtn.isVisible().catch(() => false);
-    if (!hasSpin) { test.skip(); return; }
-
-    await spinWheelBtn.click();
-    // After spin resolves, hand-over-host button should appear.
-    const handoverBtn = page.getByTestId("btn-handover-host");
-    const hasHandover = await handoverBtn.waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
-    if (hasHandover) {
-      await expect(handoverBtn).toBeEnabled();
-    }
-  });
+  await selectMobileTab(page, "วงล้อ");
+  await page.getByRole("button", { name: "หมุนวงล้อ", exact: true }).click();
+  await selectMobileTab(page, "ผู้เล่น");
+  await expect(page.locator(".chaos-dialogue")).toContainText("โฮสต์คนถัดไป:");
+  await selectMobileTab(page, "วงล้อ");
+  await page.getByRole("button", { name: "ยืนยันโฮสต์คนถัดไป" }).click();
+  await expect(page.locator(".chaos-phase")).toHaveText("จบเกมแล้ว");
 });

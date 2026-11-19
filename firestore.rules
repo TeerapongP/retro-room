@@ -28,6 +28,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/boards/$(boardId)/cards/$(cardId);
     }
 
+    function sessionSnapshotPath(boardId, sessionId) {
+      return /databases/$(database)/documents/boards/$(boardId)/sessionSnapshots/$(sessionId);
+    }
+
     function movePath(boardId, cardId) {
       return /databases/$(database)/documents/boards/$(boardId)/cardMoves/$(cardId);
     }
@@ -80,6 +84,58 @@ service cloud.firestore {
             && data.timerEndsAt <= request.time + duration.value(2, 'h')))
         && (data.get('timerDurationSec', null) == null
           || (data.timerDurationSec is int && data.timerDurationSec >= 1 && data.timerDurationSec <= 7200));
+    }
+
+    function validRatingRoundUpdate(boardId) {
+      let data = request.resource.data;
+      let oldRound = resource.data.get('ratingRound', null);
+      let round = data.get('ratingRound', null);
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 4
+        && data.diff(resource.data).affectedKeys().hasOnly(['ratingRound', 'updatedAt'])
+        && data.updatedAt == request.time
+        && ((round is map
+            && round.keys().hasOnly(['endsAt', 'durationSec', 'revealed'])
+            && round.keys().hasAll(['endsAt', 'durationSec', 'revealed'])
+            && round.endsAt is timestamp
+            && round.durationSec is int
+            && round.durationSec >= 1
+            && round.durationSec <= 7200
+            && round.revealed == false
+            && round.endsAt > request.time
+            && round.endsAt <= request.time + duration.value(2, 'h')
+            && (oldRound == null || (oldRound is map && oldRound.get('revealed', false) == false)))
+          || (round == null
+            && oldRound is map
+            && oldRound.get('revealed', false) == false
+            && oldRound.endsAt is timestamp
+            && oldRound.endsAt > request.time)
+          || (round is map
+            && oldRound is map
+            && oldRound.keys().hasOnly(['endsAt', 'durationSec', 'revealed'])
+            && oldRound.keys().hasAll(['endsAt', 'durationSec', 'revealed'])
+            && round.keys().hasOnly(['endsAt', 'durationSec', 'revealed'])
+            && round.keys().hasAll(['endsAt', 'durationSec', 'revealed'])
+            && oldRound.endsAt is timestamp
+            && oldRound.endsAt <= request.time
+            && oldRound.durationSec is int
+            && oldRound.durationSec >= 1
+            && oldRound.durationSec <= 7200
+            && oldRound.revealed == false
+            && round.endsAt == oldRound.endsAt
+            && round.durationSec == oldRound.durationSec
+            && round.revealed == true));
+    }
+
+    function validBoardClearUpdate(boardId) {
+      let data = request.resource.data;
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && data.phase == 1
+        && data.get('ratingRound', null) == null
+        && data.diff(resource.data).affectedKeys().hasOnly(['phase', 'ratingRound', 'updatedAt'])
+        && data.updatedAt == request.time;
     }
 
     // The step of the session, 1 to 6 (F23, D117, D121): the admin changes only the step, on an in-progress board.
@@ -147,6 +203,7 @@ service cloud.firestore {
       return isAdmin()
         && sessionInProgress(boardId)
         && resource.data.get('phase', 1) == 5
+        && farmMayStart(boardId, resource.data.get('farmActiveGameId', null), resource.data.get('nextHostGameId', null))
         && data.diff(resource.data).affectedKeys().hasOnly(['farmActiveGameId', 'updatedAt'])
         && data.keys().hasAll(['farmActiveGameId', 'updatedAt'])
         && data.updatedAt == request.time
@@ -155,8 +212,7 @@ service cloud.firestore {
         && data.farmActiveGameId.size() <= 64
         && !exists(gamePath(boardId, data.farmActiveGameId))
         && existsAfter(gamePath(boardId, data.farmActiveGameId))
-        && getAfter(gamePath(boardId, data.farmActiveGameId)).data.status == 'selecting'
-        && farmMayStart(boardId, resource.data.get('farmActiveGameId', null), resource.data.get('nextHostGameId', null));
+        && getAfter(gamePath(boardId, data.farmActiveGameId)).data.status in ['selecting', 'selecting-wheel'];
     }
 
     // Board side of "store the result": either together with the game being finished in the same batch, or alone for a
@@ -739,6 +795,140 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    function validFishingHostResult(boardId) {
+      let data = request.resource.data;
+      let affected = data.diff(resource.data).affectedKeys();
+      let gameId = data.get('nextHostGameId', null);
+      let winner = data.get('nextHostUid', null);
+      return isAdmin()
+        && sessionInProgress(boardId)
+        && resource.data.get('phase', 1) == 5
+        && gameId is string
+        && gameId == resource.data.get('farmActiveGameId', null)
+        && resource.data.get('nextHostGameId', null) != gameId
+        && affected.hasOnly(['nextHostUid', 'nextHostGameId', 'updatedAt'])
+        && data.updatedAt == request.time
+        && exists(gamePath(boardId, gameId))
+        && get(gamePath(boardId, gameId)).data.get('gameType', '') == 'fishing'
+        && get(gamePath(boardId, gameId)).data.status == 'scoring'
+        && getAfter(gamePath(boardId, gameId)).data.status == 'finished'
+        && getAfter(gamePath(boardId, gameId)).data.winnerUid == winner
+        && exists(memberPath(boardId, winner))
+        && !(winner in getAfter(gamePath(boardId, gameId)).data.get('ignoredUids', []))
+        && mayBecomeNextHost(resource.data, winner);
+    }
+    function validFishingGameUpdate(boardId, gameId) {
+      let data = request.resource.data;
+      let affected = data.diff(resource.data).affectedKeys();
+      return (affected.hasAny(['wheelSegment', 'wheelSpunAt', 'fishingEndsAt']) && validFishingSpinWheel(boardId, gameId))
+        || (resource.data.status == 'fishing' && data.status == 'scoring' && affected.hasOnly(['status', 'updatedAt']) && validFishingEndFishing(boardId, gameId))
+        || (affected.hasAny(['ignoredUids']) && validFishingSetIgnoredUids(boardId, gameId))
+        || (resource.data.status == 'scoring' && data.status == 'finished' && affected.hasAny(['winnerUid']) && validFishingFinish(boardId, gameId))
+        || (resource.data.status == 'scoring' && data.status == 'wheel' && affected.hasAny(['resolvedState']) && validFishingResolveToWheel(boardId, gameId))
+        || (resource.data.status == 'wheel' && data.status == 'finished' && affected.hasAny(['winnerUid']) && validFishingWheelFinish(boardId, gameId))
+        || (affected.hasAny(['reSpinCount']) && validFishingReSpin(boardId, gameId));
+    }
+
+    function validTreasureGameUpdate(boardId, gameId) {
+      let data = request.resource.data;
+      let affected = data.diff(resource.data).affectedKeys();
+      return (affected.hasAny(['activityModifier', 'endsAt']) && validTreasureSpinWheel(boardId, gameId))
+        || (resource.data.status == 'playing' && data.status == 'settlement' && affected.hasOnly(['status', 'updatedAt']) && validTreasureEndGame(boardId, gameId))
+        || (affected.hasAny(['ignoredUids']) && validTreasureSetIgnoredUids(boardId, gameId))
+        || (resource.data.status == 'settlement' && data.status == 'host_selection' && affected.hasAny(['resolvedState']) && validTreasureResolveToHostSelection(boardId, gameId))
+        || (resource.data.status == 'host_selection' && data.status == 'finished' && affected.hasAny(['winnerUid']) && validTreasureWheelFinish(boardId, gameId))
+        || (affected.hasAny(['reSpinCount']) && validTreasureReSpin(boardId, gameId));
+    }
+
+    function validFarmGameUpdate(boardId, gameId) {
+      let data = request.resource.data;
+      let affected = data.diff(resource.data).affectedKeys();
+      return (resource.data.status == 'selecting' && data.status == 'finished' && affected.hasAny(['winnerUid', 'resolution']) && validFarmFinish(boardId, gameId))
+        || (resource.data.status == 'selecting' && data.status == 'cancelled' && affected.hasAny(['resolvedAt']) && validFarmCancel(boardId, gameId));
+    }
+    function validBoardHostResult(boardId) {
+      let data = request.resource.data;
+      let gameId = data.get('nextHostGameId', null);
+      return gameId is string && exists(gamePath(boardId, gameId))
+        ? get(gamePath(boardId, gameId)).data.get('gameType', '') == 'fishing'
+          ? validFishingHostResult(boardId)
+          : get(gamePath(boardId, gameId)).data.get('gameType', '') == 'treasure'
+            ? validTreasureHostResult(boardId)
+            : validFarmHostResult(boardId)
+        : false;
+    }
+
+    function validBoardLifecycleUpdate(boardId) {
+      let data = request.resource.data;
+      let affected = data.diff(resource.data).affectedKeys();
+      return (isOwner(boardId)
+          && data.updatedAt == request.time
+          && (
+            (affected.hasOnly(['title', 'updatedAt']) && validBoardTitle(data.title))
+            || (resource.data.get('status', 'in-progress') == 'waiting'
+              && data.status == 'in-progress'
+              && affected.hasOnly(['status', 'startedAt', 'currentSessionId', 'updatedAt'])
+              && data.currentSessionId is string
+              && data.currentSessionId.size() >= 1
+              && data.currentSessionId.size() <= 128
+              && data.startedAt == request.time)
+            || (resource.data.get('status', 'in-progress') == 'in-progress'
+              && data.status == 'completed'
+              && affected.hasOnly(['status', 'completedAt', 'currentSessionId', 'updatedAt'])
+              && data.currentSessionId is string
+              && data.currentSessionId.size() >= 1
+              && data.currentSessionId.size() <= 128
+              && data.completedAt is timestamp
+              && data.completedAt <= request.time
+              && existsAfter(sessionSnapshotPath(boardId, data.currentSessionId))
+              && getAfter(sessionSnapshotPath(boardId, data.currentSessionId)).data.completedAt == data.completedAt)
+          ))
+        || (isAdmin()
+          && resource.data.get('status', 'in-progress') == 'waiting'
+          && data.status == 'in-progress'
+          && affected.hasOnly(['status', 'startedAt', 'currentSessionId', 'updatedAt'])
+          && data.currentSessionId is string
+          && data.currentSessionId.size() >= 1
+          && data.currentSessionId.size() <= 128
+          && data.startedAt == request.time
+          && data.updatedAt == request.time)
+        || (isAdmin()
+          && resource.data.get('status', 'in-progress') == 'in-progress'
+          && data.status == 'completed'
+          && affected.hasOnly(['status', 'completedAt', 'currentSessionId', 'updatedAt'])
+          && data.currentSessionId is string
+          && data.currentSessionId.size() >= 1
+          && data.currentSessionId.size() <= 128
+          && data.completedAt is timestamp
+          && data.completedAt <= request.time
+          && existsAfter(sessionSnapshotPath(boardId, data.currentSessionId))
+          && getAfter(sessionSnapshotPath(boardId, data.currentSessionId)).data.completedAt == data.completedAt
+          && data.updatedAt == request.time);
+    }
+
+    function validBoardUpdate(boardId) {
+      let data = request.resource.data;
+      let affected = data.diff(resource.data).affectedKeys();
+      return resource.data.get('status', 'in-progress') == 'completed' && data.status == 'waiting'
+        ? isAdmin() && data.updatedAt == request.time
+        : affected.hasAny(['ratingRound'])
+          ? data.get('ratingRound', null) == null && data.get('phase', 1) == 1
+            ? validBoardClearUpdate(boardId)
+            : validRatingRoundUpdate(boardId)
+            : affected.hasOnly(['phase', 'updatedAt'])
+          ? validPhaseUpdate(boardId)
+          : affected.hasAny(['timerEndsAt', 'timerDurationSec'])
+            ? validTimerUpdate(boardId)
+            : affected.hasAny(['farmActiveGameId'])
+              ? validFarmPointer(boardId)
+              : affected.hasAny(['nextHostGameId'])
+                ? validBoardHostResult(boardId)
+                : affected.hasAny(['nextHostSpunAt'])
+                  ? validHostSpin(boardId)
+                  : affected.hasAny(['hostUid', 'pastHostUids'])
+                    ? validHostHandover(boardId)
+                    : validBoardLifecycleUpdate(boardId);
+    }
     match /boards/{boardId} {
       allow get: if signedIn();
       // Only the admin may list boards (to pick a move destination, D80).
@@ -752,59 +942,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
         && getAfter(memberPath(boardId, request.auth.uid)).data.role == 'owner';
-      allow update: if (isOwner(boardId)
-        && request.resource.data.updatedAt == request.time
-        && (
-          // rename
-          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'updatedAt'])
-            && validBoardTitle(request.resource.data.title))
-          // start: waiting to in-progress
-          || (resource.data.get('status', 'in-progress') == 'waiting'
-            && request.resource.data.status == 'in-progress'
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['status', 'startedAt', 'updatedAt'])
-            && request.resource.data.startedAt == request.time)
-          // complete: in-progress to completed
-          || (resource.data.get('status', 'in-progress') == 'in-progress'
-            && request.resource.data.status == 'completed'
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['status', 'completedAt', 'updatedAt'])
-            && request.resource.data.completedAt == request.time)
-        ))
-        // admin starts a waiting session (F-admin, same fields as owner start)
-        || (isAdmin()
-          && resource.data.get('status', 'in-progress') == 'waiting'
-          && request.resource.data.status == 'in-progress'
-          && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['status', 'startedAt', 'updatedAt'])
-          && request.resource.data.startedAt == request.time
-          && request.resource.data.updatedAt == request.time)
-        // admin ends an in-progress session
-        || (isAdmin()
-          && resource.data.get('status', 'in-progress') == 'in-progress'
-          && request.resource.data.status == 'completed'
-          && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['status', 'completedAt', 'updatedAt'])
-          && request.resource.data.completedAt == request.time
-          && request.resource.data.updatedAt == request.time)
-        // admin resets a completed board back to waiting
-        || (isAdmin()
-          && resource.data.get('status', 'in-progress') == 'completed'
-          && request.resource.data.status == 'waiting'
-          && request.resource.data.updatedAt == request.time)
-        // admin starts or stops the shared timer (F22, D112)
-        || validTimerUpdate(boardId)
-        // admin moves the session step (F23, D121)
-        || validPhaseUpdate(boardId)
-        // admin spins the next-host wheel (F29, D149)
-        || validHostSpin(boardId)
-        // Crowded Farm (F30): start a round, store its result
-        || validFarmPointer(boardId)
-        || validFarmHostResult(boardId)
-        // Treasure Rush: store wheel result on the board
-        || validTreasureHostResult(boardId)
-        // The Host role passes to the stored next Host (F30, D163)
-        || validHostHandover(boardId);
+      allow update: if validBoardUpdate(boardId);
       allow delete: if false;
 
       match /members/{uid} {
@@ -921,34 +1059,102 @@ service cloud.firestore {
         allow delete: if isAdmin();
       }
 
+      match /actionItems/{itemId} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow create: if (isOwner(boardId) || isAdmin())
+          && sessionInProgress(boardId)
+          && request.resource.data.keys().hasOnly(['text', 'status', 'dueDate', 'createdAt', 'completedAt'])
+          && request.resource.data.keys().hasAll(['text', 'status', 'dueDate', 'createdAt', 'completedAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.status == 'not-started'
+          && request.resource.data.dueDate is string
+          && request.resource.data.dueDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.completedAt == null;
+        allow update: if (isOwner(boardId) || isAdmin())
+          && sessionInProgress(boardId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'dueDate', 'status', 'completedAt'])
+          && request.resource.data.status in ['not-started', 'in-progress', 'completed']
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.dueDate is string
+          && request.resource.data.dueDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+          && (request.resource.data.status == 'completed'
+            ? request.resource.data.completedAt == request.time
+            : request.resource.data.completedAt == null);
+        allow delete: if false;
+      }
+
+      match /sessionSnapshots/{sessionId} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow create: if (isOwner(boardId) || isAdmin())
+          && sessionInProgress(boardId)
+          && getAfter(boardPath(boardId)).data.status == 'completed'
+          && getAfter(boardPath(boardId)).data.currentSessionId == sessionId
+          && getAfter(boardPath(boardId)).data.completedAt == request.resource.data.completedAt
+          && request.resource.data.keys().hasOnly(['completedAt', 'categoryCounts', 'dueActionCount', 'completedDueActionCount'])
+          && request.resource.data.keys().hasAll(['completedAt', 'categoryCounts', 'dueActionCount', 'completedDueActionCount'])
+          && request.resource.data.completedAt is timestamp
+          && request.resource.data.completedAt <= request.time
+          && request.resource.data.categoryCounts is map
+          && request.resource.data.categoryCounts.keys().hasOnly(['went-well', 'to-improve', 'ideas'])
+          && request.resource.data.categoryCounts.keys().hasAll(['went-well', 'to-improve', 'ideas'])
+          && request.resource.data.categoryCounts['went-well'] is int
+          && request.resource.data.categoryCounts['went-well'] >= 0
+          && request.resource.data.categoryCounts['to-improve'] is int
+          && request.resource.data.categoryCounts['to-improve'] >= 0
+          && request.resource.data.categoryCounts.ideas is int
+          && request.resource.data.categoryCounts.ideas >= 0
+          && request.resource.data.dueActionCount is int
+          && request.resource.data.dueActionCount >= 0
+          && request.resource.data.completedDueActionCount is int
+          && request.resource.data.dueActionCount >= request.resource.data.completedDueActionCount
+          && request.resource.data.completedDueActionCount >= 0;
+        allow update, delete: if false;
+      }
+
+      match /chaosGames/{gameId} {
+        allow read: if isMember(boardId) || isAdmin();
+        allow write: if false;
+
+        match /requests/{requestId} {
+          allow read, write: if false;
+        }
+
+        match /privateResults/{resultId} {
+          allow get: if isMember(boardId) && resource.data.uid == request.auth.uid;
+          allow list, write: if false;
+        }
+
+        match /privateOutcomes/{outcomeId} {
+          allow read, write: if false;
+        }
+      }
+
       // Crowded Farm rounds (F30, D153 to D162). Choices are private until the deadline: before it a member can only
       // `get` their own choice and cannot `list`; after it every member can read all choices to work out the result.
       match /farmGames/{gameId} {
         allow read: if isMember(boardId) || isAdmin();
-        allow create: if (isAdmin()
-          && sessionInProgress(boardId)
-          && get(boardPath(boardId)).data.get('phase', 1) == 5
-          && request.resource.data.keys().hasOnly(['startedAt', 'status'])
-          && request.resource.data.keys().hasAll(['startedAt', 'status'])
-          && request.resource.data.startedAt == request.time
-          && request.resource.data.status == 'selecting'
-          && getAfter(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId)
-          || validFishingCreate(boardId, gameId)
-          || validTreasureCreate(boardId, gameId);
-        allow update: if validFarmFinish(boardId, gameId) || validFarmCancel(boardId, gameId)
-          || validFishingSpinWheel(boardId, gameId)
-          || validFishingEndFishing(boardId, gameId)
-          || validFishingSetIgnoredUids(boardId, gameId)
-          || validFishingFinish(boardId, gameId)
-          || validFishingResolveToWheel(boardId, gameId)
-          || validFishingWheelFinish(boardId, gameId)
-          || validFishingReSpin(boardId, gameId)
-          || validTreasureSpinWheel(boardId, gameId)
-          || validTreasureEndGame(boardId, gameId)
-          || validTreasureSetIgnoredUids(boardId, gameId)
-          || validTreasureResolveToHostSelection(boardId, gameId)
-          || validTreasureWheelFinish(boardId, gameId)
-          || validTreasureReSpin(boardId, gameId);
+        allow create: if request.resource.data.get('gameType', '') == 'fishing'
+          ? validFishingCreate(boardId, gameId)
+          : request.resource.data.get('gameType', '') == 'treasure'
+            ? validTreasureCreate(boardId, gameId)
+            : (isAdmin()
+              && sessionInProgress(boardId)
+              && get(boardPath(boardId)).data.get('phase', 1) == 5
+              && request.resource.data.keys().hasOnly(['startedAt', 'status'])
+              && request.resource.data.keys().hasAll(['startedAt', 'status'])
+              && request.resource.data.startedAt == request.time
+              && request.resource.data.status == 'selecting'
+              && getAfter(boardPath(boardId)).data.get('farmActiveGameId', null) == gameId);
+        allow update: if resource.data.get('gameType', '') == 'fishing'
+          ? validFishingGameUpdate(boardId, gameId)
+          : resource.data.get('gameType', '') == 'treasure'
+            ? validTreasureGameUpdate(boardId, gameId)
+            : validFarmGameUpdate(boardId, gameId);
         allow delete: if false;
 
         match /catches/{uid} {

@@ -56,7 +56,7 @@ Owner approved. Local only. Production Google Sign-In code is unchanged: the sam
 | `pnpm test:rules` | Security Rules tests (Firestore emulator) |
 | `pnpm test:integration` | Users A, B, C through the Auth emulator against the app's data layer |
 | `pnpm test:assets` | Sprite sheet PNG sizes against `public/art/anim/sheets.json` (no emulator needed) |
-| `pnpm dev:emulator` | Starts Auth (9099) and Firestore (8080) emulators and `next dev` with emulator mode |
+| `pnpm dev:emulator` | Starts Auth (9099) and Firestore (8380) emulators and `next dev` with emulator mode |
 
 Safety rules for emulator mode:
 
