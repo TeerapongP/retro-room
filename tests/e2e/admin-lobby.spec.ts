@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { BASE_URL, getCurrentBoardId, mockSignIn } from "./helpers";
+import { getCurrentBoardId, mockSignIn } from "./helpers";
 
 const MOCK_STATE_KEY = "retro-room:mock-state";
 
@@ -34,7 +34,7 @@ async function seedLobby(page: Page): Promise<string> {
     return id;
   }, MOCK_STATE_KEY);
 
-  await page.goto(BASE_URL + "/boards/" + boardId);
+  await page.goto("/boards/" + boardId);
   return boardId;
 }
 
@@ -49,7 +49,7 @@ async function switchMockAccount(page: Page, uid: string, boardId: string): Prom
     },
     { key: MOCK_STATE_KEY, nextUid: uid },
   );
-  await page.goto(BASE_URL + "/boards/" + boardId);
+  await page.goto("/boards/" + boardId);
 }
 
 test("แอดมินที่ไม่ใช่สมาชิกดูห้องและเตะผู้เล่นได้", async ({ page }, testInfo) => {
@@ -70,6 +70,11 @@ test("แอดมินที่ไม่ใช่สมาชิกดูห�
   await switchMockAccount(page, "mock-may", boardId);
   await expect(page.getByRole("button", { name: "เข้าร่วมบอร์ด" })).toBeVisible();
   await expect(page.getByRole("button", { name: /เตะ/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "เข้าร่วมบอร์ด" }).click();
+  await expect(page.getByText("สมาชิกที่เข้าร่วมแล้ว (3)")).toBeVisible();
+  await expect(page.locator('[data-testid="title-member-mock-may"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "เข้าร่วมบอร์ด" })).toHaveCount(0);
 });
 
 test("ผู้เล่นทั่วไปเห็นโฮสต์แต่ไม่เห็นคำสั่งแอดมิน", async ({ page }, testInfo) => {
@@ -94,7 +99,7 @@ test("แอดมินที่อยู่ในรายชื่อมี�
     state.boards[id].hostUid = "mock-ploy";
     localStorage.setItem(key, JSON.stringify(state));
   }, { key: MOCK_STATE_KEY, id: boardId });
-  await page.goto(BASE_URL + "/boards/" + boardId);
+  await page.goto("/boards/" + boardId);
 
   await expect(page.getByTestId("game-admin").getByRole("img", { name: "ผู้ดูแลเกม" })).toBeVisible();
   await expect(page.getByText("สมาชิกที่เข้าร่วมแล้ว (6)")).toBeVisible();

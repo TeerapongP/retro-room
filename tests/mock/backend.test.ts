@@ -144,10 +144,18 @@ describe("mock boards", () => {
 
     await backend.kickMember(boardId, "guest");
     await flush();
+    expect(await backend.getOwnMembership(boardId, "guest")).toBeNull();
+
+    await backend.joinBoard(boardId, "guest", "Guest");
+    await flush();
     stop();
 
-    expect(await backend.getOwnMembership(boardId, "guest")).toBeNull();
-    expect(seen).toEqual(["guest", null]);
+    expect(seen).toEqual(["guest", null, "guest"]);
+    expect(await backend.getOwnMembership(boardId, "guest")).toMatchObject({
+      uid: "guest",
+      role: "member",
+      displayName: "Guest",
+    });
     expect(await backend.getOwnMembership(boardId, admin.uid)).toBeNull();
   });
 

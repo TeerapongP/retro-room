@@ -8,7 +8,6 @@
  */
 import { type Page } from "@playwright/test";
 
-export const BASE_URL = "http://localhost:3000";
 export function getCurrentBoardId(page: Page): string {
   const match = new URL(page.url()).pathname.match(/^\/boards\/([^/]+)$/);
   if (!match) throw new Error("Expected the launcher to open a board");
@@ -19,7 +18,7 @@ export function getCurrentBoardId(page: Page): string {
  *  "Login with Google" calls getMockBackend().signIn() without opening a popup.
  *  Handles the case where the user is already signed in (immediate redirect). */
 export async function mockSignIn(page: Page): Promise<void> {
-  await page.goto(BASE_URL + "/login");
+  await page.goto("/login");
 
   // If already signed in, the app redirects away from /login immediately.
   const alreadyIn = await page

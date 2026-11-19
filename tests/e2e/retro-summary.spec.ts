@@ -1,12 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { BASE_URL, getCurrentBoardId, mockSignIn } from "./helpers";
+import { getCurrentBoardId, mockSignIn } from "./helpers";
 
 test("Thai summary charts, exports, and responsive report", async ({ page }, testInfo) => {
   await mockSignIn(page);
   const boardId = getCurrentBoardId(page);
-  await page.goto(`${BASE_URL}/boards/${boardId}`);
+  await page.goto(`/boards/${boardId}`);
   await page.waitForFunction(() => Boolean((window as Window & { __retroRoomMockBackend?: object }).__retroRoomMockBackend));
   const cardIds = await page.evaluate(async (boardId) => {
     const backend = (window as unknown as Window & { __retroRoomMockBackend: {

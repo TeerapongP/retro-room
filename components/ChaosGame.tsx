@@ -97,6 +97,9 @@ export function ChaosGame({ board, members, user, isAdmin, onAdvancePhase }: Pro
   const winningItem = wheelItems.find(item => item.id === wheelResult);
   const wheelSpinAction = game?.phase === "chaos_rounds" && game.turnPhase === "ready" ? "spinPlayer" : game?.phase === "final_host_selection" && !game.selectedHostUid ? "selectHost" : null;
   const wheelCanSpin = chaosAdmin && !!wheelSpinAction && !busy;
+  const spinButton = useCallback((props: RouletteButtonProps) => (
+    <ChaosSpinButton {...props} disabled={props.disabled || !wheelCanSpin} />
+  ), [wheelCanSpin]);
   const rouletteRef = useRef<RouletteController>(null);
   const lastWheelSpin = useRef("");
   const reactionReady = !game?.reactionDeadlineMs || clock >= game.reactionDeadlineMs;
@@ -284,7 +287,8 @@ export function ChaosGame({ board, members, user, isAdmin, onAdvancePhase }: Pro
             <span className="chaos-sun" aria-hidden="true" />
             <p className="chaos-turn">รอบที่ {Math.max(1, Math.min(game.turn, 5))} / 5 · {turnLabel(game.turnPhase)}</p>
             <div className={`chaos-wheel-frame ${wheelCanSpin ? "" : "chaos-wheel-readonly"}`} aria-label="วงล้อผู้เล่น">
-              <Roulette ref={rouletteRef} items={wheelItems} winner={winningItem} size={410} duration={1800} rotations={5} buttonComponent={ChaosSpinButton} className="chaos-roulette" wheelClassName="chaos-roulette-wheel" ariaLabel="วงล้อผู้เล่น" onSpin={async () => { if (chaosAdmin && wheelSpinAction && !busy) await act(wheelSpinAction); }} />
+              <Roulette ref={rouletteRef} items={wheelItems} winner={winningItem} size={410} duration={1800} rotations={5} buttonComponent={spinButton} className="chaos-roulette" wheelClassName="chaos-roulette-wheel" ariaLabel="วงล้อผู้เล่น" onSpin={async () => { if (chaosAdmin && wheelSpinAction && !busy) await act(wheelSpinAction); }} />
+              {!chaosAdmin && <button type="button" className="chaos-btn chaos-btn-gold" aria-label="หมุนวงล้อ" disabled>หมุนวงล้อ</button>}
               <strong className="chaos-wheel-result" role="status">{winningItem?.label ?? "รอผลการหมุน"}</strong>
             </div>
             <div className="chaos-candidate-list" aria-label="รายชื่อผู้มีสิทธิ์">{wheelCandidates.map(uid => <span key={uid}>{nameOf(uid)}</span>)}</div>

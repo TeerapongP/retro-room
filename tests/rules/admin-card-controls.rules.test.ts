@@ -1244,6 +1244,23 @@ describe("admin member removal", () => {
     await assertFails(deleteDoc(doc(bob(), `boards/${WAITING}/members/alice`)));
   });
 
+  it("lets a removed player create their membership again", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "users/bob"), {
+        displayName: "Bob",
+        nameSetAt: seeded,
+      });
+    });
+
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${WAITING}/members/bob`)));
+    await assertSucceeds(setDoc(doc(bob(), `boards/${WAITING}/members/bob`), {
+      uid: "bob",
+      role: "member",
+      displayName: "Bob",
+      joinedAt: serverTimestamp(),
+    }));
+  });
+
   it("does not let the admin remove themself", async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), `boards/${WAITING}/members/admin`), {

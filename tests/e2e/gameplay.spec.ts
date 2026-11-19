@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { mockSignIn, reachTreasureRush, selectMobileTab, BASE_URL, getCurrentBoardId } from "./helpers";
+import { mockSignIn, reachTreasureRush, selectMobileTab, getCurrentBoardId } from "./helpers";
 
 test("เข้าสู่ระบบแล้วเปิดบอร์ดได้", async ({ page }) => {
   await mockSignIn(page);
   expect(page.url()).not.toContain("/login");
-  await page.goto(BASE_URL + "/boards/" + getCurrentBoardId(page));
+  await page.goto("/boards/" + getCurrentBoardId(page));
   await expect(page.getByRole("main")).toBeVisible();
 });
 

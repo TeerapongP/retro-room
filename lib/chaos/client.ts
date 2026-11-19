@@ -32,7 +32,7 @@ export async function runChaosAction(
   if (isMockMode()) return runMockChaosAction(boardId, requestId, action, payload);
   const functions = getFunctions(getFirebaseApp());
   if (isFirebaseEmulatorEnabled() && !functionsEmulatorConnected) {
-    connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+    connectFunctionsEmulator(functions, "127.0.0.1", Number(process.env.NEXT_PUBLIC_FIREBASE_FUNCTIONS_EMULATOR_PORT ?? 5001));
     functionsEmulatorConnected = true;
   }
   const callable = httpsCallable<Record<string, unknown>, ActionResult>(functions, "chaosAction");

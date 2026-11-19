@@ -3,12 +3,14 @@ import {
   createBoard,
   getOwnMembership,
   joinBoard,
+  kickMember,
   completeSession,
   setPhase,
   startSession,
   subscribeToBoard,
   subscribeToMembers,
   subscribeToMemberships,
+  subscribeToOwnMembership,
 } from "@/lib/firebase/boards";
 import { addCard, deleteCard, editCard, setCardHidden, subscribeToCards } from "@/lib/firebase/cards";
 import type { Board, BoardCard, BoardMember, DashboardBoard } from "@/lib/firebase/types";
@@ -77,6 +79,37 @@ describe("board creation and sharing", () => {
       role: "member",
       displayName: "User B",
     });
+  });
+
+  it("lets a kicked player rejoin the same waiting board", async () => {
+    const boardId = await createBoardAsA();
+    await joinBoard(boardId, userB.user, userB.name, userB.db);
+    let ownMembership: BoardMember | null | undefined;
+    let listenerError: unknown;
+    const unsubscribe = subscribeToOwnMembership(
+      boardId,
+      userB.uid,
+      (member) => (ownMembership = member),
+      (error) => (listenerError = error),
+      userB.db,
+    );
+
+    try {
+      await waitUntil(() => ownMembership?.uid === userB.uid);
+      await kickMember(boardId, userB.uid, admin.db);
+      await waitUntil(() => ownMembership === null);
+      expect(listenerError).toBeUndefined();
+
+      await joinBoard(boardId, userB.user, userB.name, userB.db);
+      await waitUntil(() => ownMembership?.uid === userB.uid);
+      expect(ownMembership).toMatchObject({
+        uid: userB.uid,
+        role: "member",
+        displayName: userB.name,
+      });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it(`should reject joining twice when already a member`, async () => {

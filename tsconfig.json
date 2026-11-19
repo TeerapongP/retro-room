@@ -18,9 +18,7 @@
         "name": "next"
       }
     ],
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "paths": { "@/*": ["./*"] }
   },
   "include": [
     "next-env.d.ts",
@@ -28,7 +26,9 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    ".next-playwright/types/**/*.ts",
+    ".next-playwright/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules", "functions"]
 }
