@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHAOS_ITEMS, type ChaosItemId } from "../../lib/chaos/catalog";
-import { activateChaosItem, resolveChaosPendingAction, respondChaosProposal } from "../../lib/chaos/effects";
+import { activateChaosItem, getChaosItemTargetOptions, resolveChaosPendingAction, respondChaosProposal } from "../../lib/chaos/effects";
 import { formatChaosHistory } from "../../lib/chaos/locale";
 import { applyChaosCurse, closeChaosShopping, createChaosGame, purchaseChaosItem, resolveChaosEvent, startChaosShopping } from "../../lib/chaos/state";
 
@@ -69,6 +69,42 @@ describe("Wheel of Chaos item effects", () => {
     expect(result.players.a.eris).toBe(90);
     expect(result.players.b.eris).toBe(90);
     expect(result.history.at(-1)).toBe("item:a:eris-thief:b");
+  });
+
+  it("requires a named eligible opponent for a player-targeted item", () => {
+    const state = { ...stocked("eris-thief"), eligibleUids: ["a", "b", "c"] };
+    expect(getChaosItemTargetOptions(state, "a", "eris-thief").targetUids).toEqual(["b", "c"]);
+    for (const targetUid of [undefined, "a", "d", "unknown"]) {
+      expect(() => activateChaosItem(state, "a", "eris-thief", { targetUid })).toThrow("Invalid target");
+    }
+    const result = activateChaosItem(state, "a", "eris-thief", { targetUid: "c" }).state;
+    expect(result.players.c.eris).toBe(90);
+    expect(result.players.b.eris).toBe(100);
+  });
+
+  it("only sabotages an unused offensive item owned by the selected eligible opponent", () => {
+    const { state } = active("item-sabotage");
+    state.players.b.items.push("target-mark", "holy-shield");
+    state.players.c.items.push("freeze-spell");
+    Object.assign(state.itemOwners, { "target-mark": "b", "holy-shield": "b", "freeze-spell": "c" });
+    state.usedItems.push("target-mark");
+    state.eligibleUids = ["a", "b"];
+    const options = getChaosItemTargetOptions(state, "a", "item-sabotage");
+    expect(options.targetUids).toEqual(["b"]);
+    expect(options.targetItemsByUid.b).toEqual(["chaos-bomb"]);
+    for (const targetItemId of [undefined, "target-mark", "holy-shield", "freeze-spell"] as const) {
+      expect(() => activateChaosItem(state, "a", "item-sabotage", { targetUid: "b", targetItemId })).toThrow("No eligible offensive item");
+    }
+  });
+
+  it("requires a separate unused item from each player for an auction", () => {
+    const { state, input } = active("chaos-auction");
+    const options = getChaosItemTargetOptions(state, "a", "chaos-auction");
+    expect(options.offeredItemIds).toEqual(["holy-shield"]);
+    expect(options.targetUids).toEqual(["b"]);
+    expect(options.targetItemsByUid.b).toEqual(["curse-cleanser"]);
+    expect(() => activateChaosItem(state, "a", "chaos-auction", { ...input, offeredItemId: "chaos-auction" })).toThrow("Proposal unavailable");
+    expect(() => activateChaosItem(state, "a", "chaos-auction", { ...input, targetItemId: "holy-shield" })).toThrow("Proposal unavailable");
   });
 
   it("records and names who a targeted or reflected item was used against", () => {

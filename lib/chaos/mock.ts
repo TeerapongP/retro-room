@@ -4,7 +4,7 @@ import { activateChaosItem, resolveChaosPendingAction, respondChaosProposal } fr
 import {
   closeChaosShopping, createChaosGame, nextChaosTurn, purchaseChaosItem,
   resolveChaosEvent, selectFinalHost, setChaosEligibility, spinChaosEvent, spinChaosPlayer,
-  startChaosShopping, chaosEventWeights, CHAOS_EVENTS, weightedChoice, type ChaosEventId, type ChaosGameState,
+  startChaosShopping, chaosEventWeights, CHAOS_EVENTS, CHAOS_REACTION_WINDOW_MS, hasAvailableChaosReaction, weightedChoice, type ChaosEventId, type ChaosGameState,
 } from "./state";
 
 type MockGame = ChaosGameState & { gameId: string; boardId: string; hostUid: string; mockFortuneEventId?: ChaosEventId | null };
@@ -106,7 +106,10 @@ export async function runMockChaosAction(
     case "spinPlayer": requireAdmin(); game = { ...game, ...spinChaosPlayer(game, mockRandom(payload, stored.requests.length)) }; break;
     case "spinEvent":
       requireAdmin();
-      game = { ...game, ...spinChaosEvent(game, mockRandom(payload, stored.requests.length), stored.game.mockFortuneEventId ?? undefined), mockFortuneEventId: null };
+      {
+        const spun = spinChaosEvent(game, mockRandom(payload, stored.requests.length), stored.game.mockFortuneEventId ?? undefined);
+        game = { ...game, ...spun, mockFortuneEventId: null, reactionDeadlineMs: Date.now() + (hasAvailableChaosReaction(spun) ? CHAOS_REACTION_WINDOW_MS : 0) };
+      }
       break;
     case "resolve": requireAdmin(); game = { ...game, ...resolveChaosEvent(game) }; break;
     case "resolveAction": requireAdmin(); game = { ...game, ...resolveChaosPendingAction(game) }; break;
@@ -120,7 +123,8 @@ export async function runMockChaosAction(
       requirePlayer();
       const availableEvents = game.bonusSpinActive ? CHAOS_EVENTS.filter(event => event.id !== "double-trouble") : CHAOS_EVENTS;
       const predeterminedEventId = weightedChoice(availableEvents.map(event => event.id), chaosEventWeights(game, availableEvents), mockRandom(payload, stored.requests.length));
-      const result = activateChaosItem(game, actorUid, payload.itemId as ChaosItemId, {
+      const itemId = payload.itemId as ChaosItemId;
+      const result = activateChaosItem(game, actorUid, itemId, {
         targetUid: payload.targetUid as string | undefined,
         targetItemId: payload.targetItemId as ChaosItemId | undefined,
         offeredItemId: payload.offeredItemId as ChaosItemId | undefined,
@@ -128,7 +132,8 @@ export async function runMockChaosAction(
         eventCategory: payload.eventCategory as ChaosEventId | undefined,
         predeterminedEventId,
       }, mockRandom(payload, stored.requests.length, 1));
-      game = { ...game, ...result.state };
+      const startsReactionWindow = result.state.pendingAction !== game.pendingAction && result.state.pendingAction !== null;
+      game = { ...game, ...result.state, ...(startsReactionWindow ? { reactionDeadlineMs: Date.now() + (hasAvailableChaosReaction(result.state) ? CHAOS_REACTION_WINDOW_MS : 0) } : {}) };
       if (result.serverOnly?.fortuneEventId) game.mockFortuneEventId = result.serverOnly.fortuneEventId;
       privateResult = result.privateResult;
       break;

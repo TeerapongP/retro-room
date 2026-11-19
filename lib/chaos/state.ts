@@ -1,5 +1,7 @@
 import { CHAOS_ITEM_BY_ID, isChaosItemId, type ChaosItemId } from "./catalog";
 
+export const CHAOS_REACTION_WINDOW_MS = 15_000;
+
 export type ChaosPhase = "setup" | "shopping" | "chaos_rounds" | "final_host_selection" | "finished";
 export type ChaosTurnPhase = "ready" | "player_spin" | "event_spin" | "reaction_window" | "resolving" | "turn_complete";
 export type ChaosPlayer = { eris: number; curse: number; items: ChaosItemId[]; frozenUntilTurn: number; weightNext: number; shieldCharges: number };
@@ -45,6 +47,27 @@ export type ChaosGameState = {
   replacedThisTurn: boolean;
   history: string[];
 };
+
+export function hasAvailableChaosReaction(state: ChaosGameState): boolean {
+  if (state.phase !== "chaos_rounds" || state.proposal) return false;
+
+  return Object.entries(state.players).some(([uid, player]) => player.items.some(itemId => {
+    const item = CHAOS_ITEM_BY_ID[itemId];
+    if (state.itemOwners[itemId] !== uid || state.usedItems.includes(itemId) || state.disabledItems.includes(itemId)
+      || item.window !== "reaction" || item.category === "chaos" && player.frozenUntilTurn >= state.turn && player.frozenUntilTurn > 0) return false;
+
+    switch (itemId) {
+      case "holy-shield": return state.selectedUid === uid && ["cursed", "frozen", "targeted"].includes(state.eventId ?? "");
+      case "second-chance": return !!state.eventId && !state.replacedThisTurn;
+      case "iron-will": return player.frozenUntilTurn >= state.turn && player.frozenUntilTurn > 0 || !(state.statusGuardUids ?? []).includes(uid);
+      case "mirror-guard": return state.pendingAction?.targetUid === uid && !state.pendingAction.reflected;
+      case "reverse-card": return state.pendingAction?.targetUid === uid && !state.pendingAction.redirected;
+      case "time-rewind": return state.pendingAction?.targetUid === uid;
+      case "final-verdict": return state.turn === 5 && !!state.eventId;
+      default: return false;
+    }
+  }));
+}
 
 function requirePhase(state: ChaosGameState, phase: ChaosPhase) {
   if (state.phase !== phase) throw new Error(`Expected ${phase} phase`);

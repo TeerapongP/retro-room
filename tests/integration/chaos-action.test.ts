@@ -98,9 +98,17 @@ describe("trusted Wheel of Chaos API", () => {
     expect(charged.eris).toBe(80);
 
     await call(players[0], { action: "purchase", boardId, gameId, requestId: crypto.randomUUID(), itemId: "eris-thief" });
-    await call(players[0], { action: "activate", boardId, gameId, requestId: crypto.randomUUID(), itemId: "eris-thief", targetUid: players[2].uid });
+    const activateRequest = { action: "activate", boardId, gameId, itemId: "eris-thief" };
+    await expect(call(players[0], { ...activateRequest, requestId: crypto.randomUUID() })).rejects.toMatchObject({ code: "failed-precondition" });
+    await expect(call(players[0], { ...activateRequest, requestId: crypto.randomUUID(), targetUid: players[0].uid })).rejects.toMatchObject({ code: "failed-precondition" });
+    await call(players[0], { ...activateRequest, requestId: crypto.randomUUID(), targetUid: ownerUid });
     const afterItemUse = await getDoc(doc(admin.db, `boards/${boardId}/chaosGames/${gameId}`));
-    expect((afterItemUse.data() as { history: string[] }).history.at(-1)).toBe(`item:${players[0].uid}:eris-thief:${players[2].uid}`);
+    const afterItemGame = afterItemUse.data() as { history: string[]; players: Record<string, { eris: number }> };
+    expect(afterItemGame.history.at(-1)).toBe(`item:${players[0].uid}:eris-thief:${ownerUid}`);
+    expect(afterItemGame.players[ownerUid].eris).toBe(70);
+    expect(afterItemGame.players[players[0].uid].eris).toBe(90);
+    const otherUid = players.slice(1, 3).find(player => player.uid !== ownerUid)!.uid;
+    expect(afterItemGame.players[otherUid].eris).toBe(100);
 
     await expect(updateDoc(doc(admin.db, `boards/${boardId}/chaosGames/${gameId}`), { players: {} })).rejects.toThrow();
   }, 30_000);

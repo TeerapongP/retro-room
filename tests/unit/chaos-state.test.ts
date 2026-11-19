@@ -4,6 +4,7 @@ import {
   closeChaosShopping,
   createChaosGame,
   finalHostProbabilities,
+  hasAvailableChaosReaction,
   nextChaosTurn,
   purchaseChaosItem,
   resolveChaosEvent,
@@ -34,6 +35,20 @@ describe("Wheel of Chaos domain", () => {
       expect(Object.keys(state.players)).toHaveLength(count);
       expect(Object.values(state.players).map(player => player.eris)).toEqual(Array(count).fill(100));
     }
+  });
+
+  it("opens a reaction window only when a player has a usable response item", () => {
+    const round = closeChaosShopping(startChaosShopping(createChaosGame(players)));
+    const event = { ...round, turnPhase: "reaction_window" as const, selectedUid: "a", eventId: "cursed" as const };
+    expect(hasAvailableChaosReaction(event)).toBe(false);
+
+    const withResponse = {
+      ...event,
+      players: { ...event.players, a: { ...event.players.a, items: ["second-chance" as const] } },
+      itemOwners: { "second-chance": "a" },
+    };
+    expect(hasAvailableChaosReaction(withResponse)).toBe(true);
+    expect(hasAvailableChaosReaction({ ...withResponse, usedItems: ["second-chance"] })).toBe(false);
   });
 
   it("sells each item only once and does not charge a losing buyer", () => {

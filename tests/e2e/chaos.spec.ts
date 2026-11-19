@@ -1,5 +1,134 @@
 import { test, expect } from "@playwright/test";
-import { reachTreasureRush, selectMobileTab, mockSwitchUser, getCurrentBoardId } from "./helpers";
+import { reachTreasureRush, selectMobileTab, mockSwitchUser, getCurrentBoardId, createAndStartGame } from "./helpers";
+
+test("เครื่องรางนำโชคลดขนาดชื่อผู้ใช้บนวงล้อ", async ({ page }) => {
+  await createAndStartGame(page, 3);
+  await page.getByRole("button", { name: "เครื่องมือผู้เล่นสำหรับทดสอบ" }).click();
+  await page.getByRole("combobox", { name: "จำลองเล่นในชื่อ" }).selectOption("mock-ploy");
+  const playerPanel = page.getByRole("complementary", { name: "กระเป๋าไอเทมและยอดเอริส" });
+  const charm = page.locator(".chaos-item").filter({ hasText: "เครื่องรางนำโชค" });
+  await charm.getByRole("button", { name: "ซื้อไอเทม · 15 เอริส" }).click();
+
+  await selectMobileTab(page, "วงล้อ");
+  await page.getByRole("button", { name: "ปิดร้านค้า" }).click();
+  const wheelLabel = (name: string) => page.locator(".rr-roulette__svg text").filter({ hasText: name });
+  await expect(wheelLabel("Ploy")).toHaveCSS("font-size", "15px");
+  await expect(wheelLabel("Nok")).toHaveCSS("font-size", "15px");
+
+  await selectMobileTab(page, "ร้านค้า");
+  const inventoryCard = playerPanel.locator(".chaos-inventory article").filter({ hasText: "เครื่องรางนำโชค" });
+  await inventoryCard.getByRole("button", { name: "ใช้ไอเทม", exact: true }).click();
+  await expect(inventoryCard.getByRole("button", { name: "ใช้ไอเทมแล้ว" })).toBeDisabled();
+  await selectMobileTab(page, "วงล้อ");
+  await expect(wheelLabel("Ploy")).toHaveCSS("font-size", "12px");
+  await expect(wheelLabel("Nok")).toHaveCSS("font-size", "15px");
+});
+
+test("ผู้เล่นเลือกชื่อเป้าหมายของจอมโจรเอริสก่อนยืนยัน", async ({ page }) => {
+  await createAndStartGame(page, 3);
+  await page.getByRole("button", { name: "เครื่องมือผู้เล่นสำหรับทดสอบ" }).click();
+  const mockPlayer = page.getByRole("combobox", { name: "จำลองเล่นในชื่อ" });
+  await mockPlayer.selectOption("mock-ploy");
+  const playerPanel = page.getByRole("complementary", { name: "กระเป๋าไอเทมและยอดเอริส" });
+  const shopCard = page.locator(".chaos-item").filter({ hasText: "จอมโจรเอริส" });
+  await shopCard.getByRole("button", { name: "ซื้อไอเทม · 20 เอริส" }).click();
+  const inventoryCard = playerPanel.getByRole("article").filter({ hasText: "จอมโจรเอริส" });
+  await inventoryCard.getByRole("button", { name: "ใช้ไอเทม", exact: true }).click();
+  const target = inventoryCard.getByRole("combobox", { name: "ผู้เล่นเป้าหมาย" });
+  const confirm = inventoryCard.getByRole("button", { name: "ยืนยันใช้ไอเทม" });
+  await expect(confirm).toBeDisabled();
+  await expect(target.getByRole("option", { name: "Ploy", exact: true })).toHaveCount(0);
+  await target.selectOption({ label: "Kai" });
+  await confirm.click();
+  await expect(playerPanel).toContainText("90 เอริส");
+  await expect(inventoryCard.getByRole("button", { name: "ใช้ไอเทมแล้ว" })).toBeDisabled();
+  await mockPlayer.selectOption("mock-nok");
+  await expect(playerPanel).toContainText("100 เอริส");
+  await mockPlayer.selectOption("mock-kai");
+  await expect(playerPanel).toContainText("90 เอริส");
+  await selectMobileTab(page, "ประวัติ");
+  await expect(page.getByRole("complementary", { name: "ประวัติเกม" })).toContainText("Ploy ใช้จอมโจรเอริส ใส่ Kai");
+});
+
+test("ตลาดแลกเปลี่ยนเลือกชื่อและไอเทมของทั้งสองฝ่ายได้", async ({ page }) => {
+  await createAndStartGame(page, 3);
+  await page.getByRole("button", { name: "เครื่องมือผู้เล่นสำหรับทดสอบ" }).click();
+  const mockPlayer = page.getByRole("combobox", { name: "จำลองเล่นในชื่อ" });
+  const playerPanel = page.getByRole("complementary", { name: "กระเป๋าไอเทมและยอดเอริส" });
+  const buy = async (name: string, price: number) => {
+    const card = page.locator(".chaos-item").filter({ hasText: name });
+    await card.getByRole("button", { name: `ซื้อไอเทม · ${price} เอริส` }).click();
+  };
+
+  await mockPlayer.selectOption("mock-ploy");
+  await buy("ตลาดแลกเปลี่ยน", 20);
+  await buy("โล่ศักดิ์สิทธิ์", 20);
+  await mockPlayer.selectOption("mock-kai");
+  await buy("ชำระมหาภัย", 15);
+  await mockPlayer.selectOption("mock-ploy");
+
+  const auction = playerPanel.getByRole("article").filter({ hasText: "ตลาดแลกเปลี่ยน" });
+  await auction.getByRole("button", { name: "ใช้ไอเทม", exact: true }).click();
+  const target = auction.getByRole("combobox", { name: "ผู้เล่นเป้าหมาย" });
+  const targetItem = auction.getByRole("combobox", { name: "ไอเทมของเป้าหมาย" });
+  const offeredItem = auction.getByRole("combobox", { name: "ไอเทมของคุณสำหรับแลก" });
+  const confirm = auction.getByRole("button", { name: "ยืนยันใช้ไอเทม" });
+  await target.selectOption({ label: "Kai" });
+  await targetItem.selectOption({ label: "ชำระมหาภัย" });
+  await offeredItem.selectOption({ label: "โล่ศักดิ์สิทธิ์" });
+  await confirm.click();
+
+  await mockPlayer.selectOption("mock-kai");
+  await selectMobileTab(page, "วงล้อ");
+  await expect(page.getByRole("region", { name: "ข้อเสนอรอคำตอบ" })).toContainText("Ploy ส่งข้อเสนอถึงคุณ");
+  await page.getByRole("button", { name: "ยอมรับ" }).click();
+  await selectMobileTab(page, "ร้านค้า");
+  await expect(playerPanel.locator(".chaos-inventory")).toContainText("โล่ศักดิ์สิทธิ์");
+  await expect(playerPanel.locator(".chaos-inventory")).not.toContainText("ชำระมหาภัย");
+  await mockPlayer.selectOption("mock-ploy");
+  await expect(playerPanel.locator(".chaos-inventory")).toContainText("ชำระมหาภัย");
+  await expect(playerPanel.locator(".chaos-inventory")).not.toContainText("โล่ศักดิ์สิทธิ์");
+});
+
+test("ผู้เล่นใช้พรสมบัติระหว่างเปิดร้านค้า", async ({ page }) => {
+  await createAndStartGame(page, 1);
+  await page.getByRole("button", { name: "เครื่องมือผู้เล่นสำหรับทดสอบ" }).click();
+  await page.getByRole("combobox", { name: "จำลองเล่นในชื่อ" }).selectOption("mock-ploy");
+  const playerPanel = page.locator('[aria-label="กระเป๋าไอเทมและยอดเอริส"]');
+  await expect(playerPanel).toContainText("100 เอริส");
+
+  const shopCard = page.locator(".chaos-item").filter({ hasText: "พรสมบัติ" });
+  await shopCard.getByRole("button", { name: "ซื้อไอเทม · 15 เอริส" }).click();
+  await expect(playerPanel).toContainText("85 เอริส");
+
+  const inventoryCard = page.locator(".chaos-inventory article").filter({ hasText: "พรสมบัติ" });
+  await inventoryCard.getByRole("button", { name: "ใช้ไอเทม" }).click();
+  await expect(playerPanel).toContainText("100 เอริส");
+  await expect(inventoryCard.getByRole("button", { name: "ใช้ไอเทมแล้ว" })).toBeDisabled();
+});
+
+test("ผู้เล่นใช้โอกาสแก้มือในช่วงตอบโต้ก่อนหมดเวลา", async ({ page }) => {
+  await createAndStartGame(page, 1);
+  await page.getByRole("button", { name: "เครื่องมือผู้เล่นสำหรับทดสอบ" }).click();
+  await page.getByRole("combobox", { name: "จำลองเล่นในชื่อ" }).selectOption("mock-ploy");
+  const playerPanel = page.locator('[aria-label="กระเป๋าไอเทมและยอดเอริส"]');
+  const shopCard = page.locator(".chaos-item").filter({ hasText: "โอกาสแก้มือ" });
+  await shopCard.getByRole("button", { name: "ซื้อไอเทม · 20 เอริส" }).click();
+
+  await selectMobileTab(page, "วงล้อ");
+  await page.getByRole("button", { name: "ปิดร้านค้า" }).click();
+  await page.getByRole("button", { name: "หมุนวงล้อ", exact: true }).click();
+  await expect(page.locator(".chaos-wheel-result")).toHaveText("Ploy");
+  await page.getByRole("button", { name: /หมุนวงล้อเหตุการณ์|หมุนเหตุการณ์เพิ่มเติม/ }).click();
+  await expect(page.locator(".chaos-turn")).toContainText("ช่วงตอบโต้");
+
+  await selectMobileTab(page, "ร้านค้า");
+  const inventoryCard = playerPanel.locator(".chaos-inventory article").filter({ hasText: "โอกาสแก้มือ" });
+  const useButton = inventoryCard.getByRole("button", { name: "ใช้ไอเทม" });
+  await expect(useButton).toBeEnabled();
+  await useButton.click();
+  await expect(inventoryCard.getByRole("button", { name: "ใช้ไอเทมแล้ว" })).toBeDisabled();
+});
 
 test("แอดมินเลือกและเอาชื่อออกจากวงล้อได้ก่อนหมุนรอบแรก", async ({ page }) => {
   await reachTreasureRush(page);

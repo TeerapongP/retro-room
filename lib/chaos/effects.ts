@@ -10,6 +10,52 @@ export type ChaosActivation = {
   predeterminedEventId?: ChaosEventId;
 };
 export type ChaosEffectResult = { state: ChaosGameState; privateResult?: unknown; serverOnly?: { fortuneEventId?: ChaosEventId } };
+export type RandomChaosItemTarget = Pick<ChaosActivation, "targetUid" | "targetItemId" | "offeredItemId">;
+
+function availableItems(state: ChaosGameState, uid: string, itemId: ChaosItemId): ChaosItemId[] {
+  return (state.players[uid]?.items ?? []).filter(candidate => candidate !== itemId
+    && state.itemOwners[candidate] === uid
+    && !state.usedItems.includes(candidate)
+    && (itemId !== "item-sabotage" || CHAOS_ITEM_BY_ID[candidate].category === "chaos"));
+}
+
+function randomEntry<T>(entries: T[], random: () => number): T {
+  return entries[Math.min(Math.floor(random() * entries.length), entries.length - 1)];
+}
+
+export function getChaosItemTargetOptions(state: ChaosGameState, uid: string, itemId: ChaosItemId) {
+  const item = CHAOS_ITEM_BY_ID[itemId];
+  const trade = itemId === "chaos-auction";
+  const needsItem = item.target === "item" || trade;
+  const offeredItemIds = trade ? availableItems(state, uid, itemId) : [];
+  const candidates = state.eligibleUids.filter(candidate => candidate !== uid && Object.hasOwn(state.players, candidate));
+  const targetItemsByUid: Partial<Record<string, ChaosItemId[]>> = Object.fromEntries(
+    needsItem ? candidates.map(candidate => [candidate, availableItems(state, candidate, itemId)]) : [],
+  );
+  const targetUids = (item.target === "player" || item.target === "item") && (!trade || offeredItemIds.length > 0)
+    ? candidates.filter(candidate => !needsItem || !!targetItemsByUid[candidate]?.length)
+    : [];
+  return { targetUids, targetItemsByUid, offeredItemIds };
+}
+
+export function chooseRandomChaosItemTarget(
+  state: ChaosGameState,
+  uid: string,
+  itemId: ChaosItemId,
+  random: () => number,
+): RandomChaosItemTarget {
+  const item = CHAOS_ITEM_BY_ID[itemId];
+  if (!item || (item.target !== "player" && item.target !== "item")) return {};
+  const { targetUids, targetItemsByUid, offeredItemIds } = getChaosItemTargetOptions(state, uid, itemId);
+  if (!targetUids.length) throw new Error("No eligible target");
+
+  const targetUid = randomEntry(targetUids, random);
+  const selection: RandomChaosItemTarget = { targetUid };
+  const targetItems = targetItemsByUid[targetUid];
+  if (targetItems?.length) selection.targetItemId = randomEntry(targetItems, random);
+  if (offeredItemIds.length) selection.offeredItemId = randomEntry(offeredItemIds, random);
+  return selection;
+}
 
 export function activateChaosItem(state: ChaosGameState, uid: string, itemId: ChaosItemId, input: ChaosActivation = {}, random = 0): ChaosEffectResult {
   if (!isChaosItemId(itemId) || (input.targetItemId !== undefined && !isChaosItemId(input.targetItemId)) || (input.offeredItemId !== undefined && !isChaosItemId(input.offeredItemId))) throw new Error("Unknown item");
@@ -27,9 +73,11 @@ export function activateChaosItem(state: ChaosGameState, uid: string, itemId: Ch
   if (!inWindow) throw new Error("Wrong activation window");
   if (owner.frozenUntilTurn > 0 && owner.frozenUntilTurn >= state.turn && item.category === "chaos") throw new Error("Offensive items are frozen");
   if (state.disabledItems.includes(itemId)) throw new Error("Item is sabotaged");
-  const targetUid = input.targetUid;
+  const targetOptions = item.target === "player" || item.target === "item" ? getChaosItemTargetOptions(state, uid, itemId) : null;
+  const targetUid = targetOptions ? input.targetUid : undefined;
+  if (targetOptions && (!targetUid || !targetOptions.targetUids.includes(targetUid))) throw new Error("Invalid target");
   const target = targetUid ? state.players[targetUid] : undefined;
-  if (item.target === "player" && (!target || targetUid === uid || !state.eligibleUids.includes(targetUid!))) throw new Error("Invalid target");
+  const targetItems = targetUid ? targetOptions?.targetItemsByUid[targetUid] : undefined;
   const reportedTargetUid = targetUid ?? (["mirror-guard", "reverse-card", "time-rewind"].includes(itemId) ? state.pendingAction?.actorUid : undefined);
   const next: ChaosGameState = { ...state, players: { ...state.players }, usedItems: [...state.usedItems, itemId], history: [...state.history, `item:${uid}:${itemId}${reportedTargetUid ? `:${reportedTargetUid}` : ""}`] };
   let privateResult: unknown;
@@ -88,12 +136,10 @@ export function activateChaosItem(state: ChaosGameState, uid: string, itemId: Ch
       break;
     case "destiny-swap": case "secret-pact":
       if (next.proposal) throw new Error("Proposal unavailable");
-      next.proposal = { kind: itemId === "destiny-swap" ? "curse-swap" : itemId === "secret-pact" ? "pact" : "trade", actorUid: uid, targetUid: targetUid!, actorItemId: input.offeredItemId, targetItemId: input.targetItemId }; break;
+      next.proposal = { kind: itemId === "destiny-swap" ? "curse-swap" : "pact", actorUid: uid, targetUid: targetUid! }; break;
     case "chaos-auction":
-      if (!input.offeredItemId || !input.targetItemId || input.offeredItemId === input.targetItemId
-        || next.itemOwners[input.offeredItemId] !== uid || next.itemOwners[input.targetItemId] !== targetUid
-        || owner.items.includes(input.offeredItemId) === false || !target!.items.includes(input.targetItemId)
-        || next.usedItems.includes(input.offeredItemId) || next.usedItems.includes(input.targetItemId)) throw new Error("Proposal unavailable");
+      if (!input.offeredItemId || !targetOptions?.offeredItemIds.includes(input.offeredItemId)
+        || !input.targetItemId || !targetItems?.includes(input.targetItemId)) throw new Error("Proposal unavailable");
       next.proposal = { kind: "trade", actorUid: uid, targetUid: targetUid!, actorItemId: input.offeredItemId, targetItemId: input.targetItemId };
       break;
     case "lucky-seven": if (owner.curse !== 7) throw new Error("Requires exactly seven Curse"); mutate(uid, { curse: 4 }); break;
@@ -129,7 +175,7 @@ export function activateChaosItem(state: ChaosGameState, uid: string, itemId: Ch
       if (!input.candidateUids || input.candidateUids.length < 3 || new Set(input.candidateUids).size !== input.candidateUids.length || input.candidateUids.some(candidate => !next.eligibleUids.includes(candidate))) throw new Error("Invalid candidate subset");
       next.subsetUids = [...input.candidateUids]; break;
     case "item-sabotage":
-      if (!input.targetItemId || !CHAOS_ITEM_BY_ID[input.targetItemId] || next.itemOwners[input.targetItemId] !== targetUid || next.usedItems.includes(input.targetItemId) || CHAOS_ITEM_BY_ID[input.targetItemId].category !== "chaos") throw new Error("No eligible offensive item");
+      if (!input.targetItemId || !targetItems?.includes(input.targetItemId)) throw new Error("No eligible offensive item");
       next.disabledItems = [...next.disabledItems, input.targetItemId]; break;
     case "emergency-escape":
       if (next.selectedUid !== uid || next.eligibleUids.length <= 1) throw new Error("No alternative candidate");

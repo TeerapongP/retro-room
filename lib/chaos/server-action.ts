@@ -3,7 +3,7 @@ import type { Transaction } from "firebase-admin/firestore";
 import { getAdminFirestore } from "../firebase/server-admin";
 import { isChaosItemId, type ChaosItemId } from "./catalog";
 import { CHAOS_ADMIN_EMAIL } from "./access";
-import { closeChaosShopping, chaosEventWeights, createChaosGame, nextChaosTurn, purchaseChaosItem, resolveChaosEvent, selectFinalHost, setChaosEligibility, setFinalHostExclusions, spinChaosEvent, spinChaosPlayer, startChaosShopping, CHAOS_EVENTS, weightedChoice, type ChaosGameState } from "./state";
+import { closeChaosShopping, chaosEventWeights, createChaosGame, hasAvailableChaosReaction, nextChaosTurn, purchaseChaosItem, resolveChaosEvent, selectFinalHost, setChaosEligibility, setFinalHostExclusions, spinChaosEvent, spinChaosPlayer, startChaosShopping, CHAOS_EVENTS, CHAOS_REACTION_WINDOW_MS, weightedChoice, type ChaosGameState } from "./state";
 import { activateChaosItem, resolveChaosPendingAction, respondChaosProposal } from "./effects";
 
 type Action = "create" | "setEligibility" | "startShopping" | "purchase" | "closeShopping"
@@ -253,7 +253,8 @@ export async function performChaosAction(
               guaranteedEventId = outcome as NonNullable<ChaosGameState["eventId"]>;
               tx.delete(secretRef);
             }
-            next = { ...next, ...spinChaosEvent(game, secureFraction(), guaranteedEventId ?? undefined), fortuneRequestId: null, reactionDeadlineMs: now + 5000 };
+            const spun = spinChaosEvent(game, secureFraction(), guaranteedEventId ?? undefined);
+            next = { ...next, ...spun, fortuneRequestId: null, reactionDeadlineMs: now + (hasAvailableChaosReaction(spun) ? CHAOS_REACTION_WINDOW_MS : 0) };
           }
           break;
         case "resolve": {
@@ -320,7 +321,7 @@ export async function performChaosAction(
             predeterminedEventId: preselected,
           }, secureFraction());
           next = { ...next, ...effect.state };
-          if (effect.state.pendingAction !== game.pendingAction) next.reactionDeadlineMs = now + 5000;
+          if (effect.state.pendingAction !== game.pendingAction) next.reactionDeadlineMs = now + (hasAvailableChaosReaction(effect.state) ? CHAOS_REACTION_WINDOW_MS : 0);
           privateResult = effect.privateResult;
           if (privateResult !== undefined) {
             tx.create(gameRef.collection("privateResults").doc(input.requestId), { uid, result: privateResult, createdAtMs: now });
