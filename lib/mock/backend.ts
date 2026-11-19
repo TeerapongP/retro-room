@@ -1,4 +1,4 @@
-import { ADMIN_EMAIL } from "../firebase/admin";
+import { ADMIN_EMAIL, isAdminUser } from "../firebase/admin";
 import { clampPhase } from "../phases";
 import {
   FARM_SELECTION_SECONDS,
@@ -1176,9 +1176,35 @@ export function createMockBackend(options: MockBackendOptions = {}) {
       changed();
     },
 
+    async kickMember(boardId: string, memberUid: string): Promise<void> {
+      const board = boardOrThrow(boardId);
+      const actor = currentUser();
+      if (!actor || !isAdminUser(actor) || board.status !== "waiting" || memberUid === actor.uid) {
+        throw denied("Only an admin can remove another member while the board is waiting");
+      }
+      delete state.members[boardId]?.[memberUid];
+      changed();
+    },
+
     async getOwnMembership(boardId: string, uid: string): Promise<BoardMember | null> {
       const member = state.members[boardId]?.[uid];
       return member ? toMember(member) : null;
+    },
+
+    subscribeToOwnMembership(
+      boardId: string,
+      uid: string,
+      onMember: (member: BoardMember | null) => void,
+      onError: (error: unknown) => void,
+    ): Unsubscribe {
+      return subscribe(
+        () => {
+          const member = state.members[boardId]?.[uid];
+          return member ? toMember(member) : null;
+        },
+        onMember,
+        onError,
+      );
     },
 
     subscribeToBoard(boardId: string, onBoard: (board: Board | null) => void, onError: (error: unknown) => void): Unsubscribe {

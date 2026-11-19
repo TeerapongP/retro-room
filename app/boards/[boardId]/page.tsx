@@ -29,7 +29,7 @@ import {
   clearBoard,
   completeSession,
   resetBoard,
-  getOwnMembership,
+  kickMember,
   joinBoard,
   setPhase,
   startRatingTimer,
@@ -40,6 +40,7 @@ import {
   stopTimer,
   subscribeToBoard,
   subscribeToMembers,
+  subscribeToOwnMembership,
 } from "@/lib/firebase/boards";
 import {
   addCard,
@@ -100,20 +101,12 @@ function BoardPageContent() {
 
   useEffect(() => {
     if (!uid) return;
-    let isCurrent = true;
-    getOwnMembership(boardId, uid)
-      .then((ownMembership) => {
-        if (!isCurrent) return;
-        setMembership(
-          ownMembership ? { status: "member", role: ownMembership.role } : { status: "none" },
-        );
-      })
-      .catch((error) => {
-        if (isCurrent) setBoardError(describeFirebaseError(error));
-      });
-    return () => {
-      isCurrent = false;
-    };
+    return subscribeToOwnMembership(
+      boardId,
+      uid,
+      (member) => setMembership(member ? { status: "member", role: member.role } : { status: "none" }),
+      (error) => setBoardError(describeFirebaseError(error)),
+    );
   }, [boardId, uid]);
 
   useEffect(() => {
@@ -151,7 +144,7 @@ function BoardPageContent() {
         <p>ไม่พบบอร์ดนี้ ลิงก์อาจไม่ถูกต้อง</p>
       </DialogueBox>
     );
-  } else if (membership.status === "none") {
+  } else if (membership.status === "none" && !isAdminUser(user)) {
     content = (
       <DialogueBox
         title="Join this board?"
@@ -171,7 +164,7 @@ function BoardPageContent() {
       </DialogueBox>
     );
   } else {
-    content = <LiveBoard board={board} role={membership.role} uid={user.uid} user={user} />;
+    content = <LiveBoard board={board} role={membership.status === "member" ? membership.role : null} uid={user.uid} user={user} />;
   }
 
   return (
@@ -195,7 +188,7 @@ function BackToDashboard() {
 
 type LiveBoardProps = {
   board: Board;
-  role: BoardRole;
+  role: BoardRole | null;
   uid: string;
   user: NonNullable<ReturnType<typeof useRequireSignedIn>>;
 };
@@ -323,8 +316,11 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         <TitleScreen
           board={board}
           isAdmin={isAdmin}
+          viewerUid={uid}
+          adminName={user.displayName ?? "แอดมิน"}
           members={members}
           onStart={() => runAction(() => startSession(board.id))}
+          onKickMember={(memberUid) => runAction(() => kickMember(board.id, memberUid))}
         />
       </>
     );
@@ -350,7 +346,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
         }
         actions={
           <>
-            {isVotingOpen ? (
+            {isVotingOpen && role !== null ? (
               <span className="vote-meter" role="status">
                 โหวตเหลือ {votesLeft(myVotes)}/{VOTES_PER_MEMBER}
               </span>
@@ -566,7 +562,7 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
       ) : board.phase === 5 && !isCompleted ? (
         <ChaosGame board={board} members={members} user={user} isAdmin={isAdmin} onAdvancePhase={isAdmin ? () => void runAction(() => setPhase(board.id, 6)) : undefined} />
       ) : isRatingStep ? (
-        <RatingPanel ratings={ratings} members={members} uid={uid} revealed={board.ratingRound?.revealed ?? false} timerExpired={ratingTimerExpired} onRate={(score) => void handleRate(score)} />
+        <RatingPanel canRate={role !== null} ratings={ratings} members={members} uid={uid} revealed={board.ratingRound?.revealed ?? false} timerExpired={ratingTimerExpired} onRate={(score) => void handleRate(score)} />
       ) : cards === null && !liveError ? (
         <LoadingNotice />
       ) : (
@@ -582,15 +578,15 @@ function LiveBoard({ board, role, uid, user }: LiveBoardProps) {
               isOwner={isOwner}
               isAdmin={isAdmin}
               readOnly={isCompleted}
-              canAdd={!isCompleted && board.phase === 1}
-              blursOthers={board.phase === 1 && !isCompleted}
+              canAdd={role !== null && !isCompleted && board.phase === 1}
+              blursOthers={role !== null && !isAdmin && board.phase === 1 && !isCompleted}
               onToggleHidden={handleToggleHidden}
               voteInfoFor={(card) => ({
                 count: voteCounts.get(card.id) ?? 0,
                 showCount: showVotes,
-                isOpen: isVotingOpen,
+                isOpen: isVotingOpen && role !== null,
                 hasVoted: myVotes.includes(card.id),
-                isDisabled: votesLeft(myVotes) === 0 && !myVotes.includes(card.id),
+                isDisabled: role === null || (votesLeft(myVotes) === 0 && !myVotes.includes(card.id)),
                 onToggle: () => void handleToggleVote(card.id),
               })}
               onChangeColumn={handleChangeColumn}

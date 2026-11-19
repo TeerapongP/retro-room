@@ -5,13 +5,14 @@ type RatingPanelProps = {
   ratings: Rating[];
   members: BoardMember[];
   uid: string;
+  canRate: boolean;
   revealed: boolean;
   timerExpired: boolean;
   onRate: (score: number) => void;
 };
 
 /** Step 4 (F28): members pick a score from 1 to 5; shared results stay concealed until the admin reveals them. */
-export function RatingPanel({ ratings, members, uid, revealed, timerExpired, onRate }: RatingPanelProps) {
+export function RatingPanel({ ratings, members, uid, canRate, revealed, timerExpired, onRate }: RatingPanelProps) {
   const myScore = ratings.find((rating) => rating.uid === uid)?.score;
   const average = averageRating(ratings);
   const scoreByUid = new Map(ratings.map((rating) => [rating.uid, rating.score]));
@@ -27,6 +28,7 @@ export function RatingPanel({ ratings, members, uid, revealed, timerExpired, onR
               type="button"
               className="rating-choice"
               aria-pressed={myScore === score}
+              disabled={!canRate}
               onClick={() => onRate(score)}
             >
               <span className="rating-choice-score">{formatScore(score)}</span>

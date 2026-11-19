@@ -132,6 +132,35 @@ describe("mock boards", () => {
     expect(names).toContain("Guest");
     expect(names).toHaveLength(8);
   });
+
+  it("lets the admin remove a member and notifies that member's membership listener", async () => {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard("owner", "Kick", "Owner");
+    await backend.joinBoard(boardId, "guest", "Guest");
+    const seen: Array<string | null> = [];
+    const stop = backend.subscribeToOwnMembership(boardId, "guest", (member) => seen.push(member?.uid ?? null), fail);
+    await flush();
+
+    await backend.kickMember(boardId, "guest");
+    await flush();
+    stop();
+
+    expect(await backend.getOwnMembership(boardId, "guest")).toBeNull();
+    expect(seen).toEqual(["guest", null]);
+    expect(await backend.getOwnMembership(boardId, admin.uid)).toBeNull();
+  });
+
+  it("rejects removing the admin or kicking after a session starts", async () => {
+    const backend = setup();
+    const admin = await backend.signIn();
+    const boardId = await backend.createBoard(admin.uid, "Kick", "Aomsin");
+    await backend.joinBoard(boardId, "guest", "Guest");
+
+    await expect(backend.kickMember(boardId, admin.uid)).rejects.toThrow();
+    await backend.startSession(boardId);
+    await expect(backend.kickMember(boardId, "guest")).rejects.toThrow();
+  });
 });
 
 describe("mock writing step", () => {

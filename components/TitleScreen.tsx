@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { ModalDialog } from "@/components/ModalDialog";
 import farmerBreathe from "@/public/art/anim/farmer-breathe.png";
 import farmerSheets from "@/public/art/anim/sheets-farmer.json";
 import chickenPeck from "@/public/art/anim/chicken-peck.png";
@@ -10,26 +11,44 @@ import chickenSheets from "@/public/art/anim/sheets-chicken.json";
 import logoSign from "@/public/art/logo-sign.png";
 import { SpriteAnimation } from "@/components/SpriteAnimation";
 import { PixelCloud, PixelFence, PixelFlower, PixelTree } from "@/components/PixelScenery";
+import { currentHostUid } from "@/lib/crowded-farm";
 import type { Board, BoardMember } from "@/lib/firebase/types";
 
 type TitleScreenProps = {
   board: Board;
   isAdmin: boolean;
+  viewerUid: string;
+  adminName: string;
   members: BoardMember[];
   onStart: () => Promise<boolean>;
+  onKickMember: (memberUid: string) => Promise<boolean>;
 };
 
 const FARMER_SHEET = farmerSheets["farmer-breathe"];
 const CHICKEN_WALK_SHEET = chickenSheets["chicken-walk"];
 const CHICKEN_PECK_SHEET = chickenSheets["chicken-peck"];
 
-export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenProps) {
+export function TitleScreen({ board, isAdmin, viewerUid, adminName, members, onStart, onKickMember }: TitleScreenProps) {
   const [isStarting, setIsStarting] = useState(false);
+  const [kickTarget, setKickTarget] = useState<BoardMember | null>(null);
+  const [isKicking, setIsKicking] = useState(false);
+  const hostUid = currentHostUid(board);
+  const playerMembers = members.filter((member) => !isAdmin || member.uid !== viewerUid);
 
   async function handleStart() {
     setIsStarting(true);
     const started = await onStart();
     if (!started) setIsStarting(false);
+  }
+
+  async function handleKick() {
+    if (!kickTarget) return;
+    setIsKicking(true);
+    try {
+      if (await onKickMember(kickTarget.uid)) setKickTarget(null);
+    } finally {
+      setIsKicking(false);
+    }
   }
 
   return (
@@ -63,22 +82,34 @@ export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenPro
         <div className="min-w-0 flex-1 py-1">
           <h2 className="font-pixel truncate text-base font-bold leading-snug">{board.title}</h2>
           <p className="mt-1 text-xs" style={{ color: "var(--color-wood)" }}>
-            สมาชิกที่เข้าร่วมแล้ว ({members.length})
+            สมาชิกที่เข้าร่วมแล้ว ({playerMembers.length})
           </p>
           <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto">
-            {members.map((member) => (
-              <li key={member.uid} className="flex items-center gap-1.5 text-sm">
-                {member.role === "owner" ? (
-                  <span aria-label="เจ้าของ">👑</span>
-                ) : (
-                  <span aria-hidden style={{ color: "var(--color-berry)" }}>
-                    ♥
-                  </span>
-                )}
-                <span className="truncate">{member.displayName}</span>
+            {playerMembers.map((member) => (
+              <li key={member.uid} data-testid={`title-member-${member.uid}`} className="flex items-center gap-1.5 text-sm">
+                <span aria-hidden style={{ color: "var(--color-berry)" }}>♥</span>
+                <span className="min-w-0 flex-1 truncate">{member.displayName}</span>
+                {member.uid === hostUid ? <span aria-label="โฮสต์ปัจจุบัน" className="shrink-0 font-bold">โฮสต์</span> : null}
+                {isAdmin && member.uid !== viewerUid ? (
+                  <button
+                    type="button"
+                    className="pixel-button pixel-button-danger shrink-0 px-2 py-1 text-xs"
+                    aria-label={`เตะ ${member.displayName} ออกจากบอร์ด`}
+                    onClick={() => setKickTarget(member)}
+                  >
+                    เตะออก
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>
+          {isAdmin ? (
+            <div data-testid="game-admin" className="mt-2 flex items-center gap-1.5 text-sm font-bold">
+              <span role="img" aria-label="ผู้ดูแลเกม">👑</span>
+              <span>{adminName}</span>
+              <span className="ml-auto">ผู้ดูแลเกม</span>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -133,6 +164,27 @@ export function TitleScreen({ board, isAdmin, members, onStart }: TitleScreenPro
 
         <PixelFence className="absolute inset-x-0 bottom-0 h-10 w-full" />
       </div>
+
+      {kickTarget ? (
+        <ModalDialog
+          title="เตะสมาชิกออกจากห้อง?"
+          onClose={() => {
+            if (!isKicking) setKickTarget(null);
+          }}
+          actions={
+            <>
+              <button type="button" className="pixel-button pixel-button-danger" disabled={isKicking} onClick={() => void handleKick()}>
+                {isKicking ? "กำลังนำออก..." : "เตะออกจากบอร์ด"}
+              </button>
+              <button type="button" className="pixel-button pixel-button-gold" disabled={isKicking} onClick={() => setKickTarget(null)}>
+                ยกเลิก
+              </button>
+            </>
+          }
+        >
+          <p>นำ {kickTarget.displayName} ออกจากห้องก่อนเริ่มเกมหรือไม่?</p>
+        </ModalDialog>
+      ) : null}
     </section>
   );
 }

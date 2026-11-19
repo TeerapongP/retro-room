@@ -1227,3 +1227,29 @@ describe("move budget", () => {
     await assertSucceeds(moveMany(4));
   });
 });
+
+describe("admin member removal", () => {
+  it("lets a non-member admin list the waiting room", async () => {
+    const members = await assertSucceeds(getDocs(collection(admin(), `boards/${WAITING}/members`)));
+    if (members.size !== 2) throw new Error(`expected 2 members, got ${members.size}`);
+  });
+
+  it("lets the admin remove any member while the board is waiting", async () => {
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${WAITING}/members/bob`)));
+    await assertSucceeds(deleteDoc(doc(admin(), `boards/${WAITING}/members/alice`)));
+    await assertFails(deleteDoc(doc(admin(), `boards/${SRC}/members/bob`)));
+  });
+
+  it("does not let a member remove another member", async () => {
+    await assertFails(deleteDoc(doc(bob(), `boards/${WAITING}/members/alice`)));
+  });
+
+  it("does not let the admin remove themself", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), `boards/${WAITING}/members/admin`), {
+        uid: "admin", role: "member", displayName: "Admin", joinedAt: seeded,
+      });
+    });
+    await assertFails(deleteDoc(doc(admin(), `boards/${WAITING}/members/admin`)));
+  });
+});

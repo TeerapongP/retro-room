@@ -205,6 +205,7 @@ export function ChaosGame({ board, members, user, isAdmin, onAdvancePhase }: Pro
       @media(max-width:980px){.chaos-layout{grid-template-columns:minmax(190px,1fr) minmax(0,2fr)}.chaos-right{grid-column:1/-1}}
       @media(max-width:700px){.chaos-root{padding:8px;min-height:0}.chaos-banner{padding:9px}.chaos-banner:after{display:none}.chaos-layout{display:flex;flex-direction:column}.chaos-layout [data-panel]{width:100%;display:none}.chaos-layout [data-panel][data-active=true]{display:block}.chaos-left-stack{grid-template-rows:auto auto;align-self:auto;min-height:0}.chaos-history{flex:initial;max-height:220px}.chaos-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:9px}.chaos-tabs button{padding:7px 3px;min-height:44px;font-size:12px}.chaos-wheel-frame{width:min(100%,340px)}.chaos-shop-grid{grid-template-columns:1fr;max-height:none}.chaos-config-list{grid-template-columns:1fr 1fr}}
       @media(prefers-reduced-motion:reduce){.chaos-root *, .chaos-root *::before,.chaos-root *::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+      .chaos-roster-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}.chaos-roster-host{margin:0;padding:7px;background:#d8ebc2;border-left:4px solid #e8b44d;font-weight:700;color:#4f783d}
     `}</style>
 
     <header className="chaos-banner">
@@ -317,7 +318,10 @@ export function ChaosGame({ board, members, user, isAdmin, onAdvancePhase }: Pro
 
         <aside className="chaos-panel chaos-right" data-panel="players" data-active={tab === "players"} aria-label="ผู้เล่นและแต้มมหาภัย">
           <h3>ผู้เล่นทั้งหมด ({roster.length}) คน</h3>
-          <ol className="chaos-roster">{roster.sort((a, b) => (game.players[b]?.curse ?? 0) - (game.players[a]?.curse ?? 0)).map(uid => <li key={uid}><span>{nameOf(uid)}{uid === currentHostUid ? " · โฮสต์" : ""}</span><strong>{game.players[uid]?.curse ?? 0} แต้ม</strong></li>)}</ol>
+          <div className="chaos-roster">
+            {game.phase === "final_host_selection" && !roster.includes(currentHostUid) && <p className="chaos-roster-host">👑 {nameOf(currentHostUid)} · โฮสต์</p>}
+            <ol className="chaos-roster-list">{roster.sort((a, b) => (game.players[b]?.curse ?? 0) - (game.players[a]?.curse ?? 0)).map(uid => <li key={uid}><span>{nameOf(uid)}{uid === currentHostUid ? " · โฮสต์" : ""}</span><strong>{game.players[uid]?.curse ?? 0} แต้ม</strong></li>)}</ol>
+          </div>
           <h3 style={{ marginTop: 18 }}>ประวัติโฮสต์</h3>
           <p className="chaos-muted">{board.pastHostUids.length ? board.pastHostUids.map(nameOf).join(" · ") : "ยังไม่มีประวัติโฮสต์"}</p>
           {game.phase === "final_host_selection" && <><h3>ผู้มีสิทธิ์เป็นโฮสต์</h3><div className="chaos-final-list">{finalCandidates.map(uid => <span key={uid}>{nameOf(uid)} · โอกาส {1 + Math.min(game.players[uid]?.curse ?? 0, 4) * .5} เท่า</span>)}</div></>}

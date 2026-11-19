@@ -4,6 +4,7 @@ import {
   collection,
   collectionGroup,
   deleteField,
+  deleteDoc,
   doc,
   getDocs,
   getDoc,
@@ -278,6 +279,15 @@ export async function joinBoard(
   });
 }
 
+export async function kickMember(
+  boardId: string,
+  memberUid: string,
+  db: Firestore = getFirebaseFirestore(),
+): Promise<void> {
+  if (isMockMode()) return getMockBackend().kickMember(boardId, memberUid);
+  await deleteDoc(doc(db, "boards", boardId, "members", memberUid));
+}
+
 export async function getOwnMembership(
   boardId: string,
   uid: string,
@@ -287,6 +297,20 @@ export async function getOwnMembership(
   const snapshot = await getDoc(doc(db, "boards", boardId, "members", uid));
   const data = snapshot.data();
   return snapshot.exists() && data ? toMember(data) : null;
+}
+
+export function subscribeToOwnMembership(
+  boardId: string,
+  uid: string,
+  onMember: (member: BoardMember | null) => void,
+  onError: (error: unknown) => void,
+  db: Firestore = getFirebaseFirestore(),
+): Unsubscribe {
+  if (isMockMode()) return getMockBackend().subscribeToOwnMembership(boardId, uid, onMember, onError);
+  return onSnapshot(doc(db, "boards", boardId, "members", uid), (snapshot) => {
+    const data = snapshot.data();
+    onMember(snapshot.exists() && data ? toMember(data) : null);
+  }, onError);
 }
 
 export function subscribeToBoard(
