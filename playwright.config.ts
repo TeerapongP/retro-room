@@ -19,7 +19,6 @@ export default defineConfig({
       ...(backendMode === "emulator" ? {
         NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL: `http://127.0.0.1:${firebaseE2E.emulators.auth.port}`,
         NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_PORT: String(firebaseE2E.emulators.firestore.port),
-        NEXT_PUBLIC_FIREBASE_FUNCTIONS_EMULATOR_PORT: String(firebaseE2E.emulators.functions.port),
       } : {}),
     },
   },

@@ -41,6 +41,10 @@ NEXT_PUBLIC_FIREBASE_APP_ID
 
 Additional keys are added only if the owner's web config requires them.
 
+## Vercel server API credential
+
+Wheel of Chaos actions now run through the Next.js `/api/chaos-action` route and use Firebase Admin on the server. Add the service account JSON as the server-only Vercel environment variable `FIREBASE_SERVICE_ACCOUNT`; keep it out of source control and never prefix it with `NEXT_PUBLIC_`. Its Firebase project must match `NEXT_PUBLIC_FIREBASE_PROJECT_ID`. Local Auth and Firestore emulator runs do not need this credential.
+
 ## Local development
 
 - Firebase Emulator Suite (Auth and Firestore) for development and Security Rules tests. Approved tool, not yet installed.

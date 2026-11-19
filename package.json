@@ -9,10 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:rules": "firebase emulators:exec --only firestore --project demo-retro-room \"vitest run tests/rules\"",
-    "pretest:integration": "npm run build --prefix functions",
-    "test:integration": "firebase emulators:exec --only auth,firestore,functions --project demo-retro-room \"vitest run --maxWorkers=1 tests/integration\"",
-    "pretest:functions": "npm run build --prefix functions",
-    "test:functions": "firebase emulators:exec --only auth,firestore,functions --project demo-retro-room \"vitest run --maxWorkers=1 tests/integration/chaos-functions.test.ts\"",
+    "test:integration": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"vitest run --maxWorkers=1 tests/integration\"",
+    "test:chaos": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"vitest run --maxWorkers=1 tests/integration/chaos-action.test.ts\"",
     "dev:mock": "node scripts/run-next-dev.mjs mock",
     "dev:emulator": "firebase emulators:exec --only auth,firestore --project demo-retro-room \"node scripts/run-next-dev.mjs emulator\"",
     "test:assets": "vitest run tests/assets"
@@ -21,6 +19,7 @@
     "@fontsource/ibm-plex-sans-thai": "5.3.0",
     "@jdevs/react-roulette": "0.2.3",
     "firebase": "^13.1.0",
+    "firebase-admin": "^13.10.0",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"

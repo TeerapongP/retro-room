@@ -4,13 +4,13 @@ Derived from `01-project-requirements.md` and the Next.js 16.4.3 docs in `node_m
 
 ## Shape
 
-Frontend-only Next.js app. Firebase Authentication and Cloud Firestore are managed external services called from the browser SDK. There is no custom API, Route Handler, or Server Action for application data.
+Next.js app. Firebase Authentication and Cloud Firestore client SDK handle board collaboration. Wheel of Chaos actions go through `/api/chaos-action`; the Route Handler verifies a Firebase ID token and uses Firebase Admin for trusted mutations. No Firebase Cloud Functions service is deployed.
 
 ## Next.js 16 constraints (verified in installed docs)
 
 - `next.config.ts` has `cacheComponents: true` and `partialPrefetching: true`.
 - Dynamic route params not supplied by `generateStaticParams` are runtime data. Read them below a `<Suspense>` boundary or in a Client Component through `useParams()`.
-- Firebase Auth is client-only, so there is no server session and `cookies()` is not used.
+- Firebase Auth is client-side with no server session. The Wheel of Chaos Route Handler verifies the client's Firebase ID token before using Firebase Admin.
 - Firebase initialization and listeners run only in Client Components, started inside `useEffect`, and cleaned up on unmount.
 - Route guards in the client are UX only. Security Rules are the authority.
 
@@ -42,6 +42,9 @@ lib/firebase/               SDK init, auth state, queries actually used
 firestore.rules             Security Rules
 firestore.indexes.json      indexes
 firebase.json               emulator config
+app/api/chaos-action/       trusted Wheel of Chaos mutations
+lib/firebase/server-admin.ts server-only Firebase Admin setup
+lib/chaos/server-action.ts  validated Wheel of Chaos actions
 tests/rules/                Security Rules tests
 ```
 
@@ -49,4 +52,4 @@ tests/rules/                Security Rules tests
 
 ## Out of scope
 
-Custom backend, Cloud Functions, Admin SDK, Phase 2 features.
+Firebase Cloud Functions deployment, additional custom backend endpoints, and Phase 2 features.

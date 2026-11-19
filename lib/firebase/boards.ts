@@ -307,10 +307,16 @@ export function subscribeToOwnMembership(
   db: Firestore = getFirebaseFirestore(),
 ): Unsubscribe {
   if (isMockMode()) return getMockBackend().subscribeToOwnMembership(boardId, uid, onMember, onError);
-  return onSnapshot(doc(db, "boards", boardId, "members", uid), (snapshot) => {
-    const data = snapshot.data();
-    onMember(snapshot.exists() && data ? toMember(data) : null);
-  }, onError);
+  return onSnapshot(
+    doc(db, "boards", boardId, "members", uid),
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+      const data = snapshot.data();
+      onMember(snapshot.exists() && data ? toMember(data) : null);
+    },
+    onError,
+  );
 }
 
 export function subscribeToBoard(

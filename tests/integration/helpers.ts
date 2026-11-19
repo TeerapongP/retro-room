@@ -10,7 +10,10 @@ import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase
 import { savePlayerName } from "@/lib/firebase/profile";
 
 const PROJECT_ID = "demo-retro-room";
-const AUTH_EMULATOR_URL = "http://127.0.0.1:9099";
+const AUTH_EMULATOR_URL = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL ?? "http://127.0.0.1:9099";
+const FIRESTORE_EMULATOR_HOST = "127.0.0.1";
+const FIRESTORE_EMULATOR_PORT = Number(process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_PORT ?? 8380);
+const FIRESTORE_EMULATOR_URL = `http://${FIRESTORE_EMULATOR_HOST}:${FIRESTORE_EMULATOR_PORT}`;
 
 export type TestUser = {
   app: FirebaseApp;
@@ -39,7 +42,7 @@ export async function createTestUser(
   const auth = getAuth(app);
   connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
   const db = getFirestore(app);
-  connectFirestoreEmulator(db, "127.0.0.1", 8380);
+  connectFirestoreEmulator(db, FIRESTORE_EMULATOR_HOST, FIRESTORE_EMULATOR_PORT);
   const email = options.email ?? `${sub}@example.test`;
   const credential = GoogleAuthProvider.credential(
     JSON.stringify({
@@ -72,7 +75,7 @@ export function reconnectTestUser(existing: TestUser): Promise<TestUser> {
 export async function resetEmulators(): Promise<void> {
   await Promise.all(createdApps.splice(0).map((app) => deleteApp(app)));
   await fetch(
-    `http://127.0.0.1:8380/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
+    `${FIRESTORE_EMULATOR_URL}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
     { method: "DELETE" },
   );
   await fetch(`${AUTH_EMULATOR_URL}/emulator/v1/projects/${PROJECT_ID}/accounts`, {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { disableNetwork, doc, enableNetwork, getDocFromCache } from "firebase/firestore";
 import {
   createBoard,
   getOwnMembership,
@@ -79,6 +80,34 @@ describe("board creation and sharing", () => {
       role: "member",
       displayName: "User B",
     });
+  });
+
+  it("waits for a new membership to reach the server before treating the player as joined", async () => {
+    const boardId = await createBoardAsA();
+    let ownMembership: BoardMember | null | undefined;
+    const unsubscribe = subscribeToOwnMembership(
+      boardId,
+      userB.uid,
+      (member) => (ownMembership = member),
+      fail,
+      userB.db,
+    );
+
+    try {
+      await waitUntil(() => ownMembership === null);
+      await disableNetwork(userB.db);
+      const joining = joinBoard(boardId, userB.user, userB.name, userB.db);
+      const localMembership = await getDocFromCache(doc(userB.db, "boards", boardId, "members", userB.uid));
+      expect(localMembership.metadata.hasPendingWrites).toBe(true);
+      expect(ownMembership).toBeNull();
+
+      await enableNetwork(userB.db);
+      await joining;
+      await waitUntil(() => ownMembership?.uid === userB.uid);
+    } finally {
+      await enableNetwork(userB.db);
+      unsubscribe();
+    }
   });
 
   it("lets a kicked player rejoin the same waiting board", async () => {
